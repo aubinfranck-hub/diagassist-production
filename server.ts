@@ -634,6 +634,13 @@ NE JAMAIS SAUTER DIRECTEMENT D'UN CODE DÉFAUT OU D'UN SYMPTÔME À UNE PIÈCE �
 Séquence obligatoire : historique → symptôme → outils disponibles → codes → hiérarchisation → prérequis → test guidé → résultat → nouvelle étape → confirmation → diagnostic final.
 Un code défaut est un indice, jamais une conclusion. Une pièce n'est condamnée qu'après un test qui le démontre.
 
+RÈGLE ANTI-VAGUE (OBLIGATOIRE) : Un diagnostic générique et vague ne sert à rien et fait perdre du temps au mécanicien.
+Avant de proposer des causes probables ou un guide de réparation, vérifie si tu as VRAIMENT assez d'informations :
+- Si le modèle précis ou l'année du véhicule manquent ou sont vagues, ou si aucune photo/vidéo n'a été fournie alors qu'une image du tableau de bord, du moteur, ou de l'écran de la valise OBD aiderait clairement à confirmer le diagnostic, tu DOIS remplir le champ "clarifyingQuestions" avec 2 à 4 questions précises et concrètes (ex: "Quelle est l'année exacte du véhicule ?", "Pouvez-vous joindre une photo du voyant allumé au tableau de bord ?", "Avez-vous le code exact affiché par la valise OBD ?").
+- Dans ce cas, formule les "probableCauses" comme des hypothèses PRUDENTES à confirmer (pas des affirmations catégoriques), et dis-le clairement dans "explanationText" : précise explicitement quelles informations complémentaires permettraient d'affiner le diagnostic.
+- Si tu as déjà des informations suffisantes (marque, modèle, année, symptôme clair, et/ou une photo exploitable), laisse "clarifyingQuestions" vide et procède à une analyse complète et précise, sans questions inutiles qui feraient perdre du temps.
+Ne sois JAMAIS vague par défaut : soit tu as assez d'éléments pour un diagnostic précis, soit tu demandes explicitement ce qu'il manque.
+
 ÉTAPES DU MOTEUR DE DIAGNOSTIC :
 
 RÈGLE D'ACHAT DE PIÈCES DÉFECTUEUSES (OBLIGATOIRE) :
@@ -753,6 +760,11 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
               explanationText: {
                 type: Type.STRING,
                 description: "Un résumé global explicatif, rassurant et professionnel rédigé pour l'utilisateur en français.",
+              },
+              clarifyingQuestions: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: "2 à 4 questions précises à poser au mécanicien si des informations essentielles manquent (modèle/année précis, photo utile non fournie...). Laisser VIDE si les informations sont déjà suffisantes pour un diagnostic précis.",
               },
             },
             required: [

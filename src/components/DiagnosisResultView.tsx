@@ -336,6 +336,29 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
           </div>
         </div>
 
+        {/* Questions de clarification de l'IA — bien visibles, si des infos essentielles manquent */}
+        {diagnosis.clarifyingQuestions && diagnosis.clarifyingQuestions.length > 0 && (
+          <div className="mb-7 p-5 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
+            <div className="flex items-center gap-2 mb-3">
+              <HelpCircle className="w-5 h-5 text-amber-400 shrink-0" />
+              <span className="text-sm font-black uppercase tracking-wider text-amber-400">
+                Pour un diagnostic plus précis, merci de préciser :
+              </span>
+            </div>
+            <ul className="space-y-2">
+              {diagnosis.clarifyingQuestions.map((q, i) => (
+                <li key={i} className="text-sm text-amber-100/90 flex items-start gap-2">
+                  <span className="text-amber-500 font-bold shrink-0">{i + 1}.</span>
+                  <span>{q}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-amber-400/70 mt-3">
+              Les hypothèses ci-dessous sont prudentes en attendant ces précisions — répondez dans le chat de suivi pour affiner l'analyse.
+            </p>
+          </div>
+        )}
+
         {/* Diagnosis Narrative Explanation */}
         <div className="space-y-4 mb-7">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

@@ -30,6 +30,7 @@ export interface Diagnosis {
   repairGuideSteps: RepairStep[];
   estimatedCosts: EstimatedCosts;
   explanationText: string;
+  clarifyingQuestions?: string[];
 }
 
 export interface ApiUsage {
