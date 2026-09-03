@@ -335,6 +335,9 @@ export default function DiagAssistLiveScreen({
 
   // Refs for Web Audio Live & WebSocket
   const wsRef = useRef<WebSocket | null>(null);
+  // Reconnexion automatique si la connexion WebSocket coupe de façon inattendue (courant en
+  // 4G dégradée/3G) pendant un appel toujours en cours — jusqu'à 2 tentatives.
+  const reconnectAttemptsRef = useRef(0);
   const audioCtxInputRef = useRef<AudioContext | null>(null);
   const audioCtxOutputRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -433,8 +436,10 @@ export default function DiagAssistLiveScreen({
 
       const now = ctx.currentTime;
       let startTime = nextStartTimeRef.current;
+      // BUG/AMÉLIORATION : marge de sécurité augmentée (0.02s → 0.12s) pour absorber les à-coups
+      // réseau en 4G dégradée/3G. Un peu plus de latence au profit d'une voix qui ne hache plus.
       if (startTime < now) {
-        startTime = now + 0.02;
+        startTime = now + 0.12;
       }
       source.start(startTime);
       nextStartTimeRef.current = startTime + buffer.duration;
@@ -539,6 +544,7 @@ export default function DiagAssistLiveScreen({
 
       ws.onopen = () => {
         console.log("[LiveWS] Connected to Gemini Live server.");
+        reconnectAttemptsRef.current = 0; // connexion réussie, on réinitialise le compteur
 
         const brandInfo = diagnosis?.brandModelInfo || "Véhicule non précisé";
         const explanation = diagnosis?.explanationText || "Recherche de panne en cours";
@@ -594,6 +600,18 @@ Codes DTC: ${dtcCodes}`;
 
       ws.onclose = () => {
         console.log("[LiveWS] WebSocket closed.");
+        // Reconnexion automatique uniquement si la coupure est INATTENDUE (l'utilisateur n'a pas
+        // raccroché lui-même — stopLiveCallSession met wsRef.current à null avant de fermer).
+        // Jusqu'à 2 tentatives, avec un court délai, pour survivre à une coupure 4G/3G passagère.
+        if (wsRef.current === ws && reconnectAttemptsRef.current < 2) {
+          reconnectAttemptsRef.current += 1;
+          setToast(`Connexion vocale interrompue — nouvelle tentative (${reconnectAttemptsRef.current}/2)...`);
+          setTimeout(() => {
+            if (wsRef.current === ws) {
+              startLiveCallSession();
+            }
+          }, 1200);
+        }
       };
 
       // 4. Stream Mic PCM
@@ -606,6 +624,14 @@ Codes DTC: ${dtcCodes}`;
 
       processor.onaudioprocess = (e) => {
         if (ws.readyState === WebSocket.OPEN && !isMutedRef.current) {
+          // AMÉLIORATION : en connexion faible (4G dégradée/3G), l'envoi du micro peut prendre du
+          // retard sur le WebSocket. Sans garde-fou, les paquets s'accumulent en file d'attente et
+          // arrivent de plus en plus en retard — Gemini "n'entend plus bien" ce qui vient de se
+          // dire. On saute ce paquet-ci plutôt que de laisser la file grossir indéfiniment ; mieux
+          // vaut perdre un fragment de 128ms que désynchroniser toute la conversation.
+          if (ws.bufferedAmount > 65536) {
+            return;
+          }
           const inputData = e.inputBuffer.getChannelData(0);
           const base64 = pcmToBase64(inputData);
           ws.send(JSON.stringify({ type: "audio", audio: base64 }));
