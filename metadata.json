@@ -1,0 +1,6 @@
+{
+  "name": "DiagAssist v1",
+  "description": "Identifiez instantanément les pannes de votre véhicule par texte, photo, vidéo ou enregistrement audio avec des conseils de réparation professionnels.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

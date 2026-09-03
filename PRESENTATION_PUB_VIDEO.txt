@@ -1,0 +1,62 @@
+DOSSIER DE PRESENTATION DIAGASSIST POUR PUBLICITE VIDEO
+
+Bienvenue dans le dossier de presentation officiel de DiagAssist. Ce document est structure de maniere a servir de base pour la redaction d'un script de publicite video, d'une presentation commerciale ou d'une demonstration produit.
+
+---
+
+1. LE CONCEPT DE DIAGASSIST
+DiagAssist est le copilote intelligent de diagnostic automobile concu exclusivement pour les mecaniciens professionnels. C'est un assistant de terrain qui parle le langage de l'atelier, va droit au but, et libere les mains du mecanicien grace a la voix et au multimedial.
+
+
+2. LES FONCTIONNALITES CLES POUR LA VIDEO (LES "HOOKS")
+
+A. L'ATELIER DE DIAGNOSTIC MULTIMEDIA
+- Description : Saisie simplifiee de la marque, du modele, de l'annee et de la motorisation.
+- Fonction vocale : Le mecanicien peut enregistrer directement un message vocal decrivant la panne (bruit suspect, comportement du moteur) sans avoir a taper sur un clavier avec les mains graisseuses.
+- Analyse de pieces et documents : Upload de photos du moteur, de captures d'ecran de la valise de diag, ou de courtes videos du probleme technique.
+- Diagnostic ultra-rapide : L'IA analyse les symptomes, identifie les pieces suspectes et propose une procedure de reparation etape par etape adaptet au contexte local.
+
+B. LE CO-PILOTE VOCAL LIVE (MAINS-LIBRES)
+- Description : Un mode talkie-walkie interactif en temps reel.
+- Utilisation : Le mecanicien pose ses questions a voix haute pendant qu'il travaille sous le capot. DiagAssist repond instantanement de maniere courte et precise (pas de politesses inutiles, uniquement du concret technique).
+- Avantage : Zero distraction, securite maximale, efficacite de travail doublee.
+
+C. L'HISTORIQUE ET LE SUIVI DE L'ATELIER (ESPACE ADMIN)
+- Description : Sauvegarde automatique de tous les diagnostics et rapports d'intervention.
+- Avantage : Permet au mecanicien de retrouver l'historique d'un vehicule, d'imprimer ou de partager un rapport propre au client pour justifier les reparations.
+
+D. DES OFFRES ACCESSIBLES POUR TOUS LES GARAGES
+- Description : Formules souples allant du Pass 24 heures aux abonnements mensuels. Ideale pour tester sans engagement.
+
+
+---
+
+3. SCRIPT DE PUBLICITE VIDEO CONSEILLE (DUREE : 60 SECONDES)
+
+[00:00 - 00:10] L'ACCROCHE (Le probleme)
+- Visuel : Un mecanicien dans un atelier, les mains pleines de graisse, l'air fatigue devant un moteur qui refuse de demarrer. Il essaie de taper sur son smartphone avec ses doigts sales pour chercher une solution sur internet.
+- Voix off : Fatiguet de perdre des heures a chercher l'origine d'un code defaut avec les mains pleines de cambouis ? Tapez sur un clavier au garage, c'est du passe.
+
+[00:10 - 00:25] LA PRESENTATION DE DIAGASSIST
+- Visuel : Le mecanicien ouvre l'application DiagAssist. Il enregistre simplement un message vocal : "Moteur Peugeot 208, bruit de claquement a froid et temoin moteur allume". Il prend en photo le code defaut sur sa valise de diagnostic et l'envoie.
+- Voix off : Decouvrez DiagAssist, l'assistant intelligent qui revolutionne votre atelier. Parlez-lui, montrez-lui le code defaut ou la photo de la piece, et notre IA s'occupe du reste.
+
+[00:25 - 00:40] LA DEMONSTRATION DU DIAGNOSTIC ET DU MODE LIVE
+- Visuel : En un instant, l'application affiche la cause probable, les verifications a faire et les pieces a tester. Ensuite, transition vers le mode Vocal Live. Le mecanicien met son telephone a cote et demande : "DiagAssist, ou se trouve le relais de pompe a carburant sur ce modele ?"
+- DiagAssist (voix synthetisee) : DiagAssist je t'ecoute. Le relais se trouve dans la boite a fusibles moteur, emplacement numero R4, fil marron.
+- Voix off : Pas besoin de lacher vos outils. Grace au mode Vocal Live, DiagAssist vous guide tape par etape, les mains libres sous le capot.
+
+[00:40 - 00:50] VALORISATION ET SUIVI
+- Visuel : Le mecanicien repare le vehicule, sourit. Il consulte l'Espace Admin pour voir le rapport de diagnostic propre qu'il peut envoyer directement par message au client.
+- Voix off : Suivez l'activite de votre atelier, archivez vos fiches techniques et rassurez vos clients avec des rapports de diagnostic d'expert.
+
+[00:50 - 01:00] APPEL A L'ACTION
+- Visuel : Logo de DiagAssist s'affiche avec la mention "PRO V1" et un bouton "Demarrer mon essai gratuit".
+- Voix off : Gagnez du temps, augmentez vos revenus et devenez le garage le plus moderne de votre ville. Essayez DiagAssist des aujourd'hui !
+
+---
+
+4. CONSEILS POUR LE TOURNAGE ET LA PRODUCTION
+- Le decor : Privilegiez un vrai garage ou atelier mecanique pour donner de la credibilite.
+- Le ton de la voix off : Dynamique, professionnel, complice avec le mecanicien.
+- L'ambiance sonore : Un bruit leger de cles a molette ou de moteur en fond sonore au debut, puis une musique entrainante et technologique des que DiagAssist apparait.

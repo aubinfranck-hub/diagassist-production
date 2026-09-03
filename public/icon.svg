@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="110" fill="#0f172a" />
+  <!-- Outer glowing background aura -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#ef4444" stroke-width="4" stroke-opacity="0.2" stroke-dasharray="15 10" />
+  <circle cx="256" cy="256" r="170" fill="none" stroke="#ef4444" stroke-width="8" stroke-opacity="0.3" />
+  
+  <!-- Diagnostic Car Shape -->
+  <g transform="translate(116, 146)" fill="none" stroke="#f1f5f9" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Car body outline -->
+    <path d="M40 140 L40 100 C40 85 52 70 80 65 L100 20 C108 5 125 0 140 0 L140 0 L140 60 L40 60" stroke="#ef4444" stroke-width="20" />
+    <path d="M240 140 L240 100 C240 85 228 70 200 65 L180 20 C172 5 155 0 140 0" stroke="#ef4444" stroke-width="20" />
+    <path d="M10 140 L270 140 C280 140 280 155 270 155 L10 155 C0 155 0 140 10 140 Z" fill="#ef4444" stroke="none" />
+    
+    <!-- Windshield & Windows -->
+    <path d="M105 25 L135 25 L135 60 L85 60 Z" fill="#38bdf8" fill-opacity="0.4" stroke="#38bdf8" stroke-width="8" />
+    <path d="M175 25 L145 25 L145 60 L195 60 Z" fill="#38bdf8" fill-opacity="0.4" stroke="#38bdf8" stroke-width="8" />
+
+    <!-- Headlights -->
+    <circle cx="35" cy="115" r="14" fill="#fbbf24" stroke="none" />
+    <circle cx="245" cy="115" r="14" fill="#fbbf24" stroke="none" />
+    
+    <!-- Wheels -->
+    <circle cx="65" cy="160" r="28" fill="#0f172a" stroke="#ef4444" stroke-width="12" />
+    <circle cx="65" cy="160" r="10" fill="#f1f5f9" stroke="none" />
+    <circle cx="215" cy="160" r="28" fill="#0f172a" stroke="#ef4444" stroke-width="12" />
+    <circle cx="215" cy="160" r="10" fill="#f1f5f9" stroke="none" />
+  </g>
+
+  <!-- Glowing Digital Diagnostic wrench emblem in center foreground -->
+  <g transform="translate(196, 196)">
+    <!-- Shield/Ring support -->
+    <circle cx="60" cy="60" r="80" fill="#1e293b" fill-opacity="0.95" stroke="#ef4444" stroke-width="12" />
+    
+    <!-- Modern wrench & spark/lightning symbol -->
+    <path d="M30 30 L45 45 M35 25 C20 40 20 60 35 75 C45 85 60 85 70 75 L100 45 C108 37 108 23 100 15 C92 7 78 7 70 15 L50 35" stroke="#f1f5f9" stroke-width="12" stroke-linecap="round" />
+    <path d="M32 28 C26 34 26 44 32 50 L40 42 C38 40 38 36 40 34 Z" fill="#ef4444" stroke="none" />
+    
+    <!-- Pulse diagnostic lines -->
+    <path d="M15 60 H40 L48 45 L56 75 L62 55 L68 65 L105 60" fill="none" stroke="#ef4444" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+</svg>
