@@ -223,6 +223,13 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // BUG CORRIGÉ (détecté en déploiement réel sur Render) : sans ce réglage, Express ne fait pas
+  // confiance à l'en-tête X-Forwarded-For envoyé par le proxy de l'hébergeur (Render, ou tout
+  // reverse-proxy comme Nginx). Résultat : express-rate-limit ne peut pas identifier correctement
+  // l'IP réelle du client, ce qui casse la protection anti brute-force sur les routes d'authentification.
+  // "1" = fait confiance au premier proxy en amont (configuration standard derrière Render/Nginx).
+  app.set("trust proxy", 1);
+
   // Sécurité HTTP standard (headers)
   app.use(helmet({
     contentSecurityPolicy: false, // désactivé pour ne pas casser Vite en dev ; à durcir en prod si besoin
