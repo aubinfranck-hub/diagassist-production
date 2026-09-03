@@ -5,6 +5,7 @@ import { GoogleGenAI, Type, Modality } from "@google/genai";
 import dotenv from "dotenv";
 import twilio from "twilio";
 import nodemailer from "nodemailer";
+import { Pool } from "pg";
 import crypto from "crypto";
 import { WebSocketServer } from "ws";
 import rateLimit from "express-rate-limit";
@@ -88,6 +89,7 @@ function getEffectivePlan(phone: string): string {
 
 function setUserPlan(phone: string, plan: string, customDurationMs?: number): void {
   userPlans.set(phone, { plan, activatedAt: Date.now(), customDurationMs });
+  persistPlan(phone).catch(() => {});
 }
 
 
@@ -101,6 +103,138 @@ function createSession(phone: string): string {
 // --- Comptes client par numéro + mot de passe (créés manuellement par l'admin) ---
 // Alternative à l'OTP WhatsApp : l'admin crée le compte du client (numéro + mot de passe) sur son
 // interface, et le lui communique directement. Aucune dépendance à un fournisseur SMS/WhatsApp.
+// --- Persistance PostgreSQL (Render) ---
+// BUG CRITIQUE CORRIGÉ : avant, comptes/forfaits/bannières n'existaient qu'en mémoire (Map) et
+// disparaissaient à CHAQUE redémarrage du serveur (redéploiement, ou mise en veille sur le plan
+// gratuit). Désormais, ces données sont sauvegardées dans une vraie base PostgreSQL et rechargées
+// au démarrage — les Maps en mémoire restent utilisées pour des lectures instantanées partout
+// ailleurs dans le code (aucun autre changement nécessaire), mais chaque écriture est aussi
+// répercutée dans la base pour survivre aux redémarrages.
+const dbPool = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  : null;
+
+async function initDatabase(): Promise<void> {
+  if (!dbPool) {
+    console.warn("[DB] DATABASE_URL non configuré — les données ne survivront PAS aux redémarrages du serveur.");
+    return;
+  }
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      phone TEXT PRIMARY KEY,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      is_admin BOOLEAN NOT NULL DEFAULT false,
+      email TEXT
+    );
+    CREATE TABLE IF NOT EXISTS plans (
+      phone TEXT PRIMARY KEY,
+      plan TEXT NOT NULL,
+      activated_at BIGINT NOT NULL,
+      custom_duration_ms BIGINT
+    );
+    CREATE TABLE IF NOT EXISTS banners (
+      id TEXT PRIMARY KEY,
+      image_url TEXT NOT NULL,
+      link_url TEXT,
+      display_type TEXT NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at BIGINT NOT NULL
+    );
+  `);
+  console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
+}
+
+async function loadPersistedData(): Promise<void> {
+  if (!dbPool) return;
+  const accountsRes = await dbPool.query("SELECT * FROM accounts");
+  for (const row of accountsRes.rows) {
+    userAccounts.set(row.phone, {
+      passwordHash: row.password_hash,
+      salt: row.salt,
+      createdAt: Number(row.created_at),
+      isAdmin: row.is_admin,
+      email: row.email || undefined,
+    });
+  }
+  const plansRes = await dbPool.query("SELECT * FROM plans");
+  for (const row of plansRes.rows) {
+    userPlans.set(row.phone, {
+      plan: row.plan,
+      activatedAt: Number(row.activated_at),
+      customDurationMs: row.custom_duration_ms ? Number(row.custom_duration_ms) : undefined,
+    });
+  }
+  const bannersRes = await dbPool.query("SELECT * FROM banners");
+  for (const row of bannersRes.rows) {
+    banners.set(row.id, {
+      id: row.id,
+      imageUrl: row.image_url,
+      linkUrl: row.link_url || undefined,
+      displayType: row.display_type,
+      active: row.active,
+      createdAt: Number(row.created_at),
+    });
+  }
+  console.log(`[DB] Données rechargées : ${accountsRes.rows.length} compte(s), ${plansRes.rows.length} forfait(s), ${bannersRes.rows.length} bannière(s).`);
+}
+
+async function persistAccount(phone: string): Promise<void> {
+  if (!dbPool) return;
+  const acc = userAccounts.get(phone);
+  if (!acc) return;
+  try {
+    await dbPool.query(
+      `INSERT INTO accounts (phone, password_hash, salt, created_at, is_admin, email)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (phone) DO UPDATE SET password_hash = $2, salt = $3, is_admin = $5, email = $6`,
+      [phone, acc.passwordHash, acc.salt, acc.createdAt, acc.isAdmin, acc.email || null]
+    );
+  } catch (err: any) {
+    console.error("[DB] Échec de la sauvegarde du compte:", err.message);
+  }
+}
+
+async function persistPlan(phone: string): Promise<void> {
+  if (!dbPool) return;
+  const record = userPlans.get(phone);
+  if (!record) return;
+  try {
+    await dbPool.query(
+      `INSERT INTO plans (phone, plan, activated_at, custom_duration_ms)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (phone) DO UPDATE SET plan = $2, activated_at = $3, custom_duration_ms = $4`,
+      [phone, record.plan, record.activatedAt, record.customDurationMs || null]
+    );
+  } catch (err: any) {
+    console.error("[DB] Échec de la sauvegarde du forfait:", err.message);
+  }
+}
+
+async function persistBanner(banner: Banner): Promise<void> {
+  if (!dbPool) return;
+  try {
+    await dbPool.query(
+      `INSERT INTO banners (id, image_url, link_url, display_type, active, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (id) DO UPDATE SET image_url = $2, link_url = $3, display_type = $4, active = $5`,
+      [banner.id, banner.imageUrl, banner.linkUrl || null, banner.displayType, banner.active, banner.createdAt]
+    );
+  } catch (err: any) {
+    console.error("[DB] Échec de la sauvegarde de la bannière:", err.message);
+  }
+}
+
+async function deleteBannerFromDb(id: string): Promise<void> {
+  if (!dbPool) return;
+  try {
+    await dbPool.query("DELETE FROM banners WHERE id = $1", [id]);
+  } catch (err: any) {
+    console.error("[DB] Échec de la suppression de la bannière:", err.message);
+  }
+}
+
 const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number; isAdmin: boolean; email?: string }>();
 
 function hashPassword(password: string, salt: string): string {
@@ -118,6 +252,7 @@ function createAccount(phone: string, password: string, isAdmin: boolean = false
     isAdmin,
     email: email ?? existing?.email,
   });
+  persistAccount(phone).catch(() => {});
 }
 
 function verifyAccountPassword(phone: string, password: string): boolean {
@@ -137,10 +272,17 @@ const loginAttempts = new Map<string, { count: number; windowStart: number }>();
 // Compte admin "de démarrage" créé automatiquement au lancement du serveur si ces variables
 // d'environnement sont définies. Permet de créer le premier compte administrateur sans jamais
 // avoir besoin d'appeler l'application déployée depuis l'extérieur.
-if (process.env.ADMIN_SEED_PHONE && process.env.ADMIN_SEED_PASSWORD) {
-  createAccount(process.env.ADMIN_SEED_PHONE, process.env.ADMIN_SEED_PASSWORD, true, process.env.ADMIN_SEED_EMAIL);
-  setUserPlan(process.env.ADMIN_SEED_PHONE, "premium");
-  console.log(`[Démarrage] Compte administrateur "graine" créé/rafraîchi pour ${process.env.ADMIN_SEED_PHONE}.`);
+// BUG CORRIGÉ : ce bloc s'exécutait à CHAQUE redémarrage du serveur (chaque redéploiement), et
+// écrasait systématiquement le mot de passe — même si l'admin l'avait changé lui-même entre-temps
+// via le changement de mot de passe self-service. Désormais, on ne crée le compte "graine" que
+// s'il n'existe pas encore (vérifié APRÈS le rechargement depuis la base — voir startServer()),
+// pour ne jamais écraser un mot de passe déjà personnalisé ni un compte déjà persisté.
+function seedAdminAccountIfNeeded(): void {
+  if (process.env.ADMIN_SEED_PHONE && process.env.ADMIN_SEED_PASSWORD && !userAccounts.has(process.env.ADMIN_SEED_PHONE)) {
+    createAccount(process.env.ADMIN_SEED_PHONE, process.env.ADMIN_SEED_PASSWORD, true, process.env.ADMIN_SEED_EMAIL);
+    setUserPlan(process.env.ADMIN_SEED_PHONE, "premium");
+    console.log(`[Démarrage] Compte administrateur "graine" créé pour ${process.env.ADMIN_SEED_PHONE} (première fois).`);
+  }
 }
 
 // --- Récupération de mot de passe par email (SMTP Gmail) ---
@@ -336,6 +478,12 @@ async function generateContentWithFallbackAndRetry(
 }
 
 async function startServer() {
+  // Charge les données persistées AVANT toute autre chose : sessions/mots de passe/forfaits
+  // doivent être en mémoire avant qu'une seule requête ne puisse arriver.
+  await initDatabase();
+  await loadPersistedData();
+  seedAdminAccountIfNeeded();
+
   const app = express();
   const PORT = 3000;
 
@@ -1331,6 +1479,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const id = crypto.randomBytes(6).toString("hex");
     const banner: Banner = { id, imageUrl, linkUrl: linkUrl || undefined, displayType, active: true, createdAt: Date.now() };
     banners.set(id, banner);
+    persistBanner(banner).catch(() => {});
     res.json({ success: true, banner });
   });
 
@@ -1340,11 +1489,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(404).json({ success: false, message: "Bannière introuvable." });
     }
     banner.active = !banner.active;
+    persistBanner(banner).catch(() => {});
     res.json({ success: true, banner });
   });
 
   app.delete("/api/admin/banners/:id", adminLimiter, requireAdminAuth, (req, res) => {
     banners.delete(req.params.id);
+    deleteBannerFromDb(req.params.id).catch(() => {});
     res.json({ success: true });
   });
 
