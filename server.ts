@@ -580,21 +580,29 @@ async function startServer() {
         vehicleYear,
         vehicleEngine,
         textDescription,
-        file,        // Base64-encoded file contents
+        file,        // Base64-encoded file contents (rétrocompatibilité : pièce jointe unique)
         mimeType,    // MIME type (e.g., image/jpeg, audio/wav, etc.)
+        files,       // Nouveau : plusieurs pièces jointes { data, mimeType }[] — un mécanicien peut
+                     // joindre plusieurs photos/vidéos/audio en une seule fois (voyant + moteur + code OBD...)
       } = req.body;
 
       // Construct parts array for Gemini 3.5 Flash
       const parts: any[] = [];
+      let attachmentCount = 0;
 
-      // Add file attachment if present
-      if (file && mimeType) {
-        parts.push({
-          inlineData: {
-            data: file,
-            mimeType: mimeType,
-          },
-        });
+      // Nouvelles pièces jointes multiples (prioritaires)
+      if (Array.isArray(files) && files.length > 0) {
+        for (const f of files) {
+          if (f?.data && f?.mimeType) {
+            parts.push({ inlineData: { data: f.data, mimeType: f.mimeType } });
+            attachmentCount++;
+          }
+        }
+      }
+      // Rétrocompatibilité : pièce jointe unique (ancien format)
+      else if (file && mimeType) {
+        parts.push({ inlineData: { data: file, mimeType } });
+        attachmentCount = 1;
       }
 
       // Construct detailed textual prompt
@@ -607,9 +615,9 @@ Description du problème par l'utilisateur :
 "${textDescription || "Aucune description textuelle fournie par l'utilisateur."}"
 `;
 
-      if (file && mimeType) {
-        promptText += `\nUn fichier multimédia de type (${mimeType}) a été joint par l'utilisateur (image du tableau de bord ou de codes OBD, enregistrement audio d'un bruit suspect, ou vidéo).
-Analyse-le attentivement pour y repérer des voyants, des codes d'erreur DTC textuels (comme EPB C112A, C2006, etc.), des bruits moteurs anormaux ou des indices de pannes visuels afin d'établir un diagnostic d'expert.`;
+      if (attachmentCount > 0) {
+        promptText += `\n${attachmentCount > 1 ? `${attachmentCount} fichiers multimédias ont` : "Un fichier multimédia a"} été joint(s) par l'utilisateur (image du tableau de bord ou de codes OBD, enregistrement audio d'un bruit suspect, ou vidéo).
+Analyse-les attentivement pour y repérer des voyants, des codes d'erreur DTC textuels (comme EPB C112A, C2006, etc.), des bruits moteurs anormaux ou des indices de pannes visuels afin d'établir un diagnostic d'expert.`;
       }
 
       parts.push({ text: promptText });

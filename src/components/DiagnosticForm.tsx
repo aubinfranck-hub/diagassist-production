@@ -1,8 +1,14 @@
 import React, { useState, useRef, useEffect } from "react";
 import { 
   Car, FileText, Upload, Image as ImageIcon, Video, Mic, Square, Trash2, 
-  Sparkles, AlertCircle, Play, Pause, Disc
+  Sparkles, AlertCircle, Disc, Plus
 } from "lucide-react";
+
+interface Attachment {
+  base64: string;
+  mimeType: string;
+  name: string;
+}
 
 interface DiagnosticFormProps {
   onDiagnose: (data: {
@@ -11,12 +17,18 @@ interface DiagnosticFormProps {
     vehicleYear: string;
     vehicleEngine: string;
     textDescription: string;
-    file: string | null;
-    mimeType: string | null;
+    files: { data: string; mimeType: string }[];
     gps?: { latitude: number; longitude: number; accuracy?: number } | null;
   }) => void;
   isLoading: boolean;
 }
+
+// Marques les plus courantes sur le marché ivoirien — réduit les fautes de frappe.
+// Le champ reste modifiable librement (liste de suggestions, pas un menu fermé).
+const MARQUES_COURANTES = [
+  "Toyota", "Peugeot", "Renault", "Hyundai", "Kia", "Mercedes-Benz", "Ford",
+  "Nissan", "Volkswagen", "Mitsubishi", "Suzuki", "Honda", "Mazda", "Opel", "BMW", "Audi",
+];
 
 export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticFormProps) {
   // GPS Geolocation state
@@ -65,15 +77,13 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
   const [vehicleEngine, setVehicleEngine] = useState("Essence");
   const [textDescription, setTextDescription] = useState("");
 
-  // Attachment state
-  const [fileBase64, setFileBase64] = useState<string | null>(null);
-  const [fileMime, setFileMime] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
+  // Plusieurs pièces jointes possibles à la fois (photo du voyant + moteur + code OBD, par exemple)
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const MAX_ATTACHMENTS = 6;
 
   // Audio recording state
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -83,24 +93,26 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
   // Drag and drop state
   const [isDragging, setIsDragging] = useState(false);
 
-  // Convert File to Base64 helper
-  const handleFileChange = (file: File) => {
-    if (file.size > 15 * 1024 * 1024) {
-      alert("Le fichier est trop volumineux. La limite est de 15 Mo.");
+  const addFilesAsAttachments = (fileList: FileList | File[]) => {
+    const filesArray = Array.from(fileList);
+    const remainingSlots = MAX_ATTACHMENTS - attachments.length;
+    if (remainingSlots <= 0) {
+      alert(`Vous avez déjà ${MAX_ATTACHMENTS} pièces jointes, c'est le maximum. Supprimez-en une pour en ajouter une autre.`);
       return;
     }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // result is in the format "data:image/png;base64,iVBORw..."
-      const base64Data = result.split(",")[1];
-      setFileBase64(base64Data);
-      setFileMime(file.type);
-      setFileName(file.name);
-      setRecordedAudioUrl(null); // Clear recorded voice if uploading file
-    };
-    reader.readAsDataURL(file);
+    filesArray.slice(0, remainingSlots).forEach((file) => {
+      if (file.size > 15 * 1024 * 1024) {
+        alert(`"${file.name}" est trop volumineux (max 15 Mo par fichier).`);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64Data = result.split(",")[1];
+        setAttachments((prev) => [...prev, { base64: base64Data, mimeType: file.type, name: file.name }]);
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -115,8 +127,8 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileChange(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addFilesAsAttachments(e.dataTransfer.files);
     }
   };
 
@@ -137,20 +149,20 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
 
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        setRecordedAudioUrl(audioUrl);
 
-        // Convert audio blob to base64
         const reader = new FileReader();
         reader.onloadend = () => {
           const base64data = (reader.result as string).split(",")[1];
-          setFileBase64(base64data);
-          setFileMime("audio/webm");
-          setFileName("enregistrement-audio-panne.webm");
+          setAttachments((prev) => {
+            if (prev.length >= MAX_ATTACHMENTS) {
+              alert(`Maximum ${MAX_ATTACHMENTS} pièces jointes atteint — l'enregistrement n'a pas été ajouté.`);
+              return prev;
+            }
+            return [...prev, { base64: base64data, mimeType: "audio/webm", name: `enregistrement-audio-${prev.length + 1}.webm` }];
+          });
         };
         reader.readAsDataURL(audioBlob);
 
-        // Stop all audio tracks from stream to release the mic
         stream.getTracks().forEach((track) => track.stop());
       };
 
@@ -178,20 +190,14 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
     }
   };
 
-  const removeAttachment = () => {
-    setFileBase64(null);
-    setFileMime(null);
-    setFileName(null);
-    setRecordedAudioUrl(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+  const removeAttachment = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!textDescription && !fileBase64) {
-      alert("Veuillez saisir une description textuelle de la panne ou joindre/enregistrer un fichier.");
+    if (!textDescription && attachments.length === 0) {
+      alert("Veuillez saisir une description textuelle de la panne ou joindre/enregistrer au moins un fichier.");
       return;
     }
     onDiagnose({
@@ -200,8 +206,7 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
       vehicleYear,
       vehicleEngine,
       textDescription,
-      file: fileBase64,
-      mimeType: fileMime,
+      files: attachments.map((a) => ({ data: a.base64, mimeType: a.mimeType })),
       gps: gpsLocation,
     });
   };
@@ -214,48 +219,34 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
 
   return (
     <div className="premium-glass-card rounded-3xl p-6 md:p-8 text-slate-100 animate-fade-in shadow-2xl relative overflow-hidden border scintillant-bleu-rouge-card">
-      {/* Aesthetic glowing background accent */}
       <div className="absolute top-0 left-0 w-64 h-64 rounded-full pointer-events-none scintillant-bg"></div>
-      
-      <div className="flex items-center gap-4 mb-8 relative">
-        <div className="p-3.5 rounded-2xl border shadow-inner scintillant-badge relative shrink-0">
-          <Car className="w-6 h-6" />
-          <Sparkles className="w-3.5 h-3.5 absolute -top-1 -right-1 star-sparkle-blue" />
-          <Sparkles className="w-2.5 h-2.5 absolute -bottom-1 -left-1 star-sparkle-red" />
-        </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl md:text-2xl font-display font-black text-white tracking-tight uppercase">Atelier Diagnostic</h2>
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 star-sparkle-blue shrink-0" />
-              <Sparkles className="w-3.5 h-3.5 star-sparkle-red shrink-0" />
-            </div>
+
+      {/* En-tête simplifié : titre + statut GPS discret en badge, pas de bloc à part */}
+      <div className="flex items-start justify-between gap-3 mb-6 relative">
+        <div className="flex items-center gap-4">
+          <div className="p-3.5 rounded-2xl border shadow-inner scintillant-badge relative shrink-0">
+            <Car className="w-6 h-6" />
           </div>
-          <p className="text-xs md:text-sm text-slate-400 mt-1">Décrivez les symptômes et obtenez un rapport de réparation immédiat.</p>
-          {gpsLocation ? (
-            <div className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10px] font-mono font-bold text-emerald-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>📍 GPS Activé : {gpsLocation.latitude.toFixed(4)}, {gpsLocation.longitude.toFixed(4)}</span>
-            </div>
-          ) : (
-            <div className="inline-flex items-center gap-1.5 mt-2 px-2.5 py-1 bg-slate-800/40 border border-slate-800/60 rounded-lg text-[10px] font-mono font-bold text-slate-500">
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
-              <span>📍 En attente du GPS...</span>
-            </div>
-          )}
+          <div>
+            <h2 className="text-xl md:text-2xl font-display font-black text-white tracking-tight uppercase">Atelier Diagnostic</h2>
+            <p className="text-xs md:text-sm text-slate-400 mt-1">Décrivez les symptômes, joignez des photos, obtenez un rapport immédiat.</p>
+          </div>
         </div>
+        <div
+          title={gpsLocation ? `Position : ${gpsLocation.latitude.toFixed(4)}, ${gpsLocation.longitude.toFixed(4)}` : "En attente de la localisation"}
+          className={`shrink-0 w-2.5 h-2.5 rounded-full mt-2 ${gpsLocation ? "bg-emerald-500 animate-pulse" : "bg-slate-600"}`}
+        />
       </div>
 
       {!isOnline && (
         <div className="mb-6 p-4 bg-red-600/10 border border-red-500/20 rounded-2xl flex items-start gap-3.5 animate-fade-in relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-red-600/[0.03] rounded-full blur-2xl pointer-events-none"></div>
           <div className="p-2 bg-red-600/10 text-red-500 rounded-xl shrink-0 border border-red-500/10">
             <AlertCircle className="w-5 h-5 animate-pulse text-red-500" />
           </div>
           <div className="text-xs md:text-sm">
-            <span className="font-extrabold text-red-400 block uppercase tracking-wider mb-0.5">Mode Hors Ligne Activé</span>
+            <span className="font-extrabold text-red-400 block uppercase tracking-wider mb-0.5">Mode Hors Ligne</span>
             <p className="text-slate-300 leading-relaxed">
-              Vous êtes actuellement déconnecté. Le diagnostic intelligent avec l'IA et le chargement de fichiers sont indisponibles. Veuillez rétablir votre connexion mobile (Orange, MTN, Moov).
+              Vous êtes déconnecté. Rétablissez votre connexion mobile (Orange, MTN, Moov) pour lancer un diagnostic.
             </p>
           </div>
         </div>
@@ -268,18 +259,22 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
             <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">Marque</label>
             <input
               type="text"
-              placeholder="ex: Ford"
+              list="marques-courantes"
+              placeholder="ex: Toyota"
               value={vehicleBrand}
               onChange={(e) => setVehicleBrand(e.target.value)}
               className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-3.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
             />
+            <datalist id="marques-courantes">
+              {MARQUES_COURANTES.map((m) => <option key={m} value={m} />)}
+            </datalist>
           </div>
 
           <div>
             <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">Modèle</label>
             <input
               type="text"
-              placeholder="ex: C-Max"
+              placeholder="ex: Corolla"
               value={vehicleModel}
               onChange={(e) => setVehicleModel(e.target.value)}
               className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-3.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
@@ -290,6 +285,7 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
             <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">Année</label>
             <input
               type="text"
+              inputMode="numeric"
               maxLength={4}
               placeholder="ex: 2018"
               value={vehicleYear}
@@ -319,124 +315,108 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
             <FileText className="w-4 h-4 text-red-500" /> Description des symptômes ou codes défauts OBD
           </label>
           <textarea
-            rows={5}
-            placeholder="Décrivez avec vos mots : quand survient la panne ? Bruit métallique ? Voyant rouge ? Codes défauts (DTC) de la valise de diagnostic..."
+            rows={4}
+            placeholder="Décrivez avec vos mots : quand survient la panne ? Bruit métallique ? Voyant rouge ? Codes défauts (DTC)..."
             value={textDescription}
             onChange={(e) => setTextDescription(e.target.value)}
             className="w-full bg-slate-950/95 border border-white/[0.08] rounded-2xl p-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150 resize-y leading-relaxed"
           />
         </div>
 
-        {/* File and Recording Dual Segment */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          
-          {/* File Upload Area */}
-          <div>
-            <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">
-              Capture ou Rapport de Valise
-            </label>
-            <div
+        {/* Zone unique : preuves (photos, vidéos, audio) — regroupées en un seul bloc plus simple */}
+        <div>
+          <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">
+            Preuves (photos, vidéos, sons) — {attachments.length}/{MAX_ATTACHMENTS}
+          </label>
+
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-2xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition duration-200 h-[145px] ${
-                isDragging 
-                  ? "border-red-500 bg-red-500/5 shadow-inner" 
-                  : "border-white/[0.08] bg-slate-950/50 hover:bg-slate-900/50 hover:border-slate-500"
+              disabled={attachments.length >= MAX_ATTACHMENTS}
+              className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-2xl py-6 px-3 text-center transition duration-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer ${
+                isDragging ? "border-red-500 bg-red-500/5" : "border-white/[0.08] bg-slate-950/50 hover:bg-slate-900/50 hover:border-slate-500"
               }`}
             >
               <input
                 type="file"
                 ref={fileInputRef}
-                onChange={(e) => e.target.files?.[0] && handleFileChange(e.target.files[0])}
+                multiple
+                onChange={(e) => e.target.files && addFilesAsAttachments(e.target.files)}
                 accept="image/*,video/*,audio/*"
                 className="hidden"
               />
-              <Upload className="w-6 h-6 text-slate-400 mb-2" />
-              <span className="text-sm text-slate-200 font-semibold">
-                Glissez-déposez ou <span className="text-red-500 font-bold">parcourez</span>
-              </span>
-              <span className="text-xs text-slate-500 mt-1.5">
-                Images, rapports, vidéos (Max 15 Mo)
-              </span>
-            </div>
-          </div>
+              <Upload className="w-6 h-6 text-slate-400" />
+              <span className="text-sm text-slate-200 font-bold">Ajouter photo/vidéo</span>
+              <span className="text-[10px] text-slate-500">Plusieurs à la fois, max 15 Mo chacune</span>
+            </button>
 
-          {/* Audio Recording Area */}
-          <div>
-            <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">
-              Enregistrer un bruit de panne
-            </label>
-            <div className="bg-slate-950/50 border border-white/[0.08] rounded-2xl p-4 flex flex-col justify-center h-[145px]">
-              {!isRecording && !recordedAudioUrl && (
+            {!isRecording ? (
+              <button
+                type="button"
+                onClick={startRecording}
+                disabled={attachments.length >= MAX_ATTACHMENTS}
+                className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-white/[0.08] bg-slate-950/50 hover:bg-slate-900/50 hover:border-rose-500/40 rounded-2xl py-6 px-3 text-center transition duration-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <Mic className="w-6 h-6 text-rose-500" />
+                <span className="text-sm text-slate-200 font-bold">Enregistrer un son</span>
+                <span className="text-[10px] text-slate-500">Bruit moteur, cliquetis...</span>
+              </button>
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-3 border-2 border-rose-500/40 bg-rose-500/5 rounded-2xl py-6 px-3">
+                <div className="flex items-center gap-2">
+                  <Disc className="w-5 h-5 text-rose-500 animate-spin" />
+                  <span className="font-mono text-sm text-white font-extrabold">{formatDuration(recordingDuration)}</span>
+                </div>
                 <button
                   type="button"
-                  onClick={startRecording}
-                  className="flex items-center justify-center gap-2.5 bg-slate-900/60 hover:bg-slate-800/80 text-slate-200 px-5 py-4 rounded-2xl border border-white/[0.06] hover:border-red-500/20 text-sm transition duration-150 w-full font-bold cursor-pointer shadow-md active:scale-[0.98]"
+                  onClick={stopRecording}
+                  className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer uppercase tracking-wider"
                 >
-                  <Mic className="w-5 h-5 text-rose-500 animate-pulse" />
-                  <span>Enregistrer un fichier audio</span>
+                  <Square className="w-3.5 h-3.5 fill-current" /> Terminer
                 </button>
-              )}
+              </div>
+            )}
+          </div>
 
-              {isRecording && (
-                <div className="flex flex-col items-center justify-center space-y-3">
-                  <div className="flex items-center gap-3">
-                    <Disc className="w-5 h-5 text-rose-500 animate-spin" />
-                    <span className="text-xs text-rose-500 font-black uppercase tracking-widest animate-pulse">REC</span>
-                    <span className="font-mono text-sm text-white font-extrabold">[{formatDuration(recordingDuration)}]</span>
-                  </div>
+          {/* Grille des pièces jointes déjà ajoutées */}
+          {attachments.length > 0 && (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+              {attachments.map((att, index) => (
+                <div key={index} className="relative group bg-slate-950 border border-white/[0.08] rounded-xl overflow-hidden aspect-square flex items-center justify-center">
+                  {att.mimeType.startsWith("image/") ? (
+                    <img src={`data:${att.mimeType};base64,${att.base64}`} alt={att.name} className="w-full h-full object-cover" />
+                  ) : att.mimeType.startsWith("video/") ? (
+                    <Video className="w-7 h-7 text-sky-500" />
+                  ) : (
+                    <Mic className="w-7 h-7 text-rose-500" />
+                  )}
                   <button
                     type="button"
-                    onClick={stopRecording}
-                    className="flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition duration-150 cursor-pointer shadow-lg uppercase tracking-wider"
+                    onClick={() => removeAttachment(index)}
+                    className="absolute top-1 right-1 bg-black/70 hover:bg-rose-600 text-white rounded-full p-1 transition cursor-pointer"
+                    title="Retirer"
                   >
-                    <Square className="w-3.5 h-3.5 fill-current" /> Terminer
+                    <Trash2 className="w-3 h-3" />
                   </button>
                 </div>
-              )}
-
-              {!isRecording && recordedAudioUrl && (
-                <div className="flex flex-col space-y-2">
-                  <div className="text-xs text-emerald-400 flex items-center gap-1.5 font-bold uppercase tracking-wider">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping"></span>
-                    Enregistrement audio prêt
-                  </div>
-                  <audio src={recordedAudioUrl} controls className="h-10 w-full rounded-xl bg-slate-950 outline-none" />
-                </div>
+              ))}
+              {attachments.length < MAX_ATTACHMENTS && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="aspect-square flex items-center justify-center border-2 border-dashed border-white/[0.08] hover:border-slate-500 rounded-xl text-slate-500 hover:text-slate-300 transition cursor-pointer"
+                  title="Ajouter"
+                >
+                  <Plus className="w-6 h-6" />
+                </button>
               )}
             </div>
-          </div>
-
+          )}
         </div>
-
-        {/* Display attachment indicator */}
-        {fileBase64 && fileName && (
-          <div className="flex items-center justify-between p-3 bg-slate-950 border border-white/[0.08] rounded-2xl animate-fade-in text-sm shadow-inner">
-            <div className="flex items-center gap-2.5 text-slate-300 truncate">
-              {fileMime?.startsWith("image/") ? (
-                <ImageIcon className="w-5 h-5 text-red-500 shrink-0" />
-              ) : fileMime?.startsWith("video/") ? (
-                <Video className="w-5 h-5 text-sky-500 shrink-0" />
-              ) : (
-                <Mic className="w-5 h-5 text-rose-500 shrink-0" />
-              )}
-              <span className="truncate font-bold text-slate-200">{fileName}</span>
-              <span className="text-[10px] text-slate-400 bg-slate-900 border border-white/[0.08] px-2 py-0.5 rounded-lg font-mono uppercase font-black shrink-0">
-                {fileMime?.split("/")[1]}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={removeAttachment}
-              className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition cursor-pointer"
-              title="Supprimer la pièce jointe"
-            >
-              <Trash2 className="w-5 h-5" />
-            </button>
-          </div>
-        )}
 
         {/* Diagnostic Button */}
         <button
@@ -464,12 +444,9 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
         <div className="flex items-start gap-3 text-xs text-slate-400 bg-slate-950/40 p-4 rounded-2xl border border-white/[0.04] leading-relaxed">
           <AlertCircle className="w-4 h-4 text-red-500/70 shrink-0 mt-0.5" />
           <p>
-            Avertissement : Les analyses de pannes fournies par cette intelligence artificielle sont indicatives. 
-            Elles s'appuient sur l'analyse acoustique des sons, la lecture des codes DTC et les symptômes découlant de votre description. 
-            Faites toujours valider le diagnostic final par un mécanicien automobile certifié avant toute opération mécanique complexe.
+            Les analyses de cette IA sont indicatives. Faites toujours valider le diagnostic final par un mécanicien certifié avant toute réparation complexe.
           </p>
         </div>
-
       </form>
     </div>
   );

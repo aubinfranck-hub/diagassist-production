@@ -429,8 +429,7 @@ export default function App() {
     vehicleYear: string;
     vehicleEngine: string;
     textDescription: string;
-    file: string | null;
-    mimeType: string | null;
+    files: { data: string; mimeType: string }[];
     gps?: { latitude: number; longitude: number; accuracy?: number } | null;
   }) => {
     if (!navigator.onLine) {
