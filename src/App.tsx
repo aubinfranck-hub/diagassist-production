@@ -315,6 +315,35 @@ export default function App() {
     return () => clearInterval(statusInterval);
   }, [loggedInUser]);
 
+  // Signale la position GPS au serveur (avec le consentement du navigateur) pour le tableau de
+  // bord admin. Échoue silencieusement si l'utilisateur refuse ou si la géolocalisation est indisponible.
+  useEffect(() => {
+    if (!loggedInUser || !navigator.geolocation) return;
+    const token = localStorage.getItem("auth_session_token");
+    if (!token) return;
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        fetch("/api/user/report-location", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+          }),
+        }).catch(() => {});
+      },
+      () => {
+        // L'utilisateur a refusé ou la géolocalisation a échoué — on n'insiste pas.
+      },
+      { timeout: 8000 }
+    );
+  }, [loggedInUser]);
+
   // Affichage du compte à rebours du forfait, basé sur l'échéance RÉELLE renvoyée par le serveur.
   // BUG CORRIGÉ : avant, ce minuteur se basait sur une horloge stockée en localStorage, propre à
   // chaque navigateur/appareil — elle pouvait être remise à zéro en vidant le cache, et surtout
@@ -1351,6 +1380,7 @@ export default function App() {
               onPlanChange={handlePlanChange} 
               onActivatePayg={() => handlePlanChange("payg_active")}
               onRequestActivation={handleRequestActivation}
+              isAdmin={isAdminAccount}
             />
           </div>
         )}

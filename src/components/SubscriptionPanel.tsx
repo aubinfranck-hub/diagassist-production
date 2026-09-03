@@ -4,15 +4,17 @@ import {
   BookOpen, HelpCircle, AlertCircle, RefreshCw, Coins, Lock
 } from "lucide-react";
 import { SubscriptionPlan } from "../types";
+import AdminClientDashboard from "./AdminClientDashboard";
 
 interface SubscriptionPanelProps {
   currentPlan: SubscriptionPlan;
   onPlanChange: (plan: SubscriptionPlan) => void;
+  isAdmin?: boolean;
   onActivatePayg: () => void;
   onRequestActivation: (plan: SubscriptionPlan, amount: number) => void;
 }
 
-export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivatePayg, onRequestActivation }: SubscriptionPanelProps) {
+export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivatePayg, onRequestActivation, isAdmin }: SubscriptionPanelProps) {
   
   // State to hold the dynamically selected payment amount for Wave
   const [selectedAmount, setSelectedAmount] = useState<number>(6000);
@@ -114,6 +116,12 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
         {pwdSuccess && <p className="text-xs text-emerald-400">Mot de passe mis à jour avec succès.</p>}
       </div>
 
+      {isAdmin ? (
+        // Vue admin : tableau de bord complet (comptes, connexions, GPS, déconnexion),
+        // sans les informations de paiement Wave qui ne concernent que les clients.
+        <AdminClientDashboard />
+      ) : (
+        <>
       {/* Banner indicating currently active plan */}
       <div className="premium-glass-card rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-red-600/5 rounded-full blur-3xl pointer-events-none"></div>
@@ -347,6 +355,8 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
           </div>
         </div>
       </div>
+        </>
+      )}
 
     </div>
   );

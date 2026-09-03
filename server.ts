@@ -18,6 +18,9 @@ const otpStorage = new Map<string, { code: string; expiresAt: number }>();
 // Sessions actives : token -> { phone, plan, createdAt }
 const sessions = new Map<string, { phone: string; plan: string; createdAt: number }>();
 
+// Dernière position GPS connue par numéro (signalée par le client avec son consentement navigateur)
+const lastKnownLocation = new Map<string, { latitude: number; longitude: number; accuracy?: number; updatedAt: number }>();
+
 // Nombre de tentatives de vérification OTP par numéro (anti brute-force)
 const otpAttempts = new Map<string, { count: number; windowStart: number }>();
 
@@ -26,17 +29,27 @@ const otpAttempts = new Map<string, { count: number; windowStart: number }>();
 // réinitialisé à "free_trial" à CHAQUE nouvelle connexion (nouvelle vérification OTP).
 // Un client Premium qui fermait l'app et se reconnectait perdait donc son forfait payant !
 // Désormais le forfait est stocké par numéro de téléphone et relu à chaque connexion/requête.
-const userPlans = new Map<string, { plan: string; activatedAt: number }>();
+const userPlans = new Map<string, { plan: string; activatedAt: number; customDurationMs?: number }>();
 
-// Durée de validité de chaque forfait à partir de son activation (ms). Au-delà, le forfait
-// expire automatiquement et repasse à "free_expired" — avant, un pass 24h ou un abonnement
-// mensuel activé par l'admin restait actif INDÉFINIMENT car rien ne vérifiait l'expiration côté serveur.
+// Durée de validité PAR DÉFAUT de chaque forfait à partir de son activation (ms). Au-delà, le
+// forfait expire automatiquement et repasse à "free_expired". L'admin peut aussi fixer une durée
+// personnalisée (jour/semaine/mois) au moment de la création du compte, qui prime sur ces valeurs.
 const PLAN_DURATIONS_MS: Record<string, number> = {
   free_trial: 24 * 60 * 60 * 1000,   // 24h
   payg_active: 24 * 60 * 60 * 1000,  // pass 24h
   lite: 30 * 24 * 60 * 60 * 1000,    // 30 jours
   premium: 30 * 24 * 60 * 60 * 1000, // 30 jours
 };
+
+// Convertit une durée admin (valeur + unité) en millisecondes
+function computeDurationMs(value: number, unit: string): number | undefined {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  if (!value || value <= 0) return undefined;
+  if (unit === "jour") return value * DAY_MS;
+  if (unit === "semaine") return value * 7 * DAY_MS;
+  if (unit === "mois") return value * 30 * DAY_MS;
+  return undefined;
+}
 
 // Renvoie le forfait EFFECTIF et à jour d'un numéro : initialise l'essai gratuit à la première
 // connexion, et rétrograde automatiquement vers "free_expired" si la durée du forfait est dépassée.
@@ -47,7 +60,7 @@ function getEffectivePlan(phone: string): string {
     userPlans.set(phone, record);
     return record.plan;
   }
-  const duration = PLAN_DURATIONS_MS[record.plan];
+  const duration = record.customDurationMs ?? PLAN_DURATIONS_MS[record.plan];
   if (duration && Date.now() - record.activatedAt > duration && record.plan !== "free_expired") {
     record = { plan: "free_expired", activatedAt: Date.now() };
     userPlans.set(phone, record);
@@ -55,8 +68,8 @@ function getEffectivePlan(phone: string): string {
   return record.plan;
 }
 
-function setUserPlan(phone: string, plan: string): void {
-  userPlans.set(phone, { plan, activatedAt: Date.now() });
+function setUserPlan(phone: string, plan: string, customDurationMs?: number): void {
+  userPlans.set(phone, { plan, activatedAt: Date.now(), customDurationMs });
 }
 
 
@@ -159,13 +172,25 @@ function requireAuth(req: any, res: any, next: any) {
 function requireAdminAuth(req: any, res: any, next: any) {
   const adminSecret = process.env.ADMIN_SECRET;
   const providedCode = req.headers["x-admin-code"] || req.body?.code;
-  if (!adminSecret) {
+
+  // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
+  if (adminSecret && providedCode && providedCode === adminSecret) {
+    return next();
+  }
+
+  // Voie 2 : session utilisateur valide dont le compte est marqué isAdmin — permet d'utiliser le
+  // tableau de bord admin directement depuis l'app une fois connecté, sans retaper le code.
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.replace("Bearer ", "");
+  const session = token ? sessions.get(token) : undefined;
+  if (session && userAccounts.get(session.phone)?.isAdmin) {
+    return next();
+  }
+
+  if (!adminSecret && !session) {
     return res.status(503).json({ success: false, message: "Accès admin non configuré sur le serveur (ADMIN_SECRET manquant)." });
   }
-  if (!providedCode || providedCode !== adminSecret) {
-    return res.status(401).json({ success: false, message: "Code d'accès administrateur invalide." });
-  }
-  next();
+  return res.status(401).json({ success: false, message: "Accès administrateur refusé." });
 }
 
 
@@ -1117,7 +1142,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route (ADMIN UNIQUEMENT) : crée ou met à jour le compte d'un client (numéro + mot de passe).
   // Vous communiquez ensuite ces identifiants directement au client (téléphone, en personne, etc.).
   app.post("/api/admin/create-account", adminLimiter, requireAdminAuth, (req, res) => {
-    const { phone, password, plan, isAdmin, email } = req.body;
+    const { phone, password, plan, isAdmin, email, durationValue, durationUnit } = req.body;
     if (!phone || !password) {
       return res.status(400).json({ success: false, message: "phone et password sont requis." });
     }
@@ -1129,7 +1154,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       if (!(plan in PLAN_LIMITS)) {
         return res.status(400).json({ success: false, message: `Plan inconnu : "${plan}".` });
       }
-      setUserPlan(phone, plan);
+      const customDurationMs = computeDurationMs(Number(durationValue), durationUnit);
+      setUserPlan(phone, plan, customDurationMs);
       usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });
     }
     console.log(`[Admin] Compte créé/mis à jour pour ${phone}${plan ? ` avec le forfait "${plan}"` : ""}${isAdmin ? " (admin)" : ""}.`);
@@ -1219,8 +1245,49 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       plan: userPlans.get(phone)?.plan || "free_trial",
       isAdmin: acc.isAdmin,
       email: acc.email || null,
+      location: lastKnownLocation.get(phone) || null,
     }));
     res.json({ success: true, accounts });
+  });
+
+  // API Route (ADMIN UNIQUEMENT) : liste les sessions actives (connexions en cours)
+  app.get("/api/admin/sessions", adminLimiter, requireAdminAuth, (req, res) => {
+    const list = Array.from(sessions.entries()).map(([token, s]) => ({
+      // Le token lui-même n'est jamais exposé, seule une référence tronquée pour distinguer les entrées
+      tokenRef: token.slice(0, 8),
+      phone: s.phone,
+      plan: s.plan,
+      createdAt: s.createdAt,
+      location: lastKnownLocation.get(s.phone) || null,
+    }));
+    res.json({ success: true, sessions: list });
+  });
+
+  // API Route (ADMIN UNIQUEMENT) : déconnecte de force toutes les sessions actives d'un numéro
+  app.post("/api/admin/force-logout", adminLimiter, requireAdminAuth, (req, res) => {
+    const { phone } = req.body;
+    if (!phone) {
+      return res.status(400).json({ success: false, message: "Le numéro de téléphone est requis." });
+    }
+    let removed = 0;
+    for (const [token, s] of sessions) {
+      if (s.phone === phone) {
+        sessions.delete(token);
+        removed += 1;
+      }
+    }
+    console.log(`[Admin] ${removed} session(s) déconnectée(s) de force pour ${phone}.`);
+    res.json({ success: true, message: `${removed} session(s) déconnectée(s) pour ${phone}.`, removed });
+  });
+
+  // API Route: le client signale sa position GPS (avec son consentement navigateur)
+  app.post("/api/user/report-location", authLimiter, requireAuth, (req: any, res) => {
+    const { latitude, longitude, accuracy } = req.body;
+    if (typeof latitude !== "number" || typeof longitude !== "number") {
+      return res.status(400).json({ success: false, message: "Coordonnées invalides." });
+    }
+    lastKnownLocation.set(req.session.phone, { latitude, longitude, accuracy, updatedAt: Date.now() });
+    res.json({ success: true });
   });
 
   // API Route : connexion par numéro de téléphone + mot de passe (compte créé par l'admin)
