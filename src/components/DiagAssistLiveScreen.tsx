@@ -399,6 +399,7 @@ export default function DiagAssistLiveScreen({
     if (!speakerEnabled) return;
     if (!audioCtxOutputRef.current) return;
     const ctx = audioCtxOutputRef.current;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
 
     try {
       const binary = atob(base64Data);
@@ -516,6 +517,12 @@ export default function DiagAssistLiveScreen({
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       audioCtxOutputRef.current = outputCtx;
       nextStartTimeRef.current = 0;
+
+      // BUG CORRIGÉ : certains navigateurs créent l'AudioContext en état "suspended" — le son ne
+      // joue alors jamais, silencieusement, même si tout le reste du code fonctionne correctement
+      // (texte affiché normalement). On force explicitement la reprise des deux contextes.
+      if (inputCtx.state === "suspended") await inputCtx.resume();
+      if (outputCtx.state === "suspended") await outputCtx.resume();
 
       // 3. Connect WebSocket
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";

@@ -469,6 +469,7 @@ export default function IntegratedVoiceController({
   const playAudioChunk = (base64Data: string) => {
     if (!audioCtxOutputRef.current) return;
     const ctx = audioCtxOutputRef.current;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
     
     try {
       const binary = atob(base64Data);
@@ -531,6 +532,11 @@ export default function IntegratedVoiceController({
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       audioCtxOutputRef.current = outputCtx;
       nextStartTimeRef.current = 0;
+
+      // BUG CORRIGÉ : certains navigateurs créent l'AudioContext en état "suspended" — le son ne
+      // joue alors jamais, silencieusement, même si le reste fonctionne (texte affiché normalement).
+      if (inputCtx.state === "suspended") await inputCtx.resume();
+      if (outputCtx.state === "suspended") await outputCtx.resume();
       
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const authToken = localStorage.getItem("auth_session_token") || "";
