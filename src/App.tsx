@@ -12,6 +12,7 @@ import DiagnosticChat from "./components/DiagnosticChat";
 import APIPricePanel from "./components/APIPricePanel";
 import SubscriptionPanel from "./components/SubscriptionPanel";
 import AdminPanel from "./components/AdminPanel";
+import BannerDisplay from "./components/BannerDisplay";
 import SplashScreen from "./components/SplashScreen";
 import IntegratedVoiceController from "./components/IntegratedVoiceController";
 import PhoneAuth from "./components/PhoneAuth";
@@ -1136,7 +1137,9 @@ export default function App() {
           <div className="flex-1 flex flex-col lg:pl-0 min-h-screen">
             {/* Main Workspace Layout Wrapper */}
             <main className="w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-6 lg:py-10">
-            
+            {/* Bannières / images flottantes définies par l'admin */}
+            <BannerDisplay />
+
             {/* TAB 1: Diagnostic Workspace */}
             {activeTab === "diagnose" && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

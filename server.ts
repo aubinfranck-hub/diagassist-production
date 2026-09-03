@@ -21,6 +21,24 @@ const sessions = new Map<string, { phone: string; plan: string; createdAt: numbe
 // Dernière position GPS connue par numéro (signalée par le client avec son consentement navigateur)
 const lastKnownLocation = new Map<string, { latitude: number; longitude: number; accuracy?: number; updatedAt: number }>();
 
+// Historique des connexions (login réussis), limité aux 500 dernières entrées pour éviter une fuite mémoire
+const connectionHistory: { phone: string; timestamp: number }[] = [];
+function logConnectionEvent(phone: string): void {
+  connectionHistory.push({ phone, timestamp: Date.now() });
+  if (connectionHistory.length > 500) connectionHistory.shift();
+}
+
+// Bannières / publicités configurées par l'admin, affichées côté client
+interface Banner {
+  id: string;
+  imageUrl: string;
+  linkUrl?: string;
+  displayType: "banner" | "floating";
+  active: boolean;
+  createdAt: number;
+}
+const banners = new Map<string, Banner>();
+
 // Nombre de tentatives de vérification OTP par numéro (anti brute-force)
 const otpAttempts = new Map<string, { count: number; windowStart: number }>();
 
@@ -1290,6 +1308,52 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true });
   });
 
+  // API Route (ADMIN UNIQUEMENT) : historique des connexions (les 500 dernières)
+  app.get("/api/admin/connection-history", adminLimiter, requireAdminAuth, (req, res) => {
+    // Les plus récentes en premier
+    const history = [...connectionHistory].reverse();
+    res.json({ success: true, history });
+  });
+
+  // API Routes (ADMIN UNIQUEMENT) : gestion des bannières / publicités
+  app.get("/api/admin/banners", adminLimiter, requireAdminAuth, (req, res) => {
+    res.json({ success: true, banners: Array.from(banners.values()).sort((a, b) => b.createdAt - a.createdAt) });
+  });
+
+  app.post("/api/admin/banners", adminLimiter, requireAdminAuth, (req, res) => {
+    const { imageUrl, linkUrl, displayType } = req.body;
+    if (!imageUrl) {
+      return res.status(400).json({ success: false, message: "L'image (URL) est requise." });
+    }
+    if (displayType !== "banner" && displayType !== "floating") {
+      return res.status(400).json({ success: false, message: "displayType doit être 'banner' ou 'floating'." });
+    }
+    const id = crypto.randomBytes(6).toString("hex");
+    const banner: Banner = { id, imageUrl, linkUrl: linkUrl || undefined, displayType, active: true, createdAt: Date.now() };
+    banners.set(id, banner);
+    res.json({ success: true, banner });
+  });
+
+  app.post("/api/admin/banners/:id/toggle", adminLimiter, requireAdminAuth, (req, res) => {
+    const banner = banners.get(req.params.id);
+    if (!banner) {
+      return res.status(404).json({ success: false, message: "Bannière introuvable." });
+    }
+    banner.active = !banner.active;
+    res.json({ success: true, banner });
+  });
+
+  app.delete("/api/admin/banners/:id", adminLimiter, requireAdminAuth, (req, res) => {
+    banners.delete(req.params.id);
+    res.json({ success: true });
+  });
+
+  // API Route (PUBLIQUE, authentifiée) : bannières actives à afficher côté client
+  app.get("/api/banners", requireAuth, (req, res) => {
+    const active = Array.from(banners.values()).filter((b) => b.active);
+    res.json({ success: true, banners: active });
+  });
+
   // API Route : connexion par numéro de téléphone + mot de passe (compte créé par l'admin)
   app.post("/api/auth/login", authLimiter, (req, res) => {
     const { phoneNumber, countryCode, password } = req.body;
@@ -1319,6 +1383,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
     loginAttempts.delete(fullPhone);
     const token = createSession(fullPhone);
+    logConnectionEvent(fullPhone);
     res.json({ success: true, message: "Connexion réussie.", sessionToken: token });
   });
 
