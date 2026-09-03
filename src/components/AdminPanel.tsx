@@ -2,7 +2,7 @@ import { useState, FormEvent, useEffect } from "react";
 import { 
   ShieldCheck, Cpu, Database, Trash2, Key, Calendar, 
   Settings, CheckCircle2, AlertOctagon, Terminal, RefreshCw, BarChart2,
-  TrendingUp, Coins, Calculator, Landmark, MapPin, Navigation
+  TrendingUp, Coins, Calculator, Landmark, MapPin, Navigation, AlertCircle, Phone
 } from "lucide-react";
 import { ApiUsage, SubscriptionPlan } from "../types";
 import APIPricePanel from "./APIPricePanel";
@@ -46,6 +46,17 @@ export default function AdminPanel({
   const [passwordInput, setPasswordInput] = useState("");
   const [passwordError, setPasswordError] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
+  // Conservé en mémoire (côté client uniquement, jamais loggé) pour appeler les routes admin
+  // suivantes (création d'accès manuel, etc.) sans redemander le code à chaque fois.
+  const [adminCode, setAdminCode] = useState("");
+
+  // Création d'accès manuel (numéro + code, alternative à l'OTP)
+  const [accessPhone, setAccessPhone] = useState("");
+  const [accessCountryCode, setAccessCountryCode] = useState("+225");
+  const [accessPlan, setAccessPlan] = useState<string>("");
+  const [creatingAccess, setCreatingAccess] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [createdAccess, setCreatedAccess] = useState<{ phone: string; code: string } | null>(null);
 
   // Nom de l'assistant personnalisé (DiagAssist par défaut)
   const [assistantName, setAssistantName] = useState<string>(() => {
@@ -109,7 +120,8 @@ export default function AdminPanel({
       const data = await res.json();
       if (data.success) {
         setIsAdminUnlocked(true);
-        // Le code n'est jamais conservé une fois validé
+        // Conservé en mémoire pour les appels admin suivants (create-access...) — jamais loggé ni affiché.
+        setAdminCode(passwordInput);
         setPasswordInput("");
       } else {
         setPasswordError(true);
@@ -118,6 +130,47 @@ export default function AdminPanel({
       setPasswordError(true);
     } finally {
       setUnlocking(false);
+    }
+  };
+
+  const generatePassword = (): string => {
+    // Mot de passe lisible/dictable au téléphone : 8 caractères alphanumériques
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sans 0/O/1/I pour éviter les confusions à la dictée
+    let pwd = "";
+    for (let i = 0; i < 8; i++) {
+      pwd += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return pwd;
+  };
+
+  const handleCreateAccess = async (e: FormEvent) => {
+    e.preventDefault();
+    setCreatingAccess(true);
+    setAccessError(null);
+    setCreatedAccess(null);
+    try {
+      const cleanPhone = accessPhone.replace(/\s+/g, "");
+      const fullPhone = `${accessCountryCode}${cleanPhone}`;
+      const generatedPassword = generatePassword();
+      const res = await fetch("/api/admin/create-account", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-code": adminCode,
+        },
+        body: JSON.stringify({ phone: fullPhone, password: generatedPassword, plan: accessPlan || undefined }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCreatedAccess({ phone: fullPhone, code: generatedPassword });
+        setAccessPhone("");
+      } else {
+        setAccessError(data.message || "Échec de la création de l'accès.");
+      }
+    } catch {
+      setAccessError("Erreur réseau.");
+    } finally {
+      setCreatingAccess(false);
     }
   };
 
@@ -209,6 +262,77 @@ export default function AdminPanel({
             <span>Réinitialiser les compteurs</span>
           </button>
         </div>
+      </div>
+
+      {/* Création d'accès manuel (numéro + mot de passe) — alternative à l'OTP WhatsApp/SMS */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+          <Key className="w-4 h-4 text-emerald-400" />
+          Créer un accès client (sans WhatsApp/SMS)
+        </h3>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          Génère un mot de passe pour un numéro. Communiquez-le au client par un autre moyen (appel, WhatsApp personnel). Le client se connecte ensuite avec son numéro + ce mot de passe, sans passer par l'OTP.
+        </p>
+
+        <form onSubmit={handleCreateAccess} className="flex flex-col md:flex-row gap-2.5">
+          <select
+            value={accessCountryCode}
+            onChange={(e) => setAccessCountryCode(e.target.value)}
+            className="bg-slate-950 border border-white/[0.08] text-slate-300 rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-emerald-500 cursor-pointer"
+          >
+            <option value="+225">+225 (CI)</option>
+            <option value="+221">+221 (SN)</option>
+            <option value="+223">+223 (ML)</option>
+            <option value="+226">+226 (BF)</option>
+            <option value="+228">+228 (TG)</option>
+            <option value="+229">+229 (BJ)</option>
+          </select>
+          <div className="relative flex-1">
+            <Phone className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="tel"
+              required
+              placeholder="07 12 34 56"
+              value={accessPhone}
+              onChange={(e) => setAccessPhone(e.target.value)}
+              className="w-full bg-slate-950 border border-white/[0.08] rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-mono"
+            />
+          </div>
+          <select
+            value={accessPlan}
+            onChange={(e) => setAccessPlan(e.target.value)}
+            className="bg-slate-950 border border-white/[0.08] text-slate-300 rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-emerald-500 cursor-pointer"
+          >
+            <option value="">Forfait : ne pas changer</option>
+            <option value="free_trial">Essai gratuit</option>
+            <option value="lite">Lite</option>
+            <option value="premium">Premium</option>
+            <option value="payg_active">Pass 24h</option>
+          </select>
+          <button
+            type="submit"
+            disabled={creatingAccess}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
+          >
+            {creatingAccess ? "Création..." : "Créer l'accès"}
+          </button>
+        </form>
+
+        {accessError && (
+          <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs p-3 rounded-xl flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{accessError}</span>
+          </div>
+        )}
+
+        {createdAccess && (
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 space-y-1.5">
+            <p className="text-[11px] text-emerald-300 font-bold uppercase tracking-wider">Accès créé — communiquez ceci au client :</p>
+            <p className="text-xs text-slate-300">Numéro : <span className="font-mono font-bold text-white">{createdAccess.phone}</span></p>
+            <p className="text-xs text-slate-300">Mot de passe : <span className="font-mono font-bold text-white text-base">{createdAccess.code}</span></p>
+            <p className="text-[10px] text-emerald-400/70">⚠️ Ce mot de passe ne sera plus jamais affiché ici — notez-le maintenant.</p>
+          </div>
+        )}
       </div>
 
       {/* Admin Control Tower: Quick Plan Simulator & Summary Grid */}

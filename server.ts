@@ -58,6 +58,7 @@ function setUserPlan(phone: string, plan: string): void {
   userPlans.set(phone, { plan, activatedAt: Date.now() });
 }
 
+
 function createSession(phone: string): string {
   const token = crypto.randomBytes(32).toString("hex");
   const plan = getEffectivePlan(phone);
