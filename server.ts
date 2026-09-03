@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import dotenv from "dotenv";
 import twilio from "twilio";
+import nodemailer from "nodemailer";
 import crypto from "crypto";
 import { WebSocketServer } from "ws";
 import rateLimit from "express-rate-limit";
@@ -109,6 +110,32 @@ if (process.env.ADMIN_SEED_PHONE && process.env.ADMIN_SEED_PASSWORD) {
   createAccount(process.env.ADMIN_SEED_PHONE, process.env.ADMIN_SEED_PASSWORD, true, process.env.ADMIN_SEED_EMAIL);
   setUserPlan(process.env.ADMIN_SEED_PHONE, "premium");
   console.log(`[Démarrage] Compte administrateur "graine" créé/rafraîchi pour ${process.env.ADMIN_SEED_PHONE}.`);
+}
+
+// --- Récupération de mot de passe par email (SMTP Gmail) ---
+// Codes de réinitialisation : email -> { code, phone, expiresAt }
+const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number }>();
+
+function getEmailTransporter() {
+  if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return null;
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_APP_PASSWORD,
+    },
+  });
+}
+
+// Recherche le numéro de téléphone associé à un email (les comptes sont indexés par téléphone)
+function findPhoneByEmail(email: string): string | null {
+  const normalized = email.trim().toLowerCase();
+  for (const [phone, account] of userAccounts) {
+    if (account.email && account.email.trim().toLowerCase() === normalized) {
+      return phone;
+    }
+  }
+  return null;
 }
 
 function requireAuth(req: any, res: any, next: any) {
@@ -1125,6 +1152,63 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const existing = userAccounts.get(phone);
     createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email);
     res.json({ success: true, message: "Mot de passe mis à jour." });
+  });
+
+  // API Route: demande de réinitialisation de mot de passe par email
+  app.post("/api/auth/forgot-password", authLimiter, async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Adresse email requise." });
+    }
+    // Message générique dans tous les cas (ne révèle jamais si l'email existe ou non, anti-énumération)
+    const genericResponse = { success: true, message: "Si cet email est associé à un compte, un code de réinitialisation vient d'être envoyé." };
+
+    const phone = findPhoneByEmail(email);
+    const transporter = getEmailTransporter();
+    if (!phone || !transporter) {
+      if (!transporter) console.error("[forgot-password] SMTP non configuré (SMTP_USER / SMTP_APP_PASSWORD manquants).");
+      return res.json(genericResponse);
+    }
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000 });
+
+    try {
+      await transporter.sendMail({
+        from: `"DiagAssist" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: "Réinitialisation de votre mot de passe DiagAssist",
+        text: `Votre code de réinitialisation DiagAssist est : ${code}\n\nCe code est valable 15 minutes. Si vous n'avez pas demandé cette réinitialisation, ignorez cet email.`,
+      });
+    } catch (err: any) {
+      console.error("[forgot-password] Erreur d'envoi d'email:", err.message || err);
+    }
+
+    res.json(genericResponse);
+  });
+
+  // API Route: réinitialisation effective du mot de passe avec le code reçu par email
+  app.post("/api/auth/reset-password", authLimiter, (req, res) => {
+    const { email, code, newPassword } = req.body;
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ success: false, message: "Email, code et nouveau mot de passe requis." });
+    }
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: "Le nouveau mot de passe doit faire au moins 6 caractères." });
+    }
+    const normalized = email.trim().toLowerCase();
+    const record = passwordResetCodes.get(normalized);
+    if (!record || record.code !== code.trim()) {
+      return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
+    }
+    if (Date.now() > record.expiresAt) {
+      passwordResetCodes.delete(normalized);
+      return res.status(400).json({ success: false, message: "Ce code a expiré. Veuillez en demander un nouveau." });
+    }
+    const existing = userAccounts.get(record.phone);
+    createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email);
+    passwordResetCodes.delete(normalized);
+    res.json({ success: true, message: "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
   });
 
   // API Route (ADMIN UNIQUEMENT) : liste les comptes clients existants (sans les mots de passe)

@@ -24,9 +24,67 @@ export default function PhoneAuth({ onLoginSuccess, onShowAdmin }: PhoneAuthProp
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedCountry, setSelectedCountry] = useState("+225");
   const [password, setPassword] = useState("");
-  const [step, setStep] = useState<"login" | "success">("login");
+  const [step, setStep] = useState<"login" | "success" | "forgot" | "reset">("login");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Mot de passe oublié
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError(null);
+    setResetMessage(null);
+    setResetLoading(true);
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: resetEmail }),
+      });
+      const data = await res.json();
+      setResetMessage(data.message);
+      setStep("reset");
+    } catch {
+      setResetError("Erreur réseau.");
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError(null);
+    setResetLoading(true);
+    try {
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: resetEmail, code: resetCode, newPassword: resetNewPassword }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setResetMessage(data.message);
+        setTimeout(() => {
+          setStep("login");
+          setResetMessage(null);
+          setResetCode("");
+          setResetNewPassword("");
+        }, 2000);
+      } else {
+        setResetError(data.message || "Échec de la réinitialisation.");
+      }
+    } catch {
+      setResetError("Erreur réseau.");
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,6 +244,99 @@ export default function PhoneAuth({ onLoginSuccess, onShowAdmin }: PhoneAuthProp
                 )}
               </button>
             </form>
+
+            <button
+              type="button"
+              onClick={() => { setStep("forgot"); setError(null); }}
+              className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
+            >
+              Mot de passe oublié ?
+            </button>
+          </div>
+        )}
+
+        {step === "forgot" && (
+          <div className="space-y-6 animate-fade-in relative">
+            <div className="text-center space-y-2.5">
+              <h2 className="text-base font-black text-slate-200 uppercase tracking-wide">
+                Mot de passe oublié
+              </h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Entrez l'adresse email associée à votre compte. Un code de réinitialisation vous sera envoyé si elle est reconnue.
+              </p>
+            </div>
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <input
+                type="email"
+                required
+                placeholder="votre@email.com"
+                value={resetEmail}
+                onChange={(e) => setResetEmail(e.target.value)}
+                className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+              />
+              <button
+                type="submit"
+                disabled={resetLoading}
+                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-750 text-white font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer disabled:opacity-50"
+              >
+                {resetLoading ? "Envoi..." : "Envoyer le code"}
+              </button>
+            </form>
+            <button
+              type="button"
+              onClick={() => setStep("login")}
+              className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
+            >
+              ← Retour à la connexion
+            </button>
+          </div>
+        )}
+
+        {step === "reset" && (
+          <div className="space-y-6 animate-fade-in relative">
+            <div className="text-center space-y-2.5">
+              <h2 className="text-base font-black text-slate-200 uppercase tracking-wide">
+                Nouveau mot de passe
+              </h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Entrez le code reçu par email et votre nouveau mot de passe.
+              </p>
+            </div>
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <input
+                type="text"
+                required
+                placeholder="Code reçu par email (6 chiffres)"
+                value={resetCode}
+                onChange={(e) => setResetCode(e.target.value)}
+                className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 font-mono tracking-widest text-center"
+              />
+              <input
+                type="password"
+                required
+                minLength={6}
+                placeholder="Nouveau mot de passe (min. 6 caractères)"
+                value={resetNewPassword}
+                onChange={(e) => setResetNewPassword(e.target.value)}
+                className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+              />
+              {resetMessage && <p className="text-xs text-emerald-400 text-center">{resetMessage}</p>}
+              {resetError && <p className="text-xs text-rose-400 text-center">{resetError}</p>}
+              <button
+                type="submit"
+                disabled={resetLoading}
+                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-750 text-white font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer disabled:opacity-50"
+              >
+                {resetLoading ? "..." : "Réinitialiser le mot de passe"}
+              </button>
+            </form>
+            <button
+              type="button"
+              onClick={() => setStep("login")}
+              className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
+            >
+              ← Retour à la connexion
+            </button>
           </div>
         )}
 
