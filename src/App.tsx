@@ -11,7 +11,6 @@ import DiagnosisResultView from "./components/DiagnosisResultView";
 import DiagnosticChat from "./components/DiagnosticChat";
 import APIPricePanel from "./components/APIPricePanel";
 import SubscriptionPanel from "./components/SubscriptionPanel";
-import AdminPanel from "./components/AdminPanel";
 import BannerDisplay from "./components/BannerDisplay";
 import SplashScreen from "./components/SplashScreen";
 import IntegratedVoiceController from "./components/IntegratedVoiceController";
@@ -824,26 +823,6 @@ export default function App() {
                   </div>
                   {activeTab === "prices" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                 </button>
-
-                {isAdminAccount && (
-                  <button
-                    onClick={() => {
-                      setActiveTab("admin");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }}
-                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
-                      activeTab === "admin"
-                        ? "bg-red-600 text-white shadow-lg shadow-red-600/25 border border-white/10"
-                        : "text-slate-400 hover:text-red-400 hover:bg-white/[0.03]"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Lock className="w-4.5 h-4.5 text-red-500" />
-                      <span>Espace Admin</span>
-                    </div>
-                    {activeTab === "admin" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                  </button>
-                )}
               </nav>
             </div>
 
@@ -1114,23 +1093,6 @@ export default function App() {
               <Sparkles className="w-5 h-5" />
               <span className="text-[9px] font-black uppercase tracking-wider">Offres</span>
             </button>
-
-            {isAdminAccount && (
-              <button
-                onClick={() => {
-                  setActiveTab("admin");
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
-                  activeTab === "admin"
-                    ? "bg-slate-950 text-red-500 border border-white/[0.04]"
-                    : "text-slate-400 hover:text-red-500"
-                }`}
-              >
-                <Lock className="w-5 h-5 animate-pulse" />
-                <span className="text-[9px] font-black uppercase tracking-wider">Admin</span>
-              </button>
-            )}
           </nav>
 
           {/* MAIN CONTAINER PANEL */}
@@ -1376,28 +1338,18 @@ export default function App() {
 
         {/* TAB 3: Clean Public Subscription Panel */}
         {activeTab === "prices" && (
-          <div className="max-w-3xl mx-auto space-y-8 animate-fade-in">
-            {/* User Subscription Selection Panel */}
+          <div className={isAdminAccount ? "max-w-6xl mx-auto space-y-8 animate-fade-in" : "max-w-3xl mx-auto space-y-8 animate-fade-in"}>
+            {/* User Subscription Selection Panel (ou tableau de bord complet si admin) */}
             <SubscriptionPanel 
               currentPlan={currentPlan} 
               onPlanChange={handlePlanChange} 
               onActivatePayg={() => handlePlanChange("payg_active")}
               onRequestActivation={handleRequestActivation}
               isAdmin={isAdminAccount}
-            />
-          </div>
-        )}
-
-        {/* TAB 3: Secure Admin Console Panel — visible uniquement pour les comptes admin */}
-        {activeTab === "admin" && isAdminAccount && (
-          <div className="max-w-5xl mx-auto">
-            <AdminPanel
               sessionCostUSD={sessionCostUSD}
               totalTokensUsed={totalTokensUsed}
               queriesCount={queriesCount}
               apiLogs={apiLogs}
-              currentPlan={currentPlan}
-              onPlanChange={handlePlanChange}
               onClearStats={handleClearStats}
               onAddMockLog={handleAddMockLog}
             />

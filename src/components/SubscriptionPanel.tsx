@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { SubscriptionPlan } from "../types";
 import AdminClientDashboard from "./AdminClientDashboard";
+import AdminPanel from "./AdminPanel";
 
 interface SubscriptionPanelProps {
   currentPlan: SubscriptionPlan;
@@ -12,9 +13,16 @@ interface SubscriptionPanelProps {
   isAdmin?: boolean;
   onActivatePayg: () => void;
   onRequestActivation: (plan: SubscriptionPlan, amount: number) => void;
+  // Props supplémentaires transmises à l'ancien panel admin (coûts/tokens), fusionné ici
+  sessionCostUSD?: number;
+  totalTokensUsed?: number;
+  queriesCount?: number;
+  apiLogs?: any[];
+  onClearStats?: () => void;
+  onAddMockLog?: () => void;
 }
 
-export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivatePayg, onRequestActivation, isAdmin }: SubscriptionPanelProps) {
+export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivatePayg, onRequestActivation, isAdmin, sessionCostUSD, totalTokensUsed, queriesCount, apiLogs, onClearStats, onAddMockLog }: SubscriptionPanelProps) {
   
   // State to hold the dynamically selected payment amount for Wave
   const [selectedAmount, setSelectedAmount] = useState<number>(6000);
@@ -119,7 +127,22 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
       {isAdmin ? (
         // Vue admin : tableau de bord complet (comptes, connexions, GPS, déconnexion),
         // sans les informations de paiement Wave qui ne concernent que les clients.
-        <AdminClientDashboard />
+        <>
+          <AdminClientDashboard />
+          <div className="mt-6">
+            <AdminPanel
+              sessionCostUSD={sessionCostUSD ?? 0}
+              totalTokensUsed={totalTokensUsed ?? 0}
+              queriesCount={queriesCount ?? 0}
+              apiLogs={apiLogs ?? []}
+              currentPlan={currentPlan}
+              onPlanChange={onPlanChange}
+              onClearStats={onClearStats ?? (() => {})}
+              onAddMockLog={onAddMockLog ?? (() => {})}
+              skipUnlock
+            />
+          </div>
+        </>
       ) : (
         <>
       {/* Banner indicating currently active plan */}

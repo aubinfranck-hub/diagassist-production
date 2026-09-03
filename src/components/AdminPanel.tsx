@@ -30,6 +30,8 @@ interface AdminPanelProps {
   onPlanChange: (plan: SubscriptionPlan) => void;
   onClearStats: () => void;
   onAddMockLog: () => void;
+  // Si true, saute l'écran de code admin (déjà authentifié en amont, ex: via l'onglet Abonnements)
+  skipUnlock?: boolean;
 }
 
 export default function AdminPanel({
@@ -40,9 +42,10 @@ export default function AdminPanel({
   currentPlan,
   onPlanChange,
   onClearStats,
-  onAddMockLog
+  onAddMockLog,
+  skipUnlock
 }: AdminPanelProps) {
-  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(Boolean(skipUnlock));
   const [passwordInput, setPasswordInput] = useState("");
   const [passwordError, setPasswordError] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
@@ -264,93 +267,6 @@ export default function AdminPanel({
             <span>Réinitialiser les compteurs</span>
           </button>
         </div>
-      </div>
-
-      {/* Création d'accès manuel (numéro + mot de passe) — alternative à l'OTP WhatsApp/SMS */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
-        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-          <Key className="w-4 h-4 text-emerald-400" />
-          Créer un accès client (sans WhatsApp/SMS)
-        </h3>
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          Génère un mot de passe pour un numéro. Communiquez-le au client par un autre moyen (appel, WhatsApp personnel). Le client se connecte ensuite avec son numéro + ce mot de passe, sans passer par l'OTP.
-        </p>
-
-        <form onSubmit={handleCreateAccess} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
-          <select
-            value={accessCountryCode}
-            onChange={(e) => setAccessCountryCode(e.target.value)}
-            className="bg-slate-950 border border-white/[0.08] text-slate-300 rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-emerald-500 cursor-pointer w-full"
-          >
-            <option value="+225">+225 (CI)</option>
-            <option value="+221">+221 (SN)</option>
-            <option value="+223">+223 (ML)</option>
-            <option value="+226">+226 (BF)</option>
-            <option value="+228">+228 (TG)</option>
-            <option value="+229">+229 (BJ)</option>
-          </select>
-          <div className="relative">
-            <Phone className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="tel"
-              required
-              placeholder="07 12 34 56"
-              value={accessPhone}
-              onChange={(e) => setAccessPhone(e.target.value)}
-              className="w-full bg-slate-950 border border-white/[0.08] rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-mono"
-            />
-          </div>
-          <input
-            type="email"
-            placeholder="Email (récupération, optionnel)"
-            value={accessEmail}
-            onChange={(e) => setAccessEmail(e.target.value)}
-            className="sm:col-span-2 lg:col-span-2 w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
-          />
-          <select
-            value={accessPlan}
-            onChange={(e) => setAccessPlan(e.target.value)}
-            className="bg-slate-950 border border-white/[0.08] text-slate-300 rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-emerald-500 cursor-pointer w-full"
-          >
-            <option value="">Forfait : ne pas changer</option>
-            <option value="free_trial">Essai gratuit</option>
-            <option value="lite">Lite</option>
-            <option value="premium">Premium</option>
-            <option value="payg_active">Pass 24h</option>
-          </select>
-          <label className="flex items-center gap-1.5 text-xs text-slate-400 font-bold whitespace-nowrap px-1 cursor-pointer bg-slate-950 border border-white/[0.08] rounded-xl justify-center">
-            <input
-              type="checkbox"
-              checked={accessIsAdmin}
-              onChange={(e) => setAccessIsAdmin(e.target.checked)}
-              className="cursor-pointer accent-emerald-500"
-            />
-            Compte admin
-          </label>
-          <button
-            type="submit"
-            disabled={creatingAccess}
-            className="sm:col-span-2 lg:col-span-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer disabled:opacity-50 whitespace-nowrap w-full"
-          >
-            {creatingAccess ? "Création..." : "Créer l'accès"}
-          </button>
-        </form>
-
-        {accessError && (
-          <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs p-3 rounded-xl flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{accessError}</span>
-          </div>
-        )}
-
-        {createdAccess && (
-          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 space-y-1.5">
-            <p className="text-[11px] text-emerald-300 font-bold uppercase tracking-wider">Accès créé — communiquez ceci au client :</p>
-            <p className="text-xs text-slate-300">Numéro : <span className="font-mono font-bold text-white">{createdAccess.phone}</span></p>
-            <p className="text-xs text-slate-300">Mot de passe : <span className="font-mono font-bold text-white text-base">{createdAccess.code}</span></p>
-            <p className="text-[10px] text-emerald-400/70">⚠️ Ce mot de passe ne sera plus jamais affiché ici — notez-le maintenant.</p>
-          </div>
-        )}
       </div>
 
       {/* Admin Control Tower: Quick Plan Simulator & Summary Grid */}
