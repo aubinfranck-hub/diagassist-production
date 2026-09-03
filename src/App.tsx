@@ -181,10 +181,6 @@ export default function App() {
     return localStorage.getItem("auth_user_phone");
   });
 
-  // Accès direct au panel Admin depuis l'écran de connexion, SANS être connecté en tant qu'utilisateur.
-  // Nécessaire pour créer les premiers comptes clients (numéro + mot de passe) avant qu'aucun compte n'existe.
-  const [showStandaloneAdmin, setShowStandaloneAdmin] = useState(false);
-
   // Nom de l'assistant personnalisé (DiagAssist par défaut)
   const [assistantName, setAssistantName] = useState<string>(() => {
     return localStorage.getItem("assistant_name") || "DiagAssist";
@@ -223,6 +219,8 @@ export default function App() {
   const [remainingTimeText, setRemainingTimeText] = useState<string>("");
   // Échéance réelle du forfait, fournie par le serveur (source de vérité — voir /api/user/status)
   const [planExpiresAt, setPlanExpiresAt] = useState<number | null>(null);
+  // Compte administrateur ou non — l'onglet Admin n'est visible que si true (renvoyé par le serveur)
+  const [isAdminAccount, setIsAdminAccount] = useState(false);
 
   // Plan changer helper that records activation time (usage interne : expiration du plan, etc.)
   const handlePlanChange = async (plan: SubscriptionPlan) => {
@@ -304,6 +302,7 @@ export default function App() {
           setCurrentPlan(data.plan);
           localStorage.setItem(`plan_${loggedInUser}`, data.plan);
           setPlanExpiresAt(typeof data.expiresAt === "number" ? data.expiresAt : null);
+          setIsAdminAccount(Boolean(data.isAdmin));
         }
       })
       .catch(err => {
@@ -692,32 +691,12 @@ export default function App() {
         </div>
       )}
 
-      {!showSplash && showStandaloneAdmin ? (
-        <div className="min-h-screen bg-slate-950 font-sans text-slate-100 p-4 md:p-8">
-          <button
-            onClick={() => setShowStandaloneAdmin(false)}
-            className="mb-4 text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1.5 cursor-pointer"
-          >
-            ← Retour à la connexion
-          </button>
-          <AdminPanel
-            sessionCostUSD={0}
-            totalTokensUsed={0}
-            queriesCount={0}
-            apiLogs={[]}
-            currentPlan="free_trial"
-            onPlanChange={() => {}}
-            onClearStats={() => {}}
-            onAddMockLog={() => {}}
-          />
-        </div>
-      ) : !showSplash && !loggedInUser ? (
+      {!showSplash && !loggedInUser ? (
         <PhoneAuth
           onLoginSuccess={(phone) => {
             setLoggedInUser(phone);
             localStorage.setItem("auth_user_phone", phone);
           }}
-          onShowAdmin={() => setShowStandaloneAdmin(true)}
         />
       ) : (
         <div className="min-h-screen bg-slate-950 font-sans text-slate-100 workshop-grid pb-24 lg:pb-0 lg:flex lg:items-stretch">
@@ -816,23 +795,25 @@ export default function App() {
                   {activeTab === "prices" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                 </button>
 
-                <button
-                  onClick={() => {
-                    setActiveTab("admin");
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                  className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
-                    activeTab === "admin"
-                      ? "bg-red-600 text-white shadow-lg shadow-red-600/25 border border-white/10"
-                      : "text-slate-400 hover:text-red-400 hover:bg-white/[0.03]"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Lock className="w-4.5 h-4.5 text-red-500" />
-                    <span>Espace Admin</span>
-                  </div>
-                  {activeTab === "admin" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                </button>
+                {isAdminAccount && (
+                  <button
+                    onClick={() => {
+                      setActiveTab("admin");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
+                      activeTab === "admin"
+                        ? "bg-red-600 text-white shadow-lg shadow-red-600/25 border border-white/10"
+                        : "text-slate-400 hover:text-red-400 hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Lock className="w-4.5 h-4.5 text-red-500" />
+                      <span>Espace Admin</span>
+                    </div>
+                    {activeTab === "admin" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  </button>
+                )}
               </nav>
             </div>
 
@@ -1104,20 +1085,22 @@ export default function App() {
               <span className="text-[9px] font-black uppercase tracking-wider">Offres</span>
             </button>
 
-            <button
-              onClick={() => {
-                setActiveTab("admin");
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
-                activeTab === "admin"
-                  ? "bg-slate-950 text-red-500 border border-white/[0.04]"
-                  : "text-slate-400 hover:text-red-500"
-              }`}
-            >
-              <Lock className="w-5 h-5 animate-pulse" />
-              <span className="text-[9px] font-black uppercase tracking-wider">Admin</span>
-            </button>
+            {isAdminAccount && (
+              <button
+                onClick={() => {
+                  setActiveTab("admin");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
+                  activeTab === "admin"
+                    ? "bg-slate-950 text-red-500 border border-white/[0.04]"
+                    : "text-slate-400 hover:text-red-500"
+                }`}
+              >
+                <Lock className="w-5 h-5 animate-pulse" />
+                <span className="text-[9px] font-black uppercase tracking-wider">Admin</span>
+              </button>
+            )}
           </nav>
 
           {/* MAIN CONTAINER PANEL */}
@@ -1372,8 +1355,8 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: Secure Admin Console Panel */}
-        {activeTab === "admin" && (
+        {/* TAB 3: Secure Admin Console Panel — visible uniquement pour les comptes admin */}
+        {activeTab === "admin" && isAdminAccount && (
           <div className="max-w-5xl mx-auto">
             <AdminPanel
               sessionCostUSD={sessionCostUSD}

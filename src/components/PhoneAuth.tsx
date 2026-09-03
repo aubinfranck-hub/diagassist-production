@@ -3,7 +3,6 @@ import { Phone, ShieldCheck, ArrowRight, RefreshCw, Sparkles, CheckCircle, Alert
 
 interface PhoneAuthProps {
   onLoginSuccess: (phoneNumber: string) => void;
-  onShowAdmin?: () => void;
 }
 
 const COUNTRY_CODES = [
@@ -20,7 +19,7 @@ const COUNTRY_CODES = [
   { code: "+33", country: "France 🇫🇷" },
 ];
 
-export default function PhoneAuth({ onLoginSuccess, onShowAdmin }: PhoneAuthProps) {
+export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedCountry, setSelectedCountry] = useState("+225");
   const [password, setPassword] = useState("");
@@ -364,16 +363,6 @@ export default function PhoneAuth({ onLoginSuccess, onShowAdmin }: PhoneAuthProp
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-500/70" />
           <span>Connexion sécurisée</span>
         </div>
-
-        {onShowAdmin && (
-          <button
-            type="button"
-            onClick={onShowAdmin}
-            className="w-full mt-3 text-[10px] text-slate-600 hover:text-slate-400 transition cursor-pointer"
-          >
-            Administration
-          </button>
-        )}
       </div>
 
       <div className="mt-6 text-center text-slate-600 text-[10px] max-w-sm leading-relaxed">
