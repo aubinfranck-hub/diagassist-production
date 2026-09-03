@@ -65,6 +65,35 @@ function createSession(phone: string): string {
   return token;
 }
 
+// --- Comptes client par numéro + mot de passe (créés manuellement par l'admin) ---
+// Alternative à l'OTP WhatsApp : l'admin crée le compte du client (numéro + mot de passe) sur son
+// interface, et le lui communique directement. Aucune dépendance à un fournisseur SMS/WhatsApp.
+const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number }>();
+
+function hashPassword(password: string, salt: string): string {
+  return crypto.scryptSync(password, salt, 64).toString("hex");
+}
+
+function createAccount(phone: string, password: string): void {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const passwordHash = hashPassword(password, salt);
+  userAccounts.set(phone, { passwordHash, salt, createdAt: Date.now() });
+}
+
+function verifyAccountPassword(phone: string, password: string): boolean {
+  const account = userAccounts.get(phone);
+  if (!account) return false;
+  const candidateHash = hashPassword(password, account.salt);
+  // Comparaison en temps constant pour éviter les attaques par mesure de timing
+  const a = Buffer.from(candidateHash, "hex");
+  const b = Buffer.from(account.passwordHash, "hex");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Anti brute-force sur la connexion par mot de passe (même logique que pour l'OTP)
+const loginAttempts = new Map<string, { count: number; windowStart: number }>();
+
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
@@ -1038,6 +1067,71 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     console.log(`[Admin] Forfait "${plan}" activé pour ${phone} (${updated} session(s) active(s) mise(s) à jour).`);
     res.json({ success: true, message: `Forfait "${plan}" activé pour ${phone}.`, sessionsUpdated: updated });
   });
+
+  // API Route (ADMIN UNIQUEMENT) : crée ou met à jour le compte d'un client (numéro + mot de passe).
+  // Vous communiquez ensuite ces identifiants directement au client (téléphone, en personne, etc.).
+  app.post("/api/admin/create-account", adminLimiter, requireAdminAuth, (req, res) => {
+    const { phone, password, plan } = req.body;
+    if (!phone || !password) {
+      return res.status(400).json({ success: false, message: "phone et password sont requis." });
+    }
+    if (typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
+    }
+    createAccount(phone, password);
+    if (plan) {
+      if (!(plan in PLAN_LIMITS)) {
+        return res.status(400).json({ success: false, message: `Plan inconnu : "${plan}".` });
+      }
+      setUserPlan(phone, plan);
+      usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });
+    }
+    console.log(`[Admin] Compte créé/mis à jour pour ${phone}${plan ? ` avec le forfait "${plan}"` : ""}.`);
+    res.json({ success: true, message: `Compte créé pour ${phone}. Communiquez-lui le mot de passe directement.` });
+  });
+
+  // API Route (ADMIN UNIQUEMENT) : liste les comptes clients existants (sans les mots de passe)
+  app.get("/api/admin/accounts", adminLimiter, requireAdminAuth, (req, res) => {
+    const accounts = Array.from(userAccounts.entries()).map(([phone, acc]) => ({
+      phone,
+      createdAt: acc.createdAt,
+      plan: userPlans.get(phone)?.plan || "free_trial",
+    }));
+    res.json({ success: true, accounts });
+  });
+
+  // API Route : connexion par numéro de téléphone + mot de passe (compte créé par l'admin)
+  app.post("/api/auth/login", authLimiter, (req, res) => {
+    const { phoneNumber, countryCode, password } = req.body;
+    if (!phoneNumber || !password) {
+      return res.status(400).json({ success: false, message: "Numéro de téléphone et mot de passe requis." });
+    }
+    const cleanPhone = phoneNumber.replace(/\s+/g, "");
+    const fullPhone = `${countryCode || "+225"}${cleanPhone}`;
+
+    // Anti brute-force par numéro (indépendant du rate-limit global par IP)
+    const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+    const MAX_ATTEMPTS_PER_PHONE = 8;
+    const attempts = loginAttempts.get(fullPhone) || { count: 0, windowStart: Date.now() };
+    if (Date.now() - attempts.windowStart > ATTEMPT_WINDOW_MS) {
+      attempts.count = 0;
+      attempts.windowStart = Date.now();
+    }
+    if (attempts.count >= MAX_ATTEMPTS_PER_PHONE) {
+      return res.status(429).json({ success: false, message: "Trop de tentatives pour ce numéro. Veuillez réessayer plus tard." });
+    }
+
+    if (!userAccounts.has(fullPhone) || !verifyAccountPassword(fullPhone, password)) {
+      attempts.count += 1;
+      loginAttempts.set(fullPhone, attempts);
+      return res.status(401).json({ success: false, message: "Numéro ou mot de passe incorrect." });
+    }
+
+    loginAttempts.delete(fullPhone);
+    const token = createSession(fullPhone);
+    res.json({ success: true, message: "Connexion réussie.", sessionToken: token });
+  });
+
 
   // API Route (ADMIN UNIQUEMENT) : vérifie un code d'accès admin sans jamais exposer le secret au client
   app.post("/api/admin/verify-code", adminLimiter, (req, res) => {
