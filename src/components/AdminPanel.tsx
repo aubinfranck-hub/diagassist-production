@@ -54,6 +54,8 @@ export default function AdminPanel({
   const [accessPhone, setAccessPhone] = useState("");
   const [accessCountryCode, setAccessCountryCode] = useState("+225");
   const [accessPlan, setAccessPlan] = useState<string>("");
+  const [accessIsAdmin, setAccessIsAdmin] = useState(false);
+  const [accessEmail, setAccessEmail] = useState("");
   const [creatingAccess, setCreatingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const [createdAccess, setCreatedAccess] = useState<{ phone: string; code: string } | null>(null);
@@ -158,7 +160,7 @@ export default function AdminPanel({
           "Content-Type": "application/json",
           "x-admin-code": adminCode,
         },
-        body: JSON.stringify({ phone: fullPhone, password: generatedPassword, plan: accessPlan || undefined }),
+        body: JSON.stringify({ phone: fullPhone, password: generatedPassword, plan: accessPlan || undefined, isAdmin: accessIsAdmin, email: accessEmail || undefined }),
       });
       const data = await res.json();
       if (data.success) {
@@ -298,6 +300,13 @@ export default function AdminPanel({
               className="w-full bg-slate-950 border border-white/[0.08] rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-mono"
             />
           </div>
+          <input
+            type="email"
+            placeholder="Email (récupération, optionnel)"
+            value={accessEmail}
+            onChange={(e) => setAccessEmail(e.target.value)}
+            className="flex-1 bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+          />
           <select
             value={accessPlan}
             onChange={(e) => setAccessPlan(e.target.value)}
@@ -309,6 +318,15 @@ export default function AdminPanel({
             <option value="premium">Premium</option>
             <option value="payg_active">Pass 24h</option>
           </select>
+          <label className="flex items-center gap-1.5 text-xs text-slate-400 font-bold whitespace-nowrap px-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={accessIsAdmin}
+              onChange={(e) => setAccessIsAdmin(e.target.checked)}
+              className="cursor-pointer accent-emerald-500"
+            />
+            Compte admin
+          </label>
           <button
             type="submit"
             disabled={creatingAccess}

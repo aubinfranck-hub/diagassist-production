@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { 
   Sparkles, ShieldCheck, Zap, Layers, ExternalLink, Check, Volume2, 
-  BookOpen, HelpCircle, AlertCircle, RefreshCw, Coins
+  BookOpen, HelpCircle, AlertCircle, RefreshCw, Coins, Lock
 } from "lucide-react";
 import { SubscriptionPlan } from "../types";
 
@@ -17,6 +17,43 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
   // State to hold the dynamically selected payment amount for Wave
   const [selectedAmount, setSelectedAmount] = useState<number>(6000);
   const [requestSent, setRequestSent] = useState(false);
+
+  // Changement de mot de passe (self-service)
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [pwdLoading, setPwdLoading] = useState(false);
+  const [pwdError, setPwdError] = useState<string | null>(null);
+  const [pwdSuccess, setPwdSuccess] = useState(false);
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwdError(null);
+    setPwdSuccess(false);
+    setPwdLoading(true);
+    try {
+      const token = localStorage.getItem("auth_session_token");
+      const res = await fetch("/api/user/change-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token || ""}`,
+        },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPwdSuccess(true);
+        setCurrentPassword("");
+        setNewPassword("");
+      } else {
+        setPwdError(data.message || "Échec du changement de mot de passe.");
+      }
+    } catch {
+      setPwdError("Erreur réseau.");
+    } finally {
+      setPwdLoading(false);
+    }
+  };
 
   // Dynamic Wave payment URL generator
   const getWavePaymentUrl = (amount: number) => {
@@ -40,7 +77,43 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
 
   return (
     <div className="space-y-8 animate-fade-in">
-      
+
+      {/* Mon compte : changement de mot de passe (self-service) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+          <Lock className="w-3.5 h-3.5 text-slate-400" />
+          Mon compte : changer mon mot de passe
+        </h3>
+        <form onSubmit={handleChangePassword} className="flex flex-col md:flex-row gap-2.5">
+          <input
+            type="password"
+            required
+            placeholder="Mot de passe actuel"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            className="flex-1 bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+          />
+          <input
+            type="password"
+            required
+            minLength={6}
+            placeholder="Nouveau mot de passe (min. 6 caractères)"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            className="flex-1 bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+          />
+          <button
+            type="submit"
+            disabled={pwdLoading}
+            className="bg-slate-800 hover:bg-slate-700 border border-white/[0.08] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
+          >
+            {pwdLoading ? "..." : "Changer"}
+          </button>
+        </form>
+        {pwdError && <p className="text-xs text-rose-400">{pwdError}</p>}
+        {pwdSuccess && <p className="text-xs text-emerald-400">Mot de passe mis à jour avec succès.</p>}
+      </div>
+
       {/* Banner indicating currently active plan */}
       <div className="premium-glass-card rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-red-600/5 rounded-full blur-3xl pointer-events-none"></div>

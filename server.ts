@@ -69,16 +69,23 @@ function createSession(phone: string): string {
 // --- Comptes client par numéro + mot de passe (créés manuellement par l'admin) ---
 // Alternative à l'OTP WhatsApp : l'admin crée le compte du client (numéro + mot de passe) sur son
 // interface, et le lui communique directement. Aucune dépendance à un fournisseur SMS/WhatsApp.
-const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number }>();
+const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number; isAdmin: boolean; email?: string }>();
 
 function hashPassword(password: string, salt: string): string {
   return crypto.scryptSync(password, salt, 64).toString("hex");
 }
 
-function createAccount(phone: string, password: string): void {
+function createAccount(phone: string, password: string, isAdmin: boolean = false, email?: string): void {
   const salt = crypto.randomBytes(16).toString("hex");
   const passwordHash = hashPassword(password, salt);
-  userAccounts.set(phone, { passwordHash, salt, createdAt: Date.now() });
+  const existing = userAccounts.get(phone);
+  userAccounts.set(phone, {
+    passwordHash,
+    salt,
+    createdAt: existing?.createdAt ?? Date.now(),
+    isAdmin,
+    email: email ?? existing?.email,
+  });
 }
 
 function verifyAccountPassword(phone: string, password: string): boolean {
@@ -94,6 +101,15 @@ function verifyAccountPassword(phone: string, password: string): boolean {
 
 // Anti brute-force sur la connexion par mot de passe (même logique que pour l'OTP)
 const loginAttempts = new Map<string, { count: number; windowStart: number }>();
+
+// Compte admin "de démarrage" créé automatiquement au lancement du serveur si ces variables
+// d'environnement sont définies. Permet de créer le premier compte administrateur sans jamais
+// avoir besoin d'appeler l'application déployée depuis l'extérieur.
+if (process.env.ADMIN_SEED_PHONE && process.env.ADMIN_SEED_PASSWORD) {
+  createAccount(process.env.ADMIN_SEED_PHONE, process.env.ADMIN_SEED_PASSWORD, true, process.env.ADMIN_SEED_EMAIL);
+  setUserPlan(process.env.ADMIN_SEED_PHONE, "premium");
+  console.log(`[Démarrage] Compte administrateur "graine" créé/rafraîchi pour ${process.env.ADMIN_SEED_PHONE}.`);
+}
 
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
@@ -1001,6 +1017,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     // expiresAt calculé côté serveur (source de vérité) — le client ne doit plus deviner
     // une échéance à partir d'une horloge locale non fiable (bug corrigé).
     const expiresAt = planRecord && duration ? planRecord.activatedAt + duration : null;
+    const isAdmin = userAccounts.get(phone)?.isAdmin ?? false;
     res.json({
       success: true,
       plan,
@@ -1009,6 +1026,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       limit: limit === Infinity ? null : limit,
       remaining: limit === Infinity ? null : Math.max(0, limit - usage.diagnosisCount),
       expiresAt,
+      isAdmin,
     });
   });
 
@@ -1072,14 +1090,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route (ADMIN UNIQUEMENT) : crée ou met à jour le compte d'un client (numéro + mot de passe).
   // Vous communiquez ensuite ces identifiants directement au client (téléphone, en personne, etc.).
   app.post("/api/admin/create-account", adminLimiter, requireAdminAuth, (req, res) => {
-    const { phone, password, plan } = req.body;
+    const { phone, password, plan, isAdmin, email } = req.body;
     if (!phone || !password) {
       return res.status(400).json({ success: false, message: "phone et password sont requis." });
     }
     if (typeof password !== "string" || password.length < 6) {
       return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
     }
-    createAccount(phone, password);
+    createAccount(phone, password, Boolean(isAdmin), email);
     if (plan) {
       if (!(plan in PLAN_LIMITS)) {
         return res.status(400).json({ success: false, message: `Plan inconnu : "${plan}".` });
@@ -1087,8 +1105,26 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       setUserPlan(phone, plan);
       usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });
     }
-    console.log(`[Admin] Compte créé/mis à jour pour ${phone}${plan ? ` avec le forfait "${plan}"` : ""}.`);
+    console.log(`[Admin] Compte créé/mis à jour pour ${phone}${plan ? ` avec le forfait "${plan}"` : ""}${isAdmin ? " (admin)" : ""}.`);
     res.json({ success: true, message: `Compte créé pour ${phone}. Communiquez-lui le mot de passe directement.` });
+  });
+
+  // API Route: l'utilisateur connecté change lui-même son mot de passe
+  app.post("/api/user/change-password", authLimiter, requireAuth, (req: any, res) => {
+    const { currentPassword, newPassword } = req.body;
+    const { phone } = req.session;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: "Mot de passe actuel et nouveau mot de passe requis." });
+    }
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: "Le nouveau mot de passe doit faire au moins 6 caractères." });
+    }
+    if (!verifyAccountPassword(phone, currentPassword)) {
+      return res.status(401).json({ success: false, message: "Mot de passe actuel incorrect." });
+    }
+    const existing = userAccounts.get(phone);
+    createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email);
+    res.json({ success: true, message: "Mot de passe mis à jour." });
   });
 
   // API Route (ADMIN UNIQUEMENT) : liste les comptes clients existants (sans les mots de passe)
@@ -1097,6 +1133,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       phone,
       createdAt: acc.createdAt,
       plan: userPlans.get(phone)?.plan || "free_trial",
+      isAdmin: acc.isAdmin,
+      email: acc.email || null,
     }));
     res.json({ success: true, accounts });
   });
