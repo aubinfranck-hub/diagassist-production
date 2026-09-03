@@ -84,14 +84,14 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
           <Lock className="w-3.5 h-3.5 text-slate-400" />
           Mon compte : changer mon mot de passe
         </h3>
-        <form onSubmit={handleChangePassword} className="flex flex-col md:flex-row gap-2.5">
+        <form onSubmit={handleChangePassword} className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           <input
             type="password"
             required
             placeholder="Mot de passe actuel"
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
-            className="flex-1 bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
           />
           <input
             type="password"
@@ -100,12 +100,12 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
             placeholder="Nouveau mot de passe (min. 6 caractères)"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
-            className="flex-1 bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
           />
           <button
             type="submit"
             disabled={pwdLoading}
-            className="bg-slate-800 hover:bg-slate-700 border border-white/[0.08] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer disabled:opacity-50 whitespace-nowrap"
+            className="sm:col-span-2 bg-slate-800 hover:bg-slate-700 border border-white/[0.08] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer disabled:opacity-50 whitespace-nowrap w-full"
           >
             {pwdLoading ? "..." : "Changer"}
           </button>
