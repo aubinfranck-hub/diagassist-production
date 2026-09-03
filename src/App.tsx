@@ -181,6 +181,10 @@ export default function App() {
     return localStorage.getItem("auth_user_phone");
   });
 
+  // Accès direct au panel Admin depuis l'écran de connexion, SANS être connecté en tant qu'utilisateur.
+  // Nécessaire pour créer les premiers comptes clients (numéro + mot de passe) avant qu'aucun compte n'existe.
+  const [showStandaloneAdmin, setShowStandaloneAdmin] = useState(false);
+
   // Nom de l'assistant personnalisé (DiagAssist par défaut)
   const [assistantName, setAssistantName] = useState<string>(() => {
     return localStorage.getItem("assistant_name") || "DiagAssist";
@@ -688,12 +692,32 @@ export default function App() {
         </div>
       )}
 
-      {!showSplash && !loggedInUser ? (
+      {!showSplash && showStandaloneAdmin ? (
+        <div className="min-h-screen bg-slate-950 font-sans text-slate-100 p-4 md:p-8">
+          <button
+            onClick={() => setShowStandaloneAdmin(false)}
+            className="mb-4 text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1.5 cursor-pointer"
+          >
+            ← Retour à la connexion
+          </button>
+          <AdminPanel
+            sessionCostUSD={0}
+            totalTokensUsed={0}
+            queriesCount={0}
+            apiLogs={[]}
+            currentPlan="free_trial"
+            onPlanChange={() => {}}
+            onClearStats={() => {}}
+            onAddMockLog={() => {}}
+          />
+        </div>
+      ) : !showSplash && !loggedInUser ? (
         <PhoneAuth
           onLoginSuccess={(phone) => {
             setLoggedInUser(phone);
             localStorage.setItem("auth_user_phone", phone);
           }}
+          onShowAdmin={() => setShowStandaloneAdmin(true)}
         />
       ) : (
         <div className="min-h-screen bg-slate-950 font-sans text-slate-100 workshop-grid pb-24 lg:pb-0 lg:flex lg:items-stretch">
