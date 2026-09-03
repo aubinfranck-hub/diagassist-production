@@ -119,6 +119,12 @@ export default function DiagAssistLiveScreen({
   const [captures, setCaptures] = useState<CaptureItem[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
+  // BUG CORRIGÉ : processor.onaudioprocess est défini une seule fois au démarrage de l'appel et
+  // capturait la valeur de isMuted au moment de sa création (fermeture figée React). Basculer le
+  // bouton "muet" en cours d'appel n'avait donc aucun effet réel sur l'envoi audio. On utilise une
+  // ref, toujours à jour, lue directement dans le callback.
+  const isMutedRef = useRef(false);
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
   const [speakerEnabled, setSpeakerEnabled] = useState(true);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
   const [liveInputText, setLiveInputText] = useState("");
@@ -599,7 +605,7 @@ Codes DTC: ${dtcCodes}`;
       processor.connect(inputCtx.destination);
 
       processor.onaudioprocess = (e) => {
-        if (ws.readyState === WebSocket.OPEN && !isMuted) {
+        if (ws.readyState === WebSocket.OPEN && !isMutedRef.current) {
           const inputData = e.inputBuffer.getChannelData(0);
           const base64 = pcmToBase64(inputData);
           ws.send(JSON.stringify({ type: "audio", audio: base64 }));
