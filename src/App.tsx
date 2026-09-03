@@ -341,7 +341,7 @@ export default function App() {
       () => {
         // L'utilisateur a refusé ou la géolocalisation a échoué — on n'insiste pas.
       },
-      { timeout: 8000 }
+      { timeout: 15000, enableHighAccuracy: true, maximumAge: 60000 }
     );
   }, [loggedInUser]);
 

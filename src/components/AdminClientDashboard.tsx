@@ -50,6 +50,48 @@ const formatDate = (ts: number) => new Date(ts).toLocaleString("fr-FR", { dateSt
 // Numéro au format international -> format attendu par wa.me (chiffres uniquement)
 const toWaMeNumber = (phone: string) => phone.replace(/[^0-9]/g, "");
 
+// Carte intégrée avec un vrai repère à la position exacte, dépliable au clic
+function LocationMapPreview({ location }: { location: { latitude: number; longitude: number; accuracy?: number; updatedAt: number } }) {
+  const [expanded, setExpanded] = useState(false);
+  const embedUrl = `https://www.google.com/maps?q=${location.latitude},${location.longitude}&z=15&output=embed`;
+  const fullMapUrl = `https://www.google.com/maps?q=${location.latitude},${location.longitude}`;
+
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
+      >
+        <MapPin className="w-3 h-3" />
+        {expanded ? "Masquer la carte" : "Voir le point exact sur la carte"}
+        ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
+        <span className="text-slate-500">— maj {formatDate(location.updatedAt)}</span>
+      </button>
+      {expanded && (
+        <div className="rounded-xl overflow-hidden border border-white/[0.08]">
+          <iframe
+            title="Position du client"
+            src={embedUrl}
+            width="100%"
+            height="220"
+            style={{ border: 0 }}
+            loading="lazy"
+          />
+          <a
+            href={fullMapUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block text-center text-[10px] text-slate-400 hover:text-white bg-slate-900 py-1.5"
+          >
+            Ouvrir en plein écran dans Google Maps
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminClientDashboard() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [activeSessions, setActiveSessions] = useState<SessionInfo[]>([]);
@@ -59,6 +101,7 @@ export default function AdminClientDashboard() {
   const [listError, setListError] = useState<string | null>(null);
   const [logoutBusyPhone, setLogoutBusyPhone] = useState<string | null>(null);
   const [logoutFeedback, setLogoutFeedback] = useState<{ phone: string; ok: boolean; message: string } | null>(null);
+  const [mapModalLocation, setMapModalLocation] = useState<Account["location"]>(null);
 
   // Création de compte
   const [phone, setPhone] = useState("");
@@ -384,16 +427,7 @@ export default function AdminClientDashboard() {
               </div>
 
               {s.location ? (
-                <a
-                  href={`https://www.google.com/maps?q=${s.location.latitude},${s.location.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 underline"
-                >
-                  <MapPin className="w-3 h-3" />
-                  Voir la position précise sur la carte ({s.location.latitude.toFixed(4)}, {s.location.longitude.toFixed(4)})
-                  <span className="text-slate-500">— maj {formatDate(s.location.updatedAt)}</span>
-                </a>
+                <LocationMapPreview location={s.location} />
               ) : (
                 <p className="text-[10px] text-slate-600 flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> Position non partagée par ce client
@@ -442,6 +476,7 @@ export default function AdminClientDashboard() {
                 <th className="py-2 pr-3">Email</th>
                 <th className="py-2 pr-3">Créé le</th>
                 <th className="py-2 pr-3">Rôle</th>
+                <th className="py-2 pr-3">Position</th>
                 <th className="py-2 pr-3">Contact</th>
               </tr>
             </thead>
@@ -459,6 +494,21 @@ export default function AdminClientDashboard() {
                       </span>
                     ) : (
                       <span className="text-slate-500">Client</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3">
+                    {a.location ? (
+                      <button
+                        onClick={() => setMapModalLocation(a.location)}
+                        className="text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                        title="Voir le point exact sur la carte"
+                      >
+                        <MapPin className="w-4 h-4" />
+                      </button>
+                    ) : (
+                      <span className="text-slate-600" title="Position non partagée">
+                        <MapPin className="w-4 h-4" />
+                      </span>
                     )}
                   </td>
                   <td className="py-2 pr-3">
@@ -547,6 +597,39 @@ export default function AdminClientDashboard() {
           ))}
         </div>
       </div>
+
+      {/* Fenêtre modale : carte avec point exact */}
+      {mapModalLocation && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setMapModalLocation(null)}
+        >
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-3 border-b border-slate-800">
+              <span className="text-xs font-bold text-white">
+                Position : {mapModalLocation.latitude.toFixed(5)}, {mapModalLocation.longitude.toFixed(5)}
+              </span>
+              <button onClick={() => setMapModalLocation(null)} className="text-slate-400 hover:text-white cursor-pointer text-lg leading-none">×</button>
+            </div>
+            <iframe
+              title="Position du client"
+              src={`https://www.google.com/maps?q=${mapModalLocation.latitude},${mapModalLocation.longitude}&z=15&output=embed`}
+              width="100%"
+              height="320"
+              style={{ border: 0 }}
+              loading="lazy"
+            />
+            <a
+              href={`https://www.google.com/maps?q=${mapModalLocation.latitude},${mapModalLocation.longitude}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-center text-xs text-slate-300 hover:text-white bg-slate-950 py-2"
+            >
+              Ouvrir en plein écran dans Google Maps
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
