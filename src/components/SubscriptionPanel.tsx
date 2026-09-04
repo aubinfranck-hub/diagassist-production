@@ -72,10 +72,15 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
 
   const currentWaveUrl = getWavePaymentUrl(selectedAmount);
 
-  const handlePayWithWave = (amount: number) => {
+  // Sélectionner une formule ne fait QUE la mettre en évidence — le paiement se fait ensuite
+  // dans le bloc unique ci-dessous, pour éviter d'avoir deux endroits différents qui parlent
+  // de paiement avec des montants potentiellement différents.
+  const handleSelectPlan = (amount: number) => {
     setSelectedAmount(amount);
-    // Open payment link in a new tab. L'activation du forfait N'EST PLUS automatique :
-    // elle est déclenchée manuellement par l'admin après vérification réelle du paiement Wave.
+    setRequestSent(false);
+  };
+
+  const handlePayWithWave = (amount: number) => {
     window.open(getWavePaymentUrl(amount), "_blank");
   };
 
@@ -243,10 +248,13 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
  
           <div className="mt-8 pt-4 border-t border-white/[0.05]">
             <button
-              onClick={() => handlePayWithWave(6000)}
-              className="w-full bg-sky-500 hover:bg-sky-600 text-slate-950 font-black text-sm py-4 px-4 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider shadow-md"
+              onClick={() => handleSelectPlan(6000)}
+              className={`w-full font-black text-sm py-4 px-4 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider shadow-md ${
+                selectedAmount === 6000 ? "bg-sky-400 text-slate-950 ring-2 ring-sky-300" : "bg-sky-500 hover:bg-sky-600 text-slate-950"
+              }`}
             >
-              <span>S'abonner Lite (6 000F)</span>
+              {selectedAmount === 6000 ? <Check className="w-4 h-4" /> : null}
+              <span>{selectedAmount === 6000 ? "Formule sélectionnée" : "Choisir Lite (6 000F)"}</span>
             </button>
           </div>
         </div>
@@ -299,83 +307,63 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
  
           <div className="mt-8 pt-4 border-t border-white/[0.05]">
             <button
-              onClick={() => handlePayWithWave(15000)}
-              className="w-full bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-750 text-white font-black text-sm py-4 px-4 rounded-xl transition duration-150 flex items-center justify-center gap-2.5 cursor-pointer shadow-lg shadow-red-600/10 glow-btn uppercase tracking-wider"
+              onClick={() => handleSelectPlan(15000)}
+              className={`w-full font-black text-sm py-4 px-4 rounded-xl transition duration-150 flex items-center justify-center gap-2.5 cursor-pointer uppercase tracking-wider ${
+                selectedAmount === 15000
+                  ? "bg-red-500 text-white ring-2 ring-red-300 shadow-lg shadow-red-600/20"
+                  : "bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-750 text-white shadow-lg shadow-red-600/10 glow-btn"
+              }`}
             >
-              <Sparkles className="w-4 h-4 fill-current text-white" />
-              <span>S'abonner Premium (15 000F)</span>
+              {selectedAmount === 15000 ? <Check className="w-4 h-4" /> : <Sparkles className="w-4 h-4 fill-current text-white" />}
+              <span>{selectedAmount === 15000 ? "Formule sélectionnée" : "Choisir Premium (15 000F)"}</span>
             </button>
           </div>
         </div>
  
       </div>
  
-      {/* Official Wave instructions provided by user */}
+      {/* Bloc de paiement UNIQUE — reflète la formule choisie ci-dessus, en 2 étapes claires */}
       <div className="bg-red-600/10 border border-red-500/20 rounded-3xl p-6 md:p-8 flex gap-5 items-start animate-fade-in relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-red-600/[0.03] rounded-full blur-2xl pointer-events-none" />
         <div className="p-3 bg-red-600/10 text-red-500 rounded-xl shrink-0 border border-red-500/10">
           <Zap className="w-7 h-7 animate-pulse" />
         </div>
-        <div className="space-y-3 relative w-full">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-            <span className="font-display font-black text-red-400 block text-base uppercase tracking-wide">Méthode de Paiement Mobile Wave</span>
-            
-            {/* Quick manual selection within the instructions box to demonstrate the requirement */}
-            <div className="flex items-center gap-1.5 bg-slate-950/50 p-1 rounded-xl border border-white/[0.05]">
-              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider px-2 font-mono">Montant :</span>
-              <button 
-                onClick={() => setSelectedAmount(6000)}
-                className={`px-2 py-1 text-[10px] font-black rounded-lg transition ${selectedAmount === 6000 ? "bg-sky-500 text-slate-950" : "text-slate-400 hover:text-slate-200"}`}
-              >
-                6000F
-              </button>
-              <button 
-                onClick={() => setSelectedAmount(15000)}
-                className={`px-2 py-1 text-[10px] font-black rounded-lg transition ${selectedAmount === 15000 ? "bg-red-600 text-white" : "text-slate-400 hover:text-slate-200"}`}
-              >
-                15000F
-              </button>
+        <div className="space-y-4 relative w-full">
+          <div>
+            <span className="font-display font-black text-red-400 block text-base uppercase tracking-wide">
+              Finaliser l'abonnement {selectedAmount === 15000 ? "Premium" : "Lite"}
+            </span>
+            <span className="text-xs text-slate-400 font-mono">{selectedAmount.toLocaleString("fr-FR")} F CFA / mois — paiement par Wave</span>
+          </div>
+
+          <div className="flex items-start gap-3 bg-slate-950/60 p-4 rounded-xl border border-white/[0.05]">
+            <span className="shrink-0 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-black flex items-center justify-center">1</span>
+            <div className="text-sm text-slate-200">
+              Payez <strong className="text-white">NTIC STRATEGY {selectedAmount}F</strong> via Wave.
             </div>
           </div>
+          <button
+            onClick={() => handlePayWithWave(selectedAmount)}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xs py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider shadow"
+          >
+            <ExternalLink className="w-4.5 h-4.5" />
+            <span>Ouvrir Wave — Payer {selectedAmount}F</span>
+          </button>
 
-          <p className="text-slate-200 font-medium leading-relaxed bg-slate-950/60 p-5 md:p-6 border border-white/[0.05] rounded-xl text-sm md:text-base">
-            "Veuillez Payer <strong className="text-white">NTIC STRATEGY {selectedAmount}F</strong> avec Wave en cliquant sur ce lien{" "}
-            <a 
-              href={currentWaveUrl} 
-              target="_blank" 
-              rel="noreferrer" 
-              className="text-red-400 font-bold underline hover:text-red-300 break-all inline-flex items-center gap-1 text-sm md:text-base cursor-pointer"
-            >
-              {currentWaveUrl} <ExternalLink className="w-4 h-4 shrink-0" />
-            </a>
-            ."
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
-            <button
-              onClick={() => window.open(currentWaveUrl, "_blank")}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white font-black text-xs py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider shadow"
-            >
-              <ExternalLink className="w-4.5 h-4.5" />
-              <span>Ouvrir Wave pour {selectedAmount}F</span>
-            </button>
-            
-            <button
-              onClick={() => handleConfirmTransfer(selectedAmount)}
-              disabled={requestSent}
-              className="flex-1 bg-slate-900 hover:bg-slate-850 border border-white/[0.08] text-emerald-400 hover:text-emerald-300 font-black text-xs py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Check className="w-4 h-4" />
-              <span>{requestSent ? "Demande envoyée" : "Confirmer l'activation après transfert"}</span>
-            </button>
+          <div className="flex items-start gap-3 bg-slate-950/60 p-4 rounded-xl border border-white/[0.05]">
+            <span className="shrink-0 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-black flex items-center justify-center">2</span>
+            <div className="text-sm text-slate-200">
+              Une fois le transfert effectué, confirmez ici — votre forfait sera activé manuellement après vérification (généralement sous quelques minutes).
+            </div>
           </div>
-
-          <div className="flex items-start gap-2.5 text-xs text-slate-500 pt-1.5">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-            <span>
-              Après votre transfert Wave, cliquez sur "Confirmer l'activation" : votre forfait sera activé manuellement dès vérification du paiement (généralement sous quelques minutes).
-            </span>
-          </div>
+          <button
+            onClick={() => handleConfirmTransfer(selectedAmount)}
+            disabled={requestSent}
+            className="w-full bg-slate-900 hover:bg-slate-850 border border-white/[0.08] text-emerald-400 hover:text-emerald-300 font-black text-xs py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Check className="w-4 h-4" />
+            <span>{requestSent ? "Demande envoyée ✓" : "J'ai payé — Confirmer"}</span>
+          </button>
         </div>
       </div>
         </>
