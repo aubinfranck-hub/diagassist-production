@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { GoogleGenAI, Type, Modality, StartSensitivity, EndSensitivity } from "@google/genai";
 import dotenv from "dotenv";
 import twilio from "twilio";
 import nodemailer from "nodemailer";
@@ -2155,6 +2155,20 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                 systemInstruction: systemInstruction,
                 outputAudioTranscription: {},
                 inputAudioTranscription: {},
+                // AMÉLIORATION : détection de voix (VAD) plus sensible et plus rapide, pour que
+                // l'IA s'interrompe dès que le mécanicien parle, au lieu de terminer sa phrase
+                // (symptôme rapporté : "elle continue de parler comme si de rien" quand on parle
+                // par-dessus). Sensibilité haute + fenêtres courtes = réaction plus vive, y compris
+                // en environnement bruyant d'atelier.
+                realtimeInputConfig: {
+                  automaticActivityDetection: {
+                    disabled: false,
+                    startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+                    endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+                    prefixPaddingMs: 20,
+                    silenceDurationMs: 300,
+                  },
+                },
               },
               callbacks: {
                 onmessage: (msg: any) => {
