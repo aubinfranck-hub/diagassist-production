@@ -97,6 +97,7 @@ function createSession(phone: string): string {
   const token = crypto.randomBytes(32).toString("hex");
   const plan = getEffectivePlan(phone);
   sessions.set(token, { phone, plan, createdAt: Date.now() });
+  persistSession(token).catch(() => {});
   return token;
 }
 
@@ -142,6 +143,12 @@ async function initDatabase(): Promise<void> {
       active BOOLEAN NOT NULL DEFAULT true,
       created_at BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      phone TEXT NOT NULL,
+      plan TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    );
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 }
@@ -177,7 +184,44 @@ async function loadPersistedData(): Promise<void> {
       createdAt: Number(row.created_at),
     });
   }
-  console.log(`[DB] Données rechargées : ${accountsRes.rows.length} compte(s), ${plansRes.rows.length} forfait(s), ${bannersRes.rows.length} bannière(s).`);
+  // Sessions : on ne recharge que celles de moins de 30 jours (au-delà, on considère l'utilisateur
+  // parti de toute façon — pas la peine de garder des tokens abandonnés indéfiniment en mémoire).
+  const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  const sessionsRes = await dbPool.query("SELECT * FROM sessions");
+  let loadedSessions = 0;
+  for (const row of sessionsRes.rows) {
+    const createdAt = Number(row.created_at);
+    if (Date.now() - createdAt <= SESSION_MAX_AGE_MS) {
+      sessions.set(row.token, { phone: row.phone, plan: row.plan, createdAt });
+      loadedSessions++;
+    }
+  }
+  console.log(`[DB] Données rechargées : ${accountsRes.rows.length} compte(s), ${plansRes.rows.length} forfait(s), ${bannersRes.rows.length} bannière(s), ${loadedSessions} session(s).`);
+}
+
+async function persistSession(token: string): Promise<void> {
+  if (!dbPool) return;
+  const s = sessions.get(token);
+  if (!s) return;
+  try {
+    await dbPool.query(
+      `INSERT INTO sessions (token, phone, plan, created_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (token) DO UPDATE SET plan = $3`,
+      [token, s.phone, s.plan, s.createdAt]
+    );
+  } catch (err: any) {
+    console.error("[DB] Échec de la sauvegarde de la session:", err.message);
+  }
+}
+
+async function deleteSessionFromDb(token: string): Promise<void> {
+  if (!dbPool) return;
+  try {
+    await dbPool.query("DELETE FROM sessions WHERE token = $1", [token]);
+  } catch (err: any) {
+    console.error("[DB] Échec de la suppression de la session:", err.message);
+  }
 }
 
 async function persistAccount(phone: string): Promise<void> {
@@ -1488,6 +1532,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     for (const [token, s] of sessions) {
       if (s.phone === phone) {
         sessions.delete(token);
+        deleteSessionFromDb(token).catch(() => {});
         removed += 1;
       }
     }
