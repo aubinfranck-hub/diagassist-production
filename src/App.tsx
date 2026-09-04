@@ -3,7 +3,7 @@ import { AnimatePresence } from "motion/react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText, 
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench,
-  Sun, Moon, Monitor
+  Sun, Moon, Monitor, Users
 } from "lucide-react";
 
 import DiagnosticForm from "./components/DiagnosticForm";
@@ -817,8 +817,8 @@ export default function App() {
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <Sparkles className="w-4.5 h-4.5" />
-                    <span>Abonnements</span>
+                    {isAdminAccount ? <Users className="w-4.5 h-4.5" /> : <Sparkles className="w-4.5 h-4.5" />}
+                    <span>{isAdminAccount ? "Gestion Clients" : "Abonnements"}</span>
                   </div>
                   {activeTab === "prices" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                 </button>
@@ -1089,8 +1089,8 @@ export default function App() {
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <Sparkles className="w-5 h-5" />
-              <span className="text-[9px] font-black uppercase tracking-wider">Offres</span>
+              {isAdminAccount ? <Users className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+              <span className="text-[9px] font-black uppercase tracking-wider">{isAdminAccount ? "Clients" : "Offres"}</span>
             </button>
           </nav>
 

@@ -6,7 +6,6 @@ import {
 } from "lucide-react";
 import { ApiUsage, SubscriptionPlan } from "../types";
 import APIPricePanel from "./APIPricePanel";
-import AdAdminDashboard from "./AdAdminDashboard";
 
 
 interface AdminLogEntry {
@@ -246,19 +245,12 @@ export default function AdminPanel({
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Surveillance exclusive de la consommation des tokens d'API et simulation de l'environnement applicatif.
+              Surveillance de la consommation des tokens d'API et calcul de rentabilité.
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={onAddMockLog}
-            className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-red-500 rounded-xl text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Simuler un appel API</span>
-          </button>
           <button
             onClick={onClearStats}
             className="px-3 py-1.5 bg-rose-950/20 hover:bg-rose-950/40 border border-rose-500/20 text-rose-400 rounded-xl text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
@@ -269,47 +261,11 @@ export default function AdminPanel({
         </div>
       </div>
 
-      {/* Admin Control Tower: Quick Plan Simulator & Summary Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Cockpit: Current Simulated Plan & API Status */}
-        <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-            <Settings className="w-3.5 h-3.5 text-slate-400" />
-            Cockpit : Formule de l'utilisateur
-          </h3>
-          <p className="text-[11px] text-slate-500 leading-relaxed">
-            Changez ici la formule d'abonnement de l'utilisateur pour tester instantanément le comportement de l'application (Audio, Haynes Pro, blocage d'expiration).
-          </p>
-
-          <div className="space-y-2 pt-2">
-            {[
-              { id: "free_trial", label: "Essai Gratuit Actif (24h)", color: "border-sky-500/30 text-sky-400" },
-              { id: "free_expired", label: "Essai Gratuit Expiré 🔒", color: "border-rose-500/30 text-rose-400" },
-              { id: "lite", label: "Formule LITE Actif", color: "border-blue-500/30 text-blue-400" },
-              { id: "premium", label: "Formule PREMIUM Actif ✨", color: "border-red-500/30 text-red-400" },
-              { id: "payg_active", label: "Pass 24h à l'Usage Actif (Wave)", color: "border-emerald-500/30 text-emerald-400" },
-            ].map((p) => (
-              <button
-                key={p.id}
-                onClick={() => onPlanChange(p.id as SubscriptionPlan)}
-                className={`w-full text-left p-3 rounded-xl border text-xs transition duration-150 flex items-center justify-between cursor-pointer ${
-                  currentPlan === p.id 
-                    ? "bg-slate-950 border-red-500 font-bold text-red-500" 
-                    : "bg-slate-950/40 border-slate-800 text-slate-400 hover:bg-slate-950/70"
-                }`}
-              >
-                <span>{p.label}</span>
-                {currentPlan === p.id && (
-                  <CheckCircle2 className="w-4 h-4 text-red-500 shrink-0 ml-2" />
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* Admin Control Tower: Live Token Metrics */}
+      <div className="grid grid-cols-1 gap-6">
 
         {/* Live Token Metrics */}
-        <div className="lg:col-span-8 bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between">
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-4">
               <BarChart2 className="w-3.5 h-3.5 text-red-500" />
@@ -801,11 +757,6 @@ export default function AdminPanel({
             </table>
           </div>
         )}
-      </div>
-
-      {/* AdManager & Sponsored Products Management */}
-      <div>
-        <AdAdminDashboard />
       </div>
 
       {/* Nested API Price Panel specifically as an Admin Resource */}
