@@ -61,13 +61,19 @@ function LocationMapPreview({ location }: { location: { latitude: number; longit
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
+        className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer flex-wrap"
       >
         <MapPin className="w-3 h-3" />
         {expanded ? "Masquer la carte" : "Voir le point exact sur la carte"}
         ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
         <span className="text-slate-500">— maj {formatDate(location.updatedAt)}</span>
       </button>
+      {typeof location.accuracy === "number" && (
+        <p className={`text-[10px] flex items-center gap-1 ${location.accuracy > 1000 ? "text-amber-400" : "text-slate-500"}`}>
+          {location.accuracy > 1000 ? "⚠️" : "🎯"} Précision : ± {location.accuracy < 1000 ? `${Math.round(location.accuracy)} m` : `${(location.accuracy / 1000).toFixed(1)} km`}
+          {location.accuracy > 1000 && " — position approximative (WiFi/IP), pas de GPS précis sur cet appareil"}
+        </p>
+      )}
       {expanded && (
         <div className="rounded-xl overflow-hidden border border-white/[0.08]">
           <iframe
