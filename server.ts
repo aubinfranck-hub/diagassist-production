@@ -1498,14 +1498,21 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // API Route (ADMIN UNIQUEMENT) : liste les comptes clients existants (sans les mots de passe)
   app.get("/api/admin/accounts", adminLimiter, requireAdminAuth, (req, res) => {
-    const accounts = Array.from(userAccounts.entries()).map(([phone, acc]) => ({
-      phone,
-      createdAt: acc.createdAt,
-      plan: userPlans.get(phone)?.plan || "free_trial",
-      isAdmin: acc.isAdmin,
-      email: acc.email || null,
-      location: lastKnownLocation.get(phone) || null,
-    }));
+    const accounts = Array.from(userAccounts.entries()).map(([phone, acc]) => {
+      const planRecord = userPlans.get(phone);
+      const plan = planRecord?.plan || "free_trial";
+      const duration = planRecord ? (planRecord.customDurationMs ?? PLAN_DURATIONS_MS[plan]) : undefined;
+      const expiresAt = planRecord && duration ? planRecord.activatedAt + duration : null;
+      return {
+        phone,
+        createdAt: acc.createdAt,
+        plan,
+        expiresAt,
+        isAdmin: acc.isAdmin,
+        email: acc.email || null,
+        location: lastKnownLocation.get(phone) || null,
+      };
+    });
     res.json({ success: true, accounts });
   });
 

@@ -5,6 +5,7 @@ interface Account {
   phone: string;
   createdAt: number;
   plan: string;
+  expiresAt: number | null;
   isAdmin: boolean;
   email: string | null;
   location: { latitude: number; longitude: number; accuracy?: number; updatedAt: number } | null;
@@ -46,6 +47,19 @@ const PLAN_LABELS: Record<string, string> = {
 };
 
 const formatDate = (ts: number) => new Date(ts).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+
+// Affiche le temps restant avant expiration du forfait, ou son absence pour les forfaits sans durée
+function formatRemainingTime(expiresAt: number | null, plan: string): { text: string; expired: boolean } {
+  if (plan === "free_expired") return { text: "Expiré", expired: true };
+  if (!expiresAt) return { text: "—", expired: false };
+  const remainingMs = expiresAt - Date.now();
+  if (remainingMs <= 0) return { text: "Expiré", expired: true };
+  const days = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((remainingMs / (1000 * 60 * 60)) % 24);
+  if (days > 0) return { text: `${days}j ${hours}h`, expired: false };
+  const minutes = Math.floor((remainingMs / (1000 * 60)) % 60);
+  return { text: `${hours}h ${minutes}m`, expired: false };
+}
 
 // Numéro au format international -> format attendu par wa.me (chiffres uniquement)
 const toWaMeNumber = (phone: string) => phone.replace(/[^0-9]/g, "");
@@ -479,6 +493,7 @@ export default function AdminClientDashboard() {
               <tr className="text-left text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-800">
                 <th className="py-2 pr-3">Numéro</th>
                 <th className="py-2 pr-3">Forfait</th>
+                <th className="py-2 pr-3">Temps restant</th>
                 <th className="py-2 pr-3">Email</th>
                 <th className="py-2 pr-3">Créé le</th>
                 <th className="py-2 pr-3">Rôle</th>
@@ -487,10 +502,13 @@ export default function AdminClientDashboard() {
               </tr>
             </thead>
             <tbody>
-              {accounts.map((a) => (
+              {accounts.map((a) => {
+                const remaining = formatRemainingTime(a.expiresAt, a.plan);
+                return (
                 <tr key={a.phone} className="border-b border-slate-800/50">
                   <td className="py-2 pr-3 font-mono text-white">{a.phone}</td>
                   <td className="py-2 pr-3 text-slate-300">{PLAN_LABELS[a.plan] || a.plan}</td>
+                  <td className={`py-2 pr-3 font-mono ${remaining.expired ? "text-rose-400" : "text-emerald-400"}`}>{remaining.text}</td>
                   <td className="py-2 pr-3 text-slate-400">{a.email || "—"}</td>
                   <td className="py-2 pr-3 text-slate-500">{formatDate(a.createdAt)}</td>
                   <td className="py-2 pr-3">
@@ -529,7 +547,8 @@ export default function AdminClientDashboard() {
                     </a>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
