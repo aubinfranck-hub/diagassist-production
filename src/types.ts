@@ -31,6 +31,7 @@ export interface Diagnosis {
   estimatedCosts: EstimatedCosts;
   explanationText: string;
   clarifyingQuestions?: string[];
+  groundedInSources?: boolean;
 }
 
 export interface ApiUsage {

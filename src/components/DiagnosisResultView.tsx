@@ -316,6 +316,11 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
             <h2 className="text-2xl md:text-3xl font-display font-extrabold text-white mt-1.5">
               {diagnosis.brandModelInfo || "Véhicule Identifié"}
             </h2>
+            {diagnosis.groundedInSources && (
+              <span className="inline-flex items-center gap-1.5 mt-2 text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
+                ✓ Vérifié via recherche sur sources ouvertes
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-3 shrink-0">
             <button

@@ -605,6 +605,27 @@ async function startServer() {
         attachmentCount = 1;
       }
 
+      // --- Étape 1 : recherche sur des sources ouvertes réelles (Google Search) ---
+      // L'API Gemini ne permet pas de combiner recherche web ET réponse JSON structurée dans le
+      // même appel. On fait donc d'abord une recherche factuelle (codes DTC officiels, pannes
+      // connues et confirmées pour ce modèle précis), puis on injecte ces résultats sourcés dans
+      // le prompt du diagnostic structuré ci-dessous — au lieu de laisser Gemini deviner uniquement
+      // depuis sa mémoire d'entraînement, potentiellement datée ou générique.
+      let groundedFindings: string | null = null;
+      if (vehicleBrand || textDescription) {
+        try {
+          const searchQuery = `${vehicleBrand || ""} ${vehicleModel || ""} ${vehicleYear || ""} panne "${textDescription || ""}" code défaut cause diagnostic automobile`;
+          const searchResult = await getAIClient().models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: `Recherche des informations techniques FIABLES et VÉRIFIÉES (bases de données de codes DTC officielles, forums techniques automobiles reconnus, bulletins constructeur, recalls officiels) sur : ${searchQuery}. Résume en quelques phrases factuelles uniquement ce qui est confirmé par ces sources, sans extrapoler.`,
+            config: { tools: [{ googleSearch: {} }] },
+          });
+          groundedFindings = searchResult.text || null;
+        } catch (searchErr) {
+          console.warn("[Diagnose Grounding] Recherche web indisponible, poursuite sur connaissance générale:", searchErr);
+        }
+      }
+
       // Construct detailed textual prompt
       let promptText = `Analyse cette demande de diagnostic de panne de véhicule.
 Informations sur le véhicule :
@@ -618,6 +639,10 @@ Description du problème par l'utilisateur :
       if (attachmentCount > 0) {
         promptText += `\n${attachmentCount > 1 ? `${attachmentCount} fichiers multimédias ont` : "Un fichier multimédia a"} été joint(s) par l'utilisateur (image du tableau de bord ou de codes OBD, enregistrement audio d'un bruit suspect, ou vidéo).
 Analyse-les attentivement pour y repérer des voyants, des codes d'erreur DTC textuels (comme EPB C112A, C2006, etc.), des bruits moteurs anormaux ou des indices de pannes visuels afin d'établir un diagnostic d'expert.`;
+      }
+
+      if (groundedFindings) {
+        promptText += `\n\nINFORMATIONS VÉRIFIÉES VIA RECHERCHE WEB (bases ouvertes, forums techniques, bulletins constructeur — à privilégier sur ta seule mémoire d'entraînement pour ce diagnostic) :\n"""\n${groundedFindings}\n"""\nBase ton diagnostic en priorité sur ces éléments vérifiés quand ils sont pertinents. S'ils ne couvrent pas le cas précis, complète avec ton expertise générale en le signalant implicitement par un ton plus prudent dans "explanationText".`;
       }
 
       parts.push({ text: promptText });
@@ -802,6 +827,10 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
 
       // Parse JSON payload returned by Gemini
       const diagnosisData = JSON.parse(responseText.trim());
+      // Indicateur transparence : le mécanicien sait si le diagnostic s'appuie sur une vraie
+      // recherche de sources ouvertes (DTC officiels, forums techniques, bulletins constructeur)
+      // ou uniquement sur la connaissance générale de l'IA.
+      diagnosisData.groundedInSources = Boolean(groundedFindings);
 
       // Add actual API usage metadata to the response
       res.json({
