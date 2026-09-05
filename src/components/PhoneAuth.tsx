@@ -144,8 +144,8 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
       <div className="w-full max-w-md premium-glass-card rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden animate-fade-in">
 
         <div className="text-center mb-8 relative">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-red-600 to-red-800 rounded-2xl text-white text-3xl shadow-lg shadow-red-600/20 border border-white/[0.08] mb-4">
-            ⚙️
+          <div className="inline-flex items-center justify-center w-14 h-14 bg-white rounded-2xl shadow-lg shadow-red-600/20 border border-white/[0.08] mb-4 overflow-hidden">
+            <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
           </div>
           <h1 className="text-xl font-display font-black text-white uppercase tracking-tight">
             DiagAssist <span className="text-red-500">v1</span>

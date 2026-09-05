@@ -9,7 +9,7 @@ if ('serviceWorker' in navigator) {
   if ('caches' in window) {
     caches.keys().then((cacheNames) => {
       cacheNames.forEach((cacheName) => {
-        if (cacheName !== 'diagassist-cache-v2') {
+        if (cacheName !== 'diagassist-cache-v3') {
           console.log('[Cache Cleanup] Deleting legacy cache:', cacheName);
           caches.delete(cacheName).catch(err => console.warn('Cache delete failed:', err));
         }

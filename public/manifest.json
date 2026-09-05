@@ -1,18 +1,36 @@
 {
-  "name": "DiagAssist v1",
+  "name": "DiagAssist — Votre assistant pour réparer",
   "short_name": "DiagAssist",
   "description": "Identifiez instantanément les pannes de votre véhicule par IA avec des conseils de réparation professionnels.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#090d16",
+  "background_color": "#0f172a",
   "theme_color": "#0f172a",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "/icon.svg",
-      "sizes": "192x192 512x512",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

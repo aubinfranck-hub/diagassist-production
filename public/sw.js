@@ -1,8 +1,9 @@
-const CACHE_NAME = "diagassist-cache-v2";
+const CACHE_NAME = "diagassist-cache-v3";
 const ASSETS_TO_CACHE = [
   "/",
   "/manifest.json",
-  "/icon.svg"
+  "/icon-192.png",
+  "/icon-512.png"
 ];
 
 // Install Service Worker and cache essential shells

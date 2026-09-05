@@ -16,6 +16,7 @@ import SplashScreen from "./components/SplashScreen";
 import IntegratedVoiceController from "./components/IntegratedVoiceController";
 import PhoneAuth from "./components/PhoneAuth";
 import LandingPage from "./components/LandingPage";
+import InstallPrompt from "./components/InstallPrompt";
 import VisualRepairAssistant from "./components/VisualRepairAssistant";
 import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
@@ -742,9 +743,9 @@ export default function App() {
               {/* Sleek Logo Brand Header */}
               <div className="flex items-center gap-3.5">
                 <div className="relative shrink-0">
-                  <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl text-white font-bold font-display shadow-lg border border-white/10 relative overflow-hidden group scintillant-badge">
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center shadow-lg border border-white/10 relative overflow-hidden group bg-white">
                     <div className="absolute inset-0 bg-white/15 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    ⚙️
+                    <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
                   </div>
                   <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -933,8 +934,8 @@ export default function App() {
           {/* MOBILE NAVIGATION BAR (Sticky/Compact Top Header) */}
           <header className="lg:hidden flex items-center justify-between px-4 py-3.5 bg-slate-950/90 backdrop-blur-md border-b border-white/[0.08] sticky top-0 z-40 select-none">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sm text-white font-bold font-display shadow-lg border border-white/10 scintillant-badge">
-                ⚙️
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center shadow-lg border border-white/10 bg-white overflow-hidden">
+                <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
               </div>
               <div>
                 <div className="flex items-center gap-1.5">
@@ -1402,6 +1403,7 @@ export default function App() {
           </button>
         </div>
       )}
+      <InstallPrompt />
     </>
   );
 }

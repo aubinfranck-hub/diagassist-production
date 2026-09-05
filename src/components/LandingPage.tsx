@@ -28,8 +28,8 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
       {/* Header */}
       <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-red-600 to-red-800 rounded-xl flex items-center justify-center text-xl shadow-lg shadow-red-600/20">
-            ⚙️
+          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg shadow-red-600/20 overflow-hidden">
+            <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
           </div>
           <span className="font-display font-black text-lg uppercase tracking-tight">DiagAssist</span>
         </div>
