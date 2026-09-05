@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Phone, ShieldCheck, ArrowRight, RefreshCw, Sparkles, CheckCircle, AlertCircle, Lock } from "lucide-react";
+import { Phone, ShieldCheck, ArrowRight, RefreshCw, Sparkles, CheckCircle, AlertCircle, Lock, Eye, EyeOff } from "lucide-react";
 
 interface PhoneAuthProps {
   onLoginSuccess: (phoneNumber: string) => void;
@@ -23,6 +23,8 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedCountry, setSelectedCountry] = useState("+225");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [step, setStep] = useState<"login" | "success" | "forgot" | "reset">("login");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -208,13 +210,21 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
                     <Lock className="h-5 w-5 text-slate-500" />
                   </div>
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     required
                     placeholder="Votre mot de passe"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl pl-11 pr-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
+                    className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl pl-11 pr-11 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute inset-y-0 right-4 flex items-center text-slate-500 hover:text-slate-300 cursor-pointer"
+                    title={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                  >
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
                 </div>
               </div>
 
@@ -310,15 +320,25 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
                 onChange={(e) => setResetCode(e.target.value)}
                 className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 font-mono tracking-widest text-center"
               />
-              <input
-                type="password"
-                required
-                minLength={6}
-                placeholder="Nouveau mot de passe (min. 6 caractères)"
-                value={resetNewPassword}
-                onChange={(e) => setResetNewPassword(e.target.value)}
-                className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
-              />
+              <div className="relative">
+                <input
+                  type={showResetPassword ? "text" : "password"}
+                  required
+                  minLength={6}
+                  placeholder="Nouveau mot de passe (min. 6 caractères)"
+                  value={resetNewPassword}
+                  onChange={(e) => setResetNewPassword(e.target.value)}
+                  className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 pr-11 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowResetPassword((v) => !v)}
+                  className="absolute inset-y-0 right-4 flex items-center text-slate-500 hover:text-slate-300 cursor-pointer"
+                  title={showResetPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                >
+                  {showResetPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
               {resetMessage && <p className="text-xs text-emerald-400 text-center">{resetMessage}</p>}
               {resetError && <p className="text-xs text-rose-400 text-center">{resetError}</p>}
               <button

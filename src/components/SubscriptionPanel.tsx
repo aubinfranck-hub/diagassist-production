@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { 
   Sparkles, ShieldCheck, Zap, Layers, ExternalLink, Check, Volume2, 
-  BookOpen, HelpCircle, AlertCircle, RefreshCw, Coins, Lock
+  BookOpen, HelpCircle, AlertCircle, RefreshCw, Coins, Lock, Eye, EyeOff
 } from "lucide-react";
 import { SubscriptionPlan } from "../types";
 import AdminClientDashboard from "./AdminClientDashboard";
@@ -34,6 +34,8 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
   const [pwdLoading, setPwdLoading] = useState(false);
   const [pwdError, setPwdError] = useState<string | null>(null);
   const [pwdSuccess, setPwdSuccess] = useState(false);
+  const [showCurrentPwd, setShowCurrentPwd] = useState(false);
+  const [showNewPwd, setShowNewPwd] = useState(false);
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,23 +102,33 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
           Mon compte : changer mon mot de passe
         </h3>
         <form onSubmit={handleChangePassword} className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          <input
-            type="password"
-            required
-            placeholder="Mot de passe actuel"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
-          />
-          <input
-            type="password"
-            required
-            minLength={6}
-            placeholder="Nouveau mot de passe (min. 6 caractères)"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
-          />
+          <div className="relative">
+            <input
+              type={showCurrentPwd ? "text" : "password"}
+              required
+              placeholder="Mot de passe actuel"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 pr-9 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+            />
+            <button type="button" onClick={() => setShowCurrentPwd((v) => !v)} className="absolute inset-y-0 right-2.5 flex items-center text-slate-500 hover:text-slate-300 cursor-pointer">
+              {showCurrentPwd ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+          <div className="relative">
+            <input
+              type={showNewPwd ? "text" : "password"}
+              required
+              minLength={6}
+              placeholder="Nouveau mot de passe (min. 6 caractères)"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 pr-9 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+            />
+            <button type="button" onClick={() => setShowNewPwd((v) => !v)} className="absolute inset-y-0 right-2.5 flex items-center text-slate-500 hover:text-slate-300 cursor-pointer">
+              {showNewPwd ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          </div>
           <button
             type="submit"
             disabled={pwdLoading}
