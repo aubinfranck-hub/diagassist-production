@@ -46,11 +46,11 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-red-600/[0.08] rounded-full blur-3xl pointer-events-none" />
 
         <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 md:p-10 relative overflow-hidden">
-          {/* Photo de fond réelle (mécanicien au travail), assombrie pour rester lisible */}
+          {/* Photo de fond réelle (mécaniciens nigérians au travail), assombrie pour rester lisible */}
           <div
             className="absolute inset-0 opacity-25"
             style={{
-              backgroundImage: "url('https://images.unsplash.com/photo-1615906655593-ad0386982a0f?w=1600&q=80&auto=format&fit=crop')",
+              backgroundImage: "url('https://images.pexels.com/photos/12555014/pexels-photo-12555014.jpeg?w=1600&auto=compress&cs=tinysrgb')",
               backgroundSize: "cover",
               backgroundPosition: "center",
             }}
@@ -137,10 +137,10 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-10 rounded-2xl overflow-hidden">
           {[
-            "https://images.unsplash.com/photo-1625047509248-ec889cbff17f?w=500&q=75&auto=format&fit=crop",
-            "https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?w=500&q=75&auto=format&fit=crop",
-            "https://images.unsplash.com/photo-1487754180451-c456f719a1fc?w=500&q=75&auto=format&fit=crop",
-            "https://images.unsplash.com/photo-1517026575980-3e1e2dedeab4?w=500&q=75&auto=format&fit=crop",
+            "https://images.pexels.com/photos/12555015/pexels-photo-12555015.jpeg?w=500&auto=compress&cs=tinysrgb",
+            "https://images.pexels.com/photos/12555016/pexels-photo-12555016.jpeg?w=500&auto=compress&cs=tinysrgb",
+            "https://images.pexels.com/photos/4315570/pexels-photo-4315570.jpeg?w=500&auto=compress&cs=tinysrgb",
+            "https://images.pexels.com/photos/8985461/pexels-photo-8985461.jpeg?w=500&auto=compress&cs=tinysrgb",
           ].map((src, i) => (
             <img key={i} src={src} alt="Mécanicien au travail" className="w-full h-24 md:h-32 object-cover" />
           ))}
