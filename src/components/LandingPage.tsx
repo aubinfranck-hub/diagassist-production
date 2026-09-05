@@ -46,21 +46,31 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-red-600/[0.08] rounded-full blur-3xl pointer-events-none" />
 
         <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 md:p-10 relative overflow-hidden">
+          {/* Photo de fond réelle (mécanicien au travail), assombrie pour rester lisible */}
+          <div
+            className="absolute inset-0 opacity-25"
+            style={{
+              backgroundImage: "url('https://images.unsplash.com/photo-1615906655593-ad0386982a0f?w=1600&q=80&auto=format&fit=crop')",
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/80 to-transparent" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(220,38,38,0.12),transparent_60%)]" />
 
-          <span className="inline-block bg-red-600/15 border border-red-500/30 text-red-400 text-[11px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-5">
+          <span className="inline-block bg-red-600/15 border border-red-500/30 text-red-400 text-[11px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 relative">
             🔧 Essai Gratuit Immédiat
           </span>
 
-          <h1 className="text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl">
+          <h1 className="text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl relative">
             NE RATEZ PLUS <span className="text-red-500">AUCUNE PANNE</span>
           </h1>
 
-          <p className="text-slate-300 text-sm md:text-base max-w-xl mt-4 leading-relaxed">
+          <p className="text-slate-300 text-sm md:text-base max-w-xl mt-4 leading-relaxed relative">
             Décrivez le symptôme, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation.
           </p>
 
-          <div className="space-y-2.5 mt-6">
+          <div className="space-y-2.5 mt-6 relative">
             {[
               "Diagnostic immédiat, en quelques secondes",
               "Activation en moins de 2 minutes",
@@ -75,7 +85,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
             ))}
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-8">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-8 relative">
             <button
               onClick={onGetStarted}
               className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
@@ -121,9 +131,21 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
 
       {/* Comment ça marche */}
       <section className="w-full max-w-4xl mx-auto px-5 py-16 border-t border-white/[0.05]">
-        <h2 className="text-xl md:text-2xl font-display font-black text-center mb-10 uppercase tracking-tight">
+        <h2 className="text-xl md:text-2xl font-display font-black text-center mb-8 uppercase tracking-tight">
           Comment ça marche
         </h2>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-10 rounded-2xl overflow-hidden">
+          {[
+            "https://images.unsplash.com/photo-1625047509248-ec889cbff17f?w=500&q=75&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1619642751034-765dfdf7c58e?w=500&q=75&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1487754180451-c456f719a1fc?w=500&q=75&auto=format&fit=crop",
+            "https://images.unsplash.com/photo-1517026575980-3e1e2dedeab4?w=500&q=75&auto=format&fit=crop",
+          ].map((src, i) => (
+            <img key={i} src={src} alt="Mécanicien au travail" className="w-full h-24 md:h-32 object-cover" />
+          ))}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
             { n: "01", title: "Décrivez le symptôme", desc: "Marque, modèle, année, et ce que vous constatez sur le véhicule." },
