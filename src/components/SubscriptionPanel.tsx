@@ -85,7 +85,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
   };
 
   const handleConfirmTransfer = (amount: number) => {
-    const plan: SubscriptionPlan = amount === 15000 ? "premium" : "lite";
+    const plan: SubscriptionPlan = amount === 15000 ? "premium" : amount === 500 ? "payg_active" : "lite";
     onRequestActivation(plan, amount);
     setRequestSent(true);
   };
@@ -204,8 +204,57 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
       </div>
  
       {/* Official Tiers Layout */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
- 
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+
+        {/* Tier 1: Pass 24h (Forfait Jour) */}
+        <div className={`premium-glass-card rounded-3xl p-6 md:p-8 flex flex-col justify-between shadow-2xl relative overflow-hidden transition-all duration-300 ${selectedAmount === 500 ? "border-2 border-emerald-400/50 bg-slate-900/85" : "border border-white/[0.05]"}`}>
+          <div>
+            <span className="text-xs text-slate-400 font-mono font-black uppercase tracking-wider block mb-1">Palier 1</span>
+            <h3 className="text-xl font-display font-black text-white flex items-center gap-1.5">
+              Forfait Jour
+            </h3>
+
+            <div className="my-5">
+              <div className="text-xs text-slate-400">Accès à l'usage :</div>
+              <div className="text-3xl font-display font-extrabold text-emerald-400">500 F CFA <span className="text-sm font-normal text-slate-500">/ 24h</span></div>
+              <div className="text-xs text-slate-400 mt-1.5 font-medium">
+                Diagnostics illimités pendant 24 heures
+              </div>
+            </div>
+
+            <ul className="space-y-3.5 text-sm text-slate-300 mt-6 border-t border-white/[0.05] pt-4">
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Diagnostics illimités 24h</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Activation immédiate</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Sans engagement</span>
+              </li>
+              <li className="flex items-center gap-2 text-slate-500 line-through">
+                <Volume2 className="w-4 h-4 shrink-0" />
+                <span>Explications vocales audio</span>
+              </li>
+            </ul>
+          </div>
+
+          <div className="mt-8 pt-4 border-t border-white/[0.05]">
+            <button
+              onClick={() => handleSelectPlan(500)}
+              className={`w-full font-black text-sm py-4 px-4 rounded-xl transition duration-150 flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider shadow-md ${
+                selectedAmount === 500 ? "bg-emerald-400 text-slate-950 ring-2 ring-emerald-300" : "bg-emerald-500 hover:bg-emerald-600 text-slate-950"
+              }`}
+            >
+              {selectedAmount === 500 ? <Check className="w-4 h-4" /> : null}
+              <span>{selectedAmount === 500 ? "Formule sélectionnée" : "Choisir le Pass Jour (500F)"}</span>
+            </button>
+          </div>
+        </div>
+
         {/* Tier 2: Lite */}
         <div className={`premium-glass-card rounded-3xl p-6 md:p-8 flex flex-col justify-between shadow-2xl relative overflow-hidden transition-all duration-300 ${selectedAmount === 6000 ? "border-2 border-sky-400/50 bg-slate-900/85" : "border border-white/[0.05]"}`}>
           <div>

@@ -8,9 +8,23 @@ interface LandingPageProps {
   onGetStarted: () => void;
 }
 
+const WHATSAPP_NUMBER = "2250141116026";
+const waLink = (message: string) => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+
 export default function LandingPage({ onGetStarted }: LandingPageProps) {
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans overflow-x-hidden">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans overflow-x-hidden relative">
+      {/* Bouton WhatsApp flottant, visible partout sur la page */}
+      <a
+        href={waLink("Bonjour, je voudrais essayer DiagAssist !")}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed bottom-5 right-5 z-50 w-14 h-14 bg-emerald-500 hover:bg-emerald-600 rounded-full flex items-center justify-center shadow-2xl shadow-emerald-500/30 transition hover:scale-105"
+        title="Nous écrire sur WhatsApp"
+      >
+        <MessageCircle className="w-7 h-7 text-white fill-white" />
+      </a>
+
       {/* Header */}
       <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -28,36 +42,55 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
       </header>
 
       {/* Hero */}
-      <main className="w-full max-w-6xl mx-auto px-5 pt-10 pb-20 text-center relative">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-red-600/[0.06] rounded-full blur-3xl pointer-events-none" />
+      <main className="w-full max-w-6xl mx-auto px-5 pt-8 pb-16 relative">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-red-600/[0.08] rounded-full blur-3xl pointer-events-none" />
 
-        <span className="inline-block bg-red-600/10 border border-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6">
-          Assistant IA pour mécaniciens en Côte d'Ivoire
-        </span>
+        <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 md:p-10 relative overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(220,38,38,0.12),transparent_60%)]" />
 
-        <h1 className="text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl mx-auto">
-          Le diagnostic auto <span className="text-red-500">assisté par IA</span>, pensé pour l'atelier
-        </h1>
+          <span className="inline-block bg-red-600/15 border border-red-500/30 text-red-400 text-[11px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-5">
+            🔧 Essai Gratuit Immédiat
+          </span>
 
-        <p className="text-slate-400 text-sm md:text-base max-w-xl mx-auto mt-5 leading-relaxed">
-          Décrivez la panne, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation.
-        </p>
+          <h1 className="text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl">
+            NE RATEZ PLUS <span className="text-red-500">AUCUNE PANNE</span>
+          </h1>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-8">
-          <button
-            onClick={onGetStarted}
-            className="flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
-          >
-            Commencer maintenant <ArrowRight className="w-4 h-4" />
-          </button>
-          <a
-            href="https://wa.me/2250141116026"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-white/[0.08] text-slate-200 font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
-          >
-            <MessageCircle className="w-4 h-4 text-emerald-400" /> Nous contacter sur WhatsApp
-          </a>
+          <p className="text-slate-300 text-sm md:text-base max-w-xl mt-4 leading-relaxed">
+            Décrivez le symptôme, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation.
+          </p>
+
+          <div className="space-y-2.5 mt-6">
+            {[
+              "Diagnostic immédiat, en quelques secondes",
+              "Activation en moins de 2 minutes",
+              "Sans engagement, annulez à tout moment",
+            ].map((t, i) => (
+              <div key={i} className="flex items-center gap-2.5 text-sm text-slate-200">
+                <span className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                  <Check className="w-3 h-3 text-emerald-400" />
+                </span>
+                {t}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-8">
+            <button
+              onClick={onGetStarted}
+              className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
+            >
+              Commencer maintenant <ArrowRight className="w-4 h-4" />
+            </button>
+            <a
+              href={waLink("Bonjour, je voudrais essayer DiagAssist !")}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
+            >
+              <MessageCircle className="w-4 h-4" /> Essai gratuit via WhatsApp
+            </a>
+          </div>
         </div>
       </main>
 
@@ -106,28 +139,82 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </div>
       </section>
 
-      {/* Forfaits */}
+      {/* Forfaits — style cartes percutantes avec badges */}
       <section className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
-        <h2 className="text-xl md:text-2xl font-display font-black text-center mb-10 uppercase tracking-tight">
-          Des forfaits simples
+        <h2 className="text-xl md:text-2xl font-display font-black text-center mb-2 uppercase tracking-tight">
+          NOS OFFRES
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-4xl mx-auto">
-          <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-2 text-center">
-            <h3 className="font-bold text-sm text-sky-400 uppercase tracking-wide">Essai gratuit</h3>
-            <p className="text-2xl font-black text-white">0F</p>
-            <p className="text-xs text-slate-400">3 diagnostics offerts pendant 24h</p>
+        <p className="text-center text-slate-500 text-xs mb-10">Choisissez la formule qui vous convient</p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-5xl mx-auto">
+          {/* Forfait Jour — nouveau, mis en avant */}
+          <div className="bg-slate-900/80 border-2 border-emerald-500/40 rounded-2xl p-6 space-y-3 text-center relative overflow-hidden">
+            <span className="absolute top-3 right-3 text-[9px] bg-emerald-500 text-slate-950 font-black px-2 py-0.5 rounded-full uppercase">Nouveau</span>
+            <h3 className="font-bold text-xs text-emerald-400 uppercase tracking-wide">Forfait Jour</h3>
+            <p className="text-3xl font-black text-white">500F</p>
+            <p className="text-[11px] text-slate-500">Accès illimité 24h</p>
+            <ul className="text-left space-y-1.5 pt-2">
+              {["Diagnostics illimités 24h", "Activation immédiate", "Sans engagement"].map((t, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
+                  <Check className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" /> {t}
+                </li>
+              ))}
+            </ul>
           </div>
-          <div className="bg-slate-900/60 border border-sky-500/20 rounded-2xl p-6 space-y-2 text-center">
-            <h3 className="font-bold text-sm text-sky-400 uppercase tracking-wide">Lite</h3>
-            <p className="text-2xl font-black text-white">6 000F<span className="text-xs text-slate-500">/mois</span></p>
-            <p className="text-xs text-slate-400">Diagnostics illimités, texte</p>
+
+          {/* Essai gratuit */}
+          <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-3 text-center">
+            <h3 className="font-bold text-xs text-sky-400 uppercase tracking-wide">Essai Gratuit</h3>
+            <p className="text-3xl font-black text-white">0F</p>
+            <p className="text-[11px] text-slate-500">Pendant 24h</p>
+            <ul className="text-left space-y-1.5 pt-2">
+              {["3 diagnostics offerts", "Sans carte bancaire", "Activation immédiate"].map((t, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
+                  <Check className="w-3 h-3 text-sky-400 shrink-0 mt-0.5" /> {t}
+                </li>
+              ))}
+            </ul>
           </div>
-          <div className="bg-slate-900/60 border border-red-500/20 rounded-2xl p-6 space-y-2 text-center relative overflow-hidden">
-            <span className="absolute top-2 right-2 text-[9px] bg-red-600 text-white font-bold px-2 py-0.5 rounded-full uppercase">Populaire</span>
-            <h3 className="font-bold text-sm text-red-400 uppercase tracking-wide">Premium</h3>
-            <p className="text-2xl font-black text-white">15 000F<span className="text-xs text-slate-500">/mois</span></p>
-            <p className="text-xs text-slate-400">Illimité + voix + données techniques</p>
+
+          {/* Lite */}
+          <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-3 text-center">
+            <h3 className="font-bold text-xs text-sky-400 uppercase tracking-wide">Lite</h3>
+            <p className="text-3xl font-black text-white">6 000F</p>
+            <p className="text-[11px] text-slate-500">Par mois</p>
+            <ul className="text-left space-y-1.5 pt-2">
+              {["Diagnostics illimités", "Rapport texte détaillé", "Historique conservé"].map((t, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
+                  <Check className="w-3 h-3 text-sky-400 shrink-0 mt-0.5" /> {t}
+                </li>
+              ))}
+            </ul>
           </div>
+
+          {/* Premium */}
+          <div className="bg-slate-900/80 border-2 border-red-500/40 rounded-2xl p-6 space-y-3 text-center relative overflow-hidden">
+            <span className="absolute top-3 right-3 text-[9px] bg-red-600 text-white font-black px-2 py-0.5 rounded-full uppercase">Populaire</span>
+            <h3 className="font-bold text-xs text-red-400 uppercase tracking-wide">Premium</h3>
+            <p className="text-3xl font-black text-white">15 000F</p>
+            <p className="text-[11px] text-slate-500">Par mois</p>
+            <ul className="text-left space-y-1.5 pt-2">
+              {["Diagnostics illimités", "Explications vocales IA", "Données techniques Haynes Pro"].map((t, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
+                  <Check className="w-3 h-3 text-red-400 shrink-0 mt-0.5" /> {t}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div className="text-center mt-8">
+          <a
+            href={waLink("Bonjour, je voudrais m'abonner à DiagAssist !")}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-7 py-3.5 rounded-2xl transition cursor-pointer"
+          >
+            <MessageCircle className="w-4 h-4" /> Activation immédiate par WhatsApp
+          </a>
         </div>
       </section>
 
