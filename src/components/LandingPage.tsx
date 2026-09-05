@@ -41,65 +41,63 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </button>
       </header>
 
-      {/* Hero */}
-      <main className="w-full max-w-6xl mx-auto px-5 pt-8 pb-16 relative">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-red-600/[0.08] rounded-full blur-3xl pointer-events-none" />
+      {/* Hero — plein cadre façon vitrine professionnelle, image bord à bord */}
+      <main className="w-full relative">
+        <div
+          className="w-full min-h-[480px] md:min-h-[560px] flex items-center relative overflow-hidden"
+          style={{
+            backgroundImage: "url('https://images.pexels.com/photos/12555014/pexels-photo-12555014.jpeg?w=1920&auto=compress&cs=tinysrgb')",
+            backgroundSize: "cover",
+            backgroundPosition: "center 30%",
+          }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/85 to-slate-950/40" />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent" />
 
-        <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 md:p-10 relative overflow-hidden">
-          {/* Photo de fond réelle (mécaniciens nigérians au travail), assombrie pour rester lisible */}
-          <div
-            className="absolute inset-0 opacity-25"
-            style={{
-              backgroundImage: "url('https://images.pexels.com/photos/12555014/pexels-photo-12555014.jpeg?w=1600&auto=compress&cs=tinysrgb')",
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-            }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/80 to-transparent" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(220,38,38,0.12),transparent_60%)]" />
+          <div className="w-full max-w-6xl mx-auto px-5 relative">
+            <span className="inline-block bg-red-600/15 border border-red-500/30 text-red-400 text-[11px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-5">
+              🔧 Essai Gratuit Immédiat
+            </span>
 
-          <span className="inline-block bg-red-600/15 border border-red-500/30 text-red-400 text-[11px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 relative">
-            🔧 Essai Gratuit Immédiat
-          </span>
+            <h1 className="text-3xl md:text-6xl font-display font-black leading-tight max-w-3xl">
+              NE RATEZ PLUS <span className="text-red-500">AUCUNE PANNE</span>
+            </h1>
 
-          <h1 className="text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl relative">
-            NE RATEZ PLUS <span className="text-red-500">AUCUNE PANNE</span>
-          </h1>
+            <p className="text-slate-300 text-sm md:text-lg max-w-xl mt-4 leading-relaxed">
+              Décrivez le symptôme, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation.
+            </p>
 
-          <p className="text-slate-300 text-sm md:text-base max-w-xl mt-4 leading-relaxed relative">
-            Décrivez le symptôme, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation.
-          </p>
+            <div className="space-y-2.5 mt-6">
+              {[
+                "Diagnostic immédiat, en quelques secondes",
+                "Activation en moins de 2 minutes",
+                "Sans engagement, annulez à tout moment",
+              ].map((t, i) => (
+                <div key={i} className="flex items-center gap-2.5 text-sm text-slate-200">
+                  <span className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                    <Check className="w-3 h-3 text-emerald-400" />
+                  </span>
+                  {t}
+                </div>
+              ))}
+            </div>
 
-          <div className="space-y-2.5 mt-6 relative">
-            {[
-              "Diagnostic immédiat, en quelques secondes",
-              "Activation en moins de 2 minutes",
-              "Sans engagement, annulez à tout moment",
-            ].map((t, i) => (
-              <div key={i} className="flex items-center gap-2.5 text-sm text-slate-200">
-                <span className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                  <Check className="w-3 h-3 text-emerald-400" />
-                </span>
-                {t}
-              </div>
-            ))}
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-8 relative">
-            <button
-              onClick={onGetStarted}
-              className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
-            >
-              Commencer maintenant <ArrowRight className="w-4 h-4" />
-            </button>
-            <a
-              href={waLink("Bonjour, je voudrais essayer DiagAssist !")}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
-            >
-              <MessageCircle className="w-4 h-4" /> Essai gratuit via WhatsApp
-            </a>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-8 pb-10">
+              <button
+                onClick={onGetStarted}
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
+              >
+                Commencer maintenant <ArrowRight className="w-4 h-4" />
+              </button>
+              <a
+                href={waLink("Bonjour, je voudrais essayer DiagAssist !")}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
+              >
+                <MessageCircle className="w-4 h-4" /> Essai gratuit via WhatsApp
+              </a>
+            </div>
           </div>
         </div>
       </main>
@@ -129,35 +127,36 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </div>
       </section>
 
-      {/* Comment ça marche */}
-      <section className="w-full max-w-4xl mx-auto px-5 py-16 border-t border-white/[0.05]">
-        <h2 className="text-xl md:text-2xl font-display font-black text-center mb-8 uppercase tracking-tight">
-          Comment ça marche
-        </h2>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-10 rounded-2xl overflow-hidden">
-          {[
-            "https://images.pexels.com/photos/12555015/pexels-photo-12555015.jpeg?w=500&auto=compress&cs=tinysrgb",
-            "https://images.pexels.com/photos/12555016/pexels-photo-12555016.jpeg?w=500&auto=compress&cs=tinysrgb",
-            "https://images.pexels.com/photos/4315570/pexels-photo-4315570.jpeg?w=500&auto=compress&cs=tinysrgb",
-            "https://images.pexels.com/photos/8985461/pexels-photo-8985461.jpeg?w=500&auto=compress&cs=tinysrgb",
-          ].map((src, i) => (
-            <img key={i} src={src} alt="Mécanicien au travail" className="w-full h-24 md:h-32 object-cover" />
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[
-            { n: "01", title: "Décrivez le symptôme", desc: "Marque, modèle, année, et ce que vous constatez sur le véhicule." },
-            { n: "02", title: "Joignez une preuve", desc: "Photo, vidéo ou son — pour un diagnostic plus précis." },
-            { n: "03", title: "Suivez le guide", desc: "Contrôles étape par étape jusqu'à la réparation confirmée." },
-          ].map((s, i) => (
-            <div key={i} className="text-center space-y-2">
-              <div className="text-3xl font-black text-red-600/40 font-mono">{s.n}</div>
-              <h3 className="font-bold text-sm text-white">{s.title}</h3>
-              <p className="text-xs text-slate-400 leading-relaxed">{s.desc}</p>
+      {/* Comment ça marche — une seule photo distincte, disposition à deux colonnes */}
+      <section className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
+          <div className="rounded-3xl overflow-hidden order-2 md:order-1">
+            <img
+              src="https://images.pexels.com/photos/12555016/pexels-photo-12555016.jpeg?w=900&auto=compress&cs=tinysrgb"
+              alt="Mécanicien africain au travail"
+              className="w-full h-64 md:h-full object-cover"
+            />
+          </div>
+          <div className="order-1 md:order-2">
+            <h2 className="text-xl md:text-2xl font-display font-black mb-8 uppercase tracking-tight">
+              Comment ça marche
+            </h2>
+            <div className="space-y-6">
+              {[
+                { n: "01", title: "Décrivez le symptôme", desc: "Marque, modèle, année, et ce que vous constatez sur le véhicule." },
+                { n: "02", title: "Joignez une preuve", desc: "Photo, vidéo ou son — pour un diagnostic plus précis." },
+                { n: "03", title: "Suivez le guide", desc: "Contrôles étape par étape jusqu'à la réparation confirmée." },
+              ].map((s, i) => (
+                <div key={i} className="flex items-start gap-4">
+                  <div className="text-2xl font-black text-red-600/50 font-mono shrink-0">{s.n}</div>
+                  <div>
+                    <h3 className="font-bold text-sm text-white">{s.title}</h3>
+                    <p className="text-xs text-slate-400 leading-relaxed mt-1">{s.desc}</p>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       </section>
 
