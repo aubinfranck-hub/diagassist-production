@@ -15,6 +15,7 @@ import BannerDisplay from "./components/BannerDisplay";
 import SplashScreen from "./components/SplashScreen";
 import IntegratedVoiceController from "./components/IntegratedVoiceController";
 import PhoneAuth from "./components/PhoneAuth";
+import LandingPage from "./components/LandingPage";
 import VisualRepairAssistant from "./components/VisualRepairAssistant";
 import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
@@ -103,6 +104,9 @@ interface AdminLogEntry {
 export default function App() {
   // Splash screen state
   const [showSplash, setShowSplash] = useState(true);
+  // Page d'accueil publique (vitrine) affichée avant l'écran de connexion — pour le référencement
+  // et la présentation du produit aux visiteurs qui n'ont pas encore de compte.
+  const [showLandingPage, setShowLandingPage] = useState(true);
 
   // Connectivity monitoring state
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -719,7 +723,9 @@ export default function App() {
         </div>
       )}
 
-      {!showSplash && !loggedInUser ? (
+      {!showSplash && !loggedInUser && showLandingPage ? (
+        <LandingPage onGetStarted={() => setShowLandingPage(false)} />
+      ) : !showSplash && !loggedInUser ? (
         <PhoneAuth
           onLoginSuccess={(phone) => {
             setLoggedInUser(phone);
