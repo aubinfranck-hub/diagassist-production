@@ -40,6 +40,23 @@ interface Banner {
 }
 const banners = new Map<string, Banner>();
 
+// Réseau de mécaniciens agréés, ajoutés manuellement par l'admin.
+// Affiché aux propriétaires de véhicules pour les orienter vers un professionnel équipé.
+interface Mechanic {
+  id: string;
+  name: string;
+  garageName?: string;
+  phone: string;
+  city: string;
+  area?: string;
+  specialties?: string;
+  hasScanner: boolean;
+  certified: boolean;
+  active: boolean;
+  createdAt: number;
+}
+const mechanics = new Map<string, Mechanic>();
+
 // Nombre de tentatives de vérification OTP par numéro (anti brute-force)
 const otpAttempts = new Map<string, { count: number; windowStart: number }>();
 
@@ -149,6 +166,19 @@ async function initDatabase(): Promise<void> {
       plan TEXT NOT NULL,
       created_at BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS mechanics (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      garage_name TEXT,
+      phone TEXT NOT NULL,
+      city TEXT NOT NULL,
+      area TEXT,
+      specialties TEXT,
+      has_scanner BOOLEAN NOT NULL DEFAULT true,
+      certified BOOLEAN NOT NULL DEFAULT true,
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at BIGINT NOT NULL
+    );
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 }
@@ -187,6 +217,23 @@ async function loadPersistedData(): Promise<void> {
   // Sessions : on ne recharge que celles de moins de 30 jours (au-delà, on considère l'utilisateur
   // parti de toute façon — pas la peine de garder des tokens abandonnés indéfiniment en mémoire).
   const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  const mechanicsRes = await dbPool.query("SELECT * FROM mechanics");
+  for (const row of mechanicsRes.rows) {
+    mechanics.set(row.id, {
+      id: row.id,
+      name: row.name,
+      garageName: row.garage_name || undefined,
+      phone: row.phone,
+      city: row.city,
+      area: row.area || undefined,
+      specialties: row.specialties || undefined,
+      hasScanner: row.has_scanner,
+      certified: row.certified,
+      active: row.active,
+      createdAt: Number(row.created_at),
+    });
+  }
+
   const sessionsRes = await dbPool.query("SELECT * FROM sessions");
   let loadedSessions = 0;
   for (const row of sessionsRes.rows) {
@@ -197,6 +244,29 @@ async function loadPersistedData(): Promise<void> {
     }
   }
   console.log(`[DB] Données rechargées : ${accountsRes.rows.length} compte(s), ${plansRes.rows.length} forfait(s), ${bannersRes.rows.length} bannière(s), ${loadedSessions} session(s).`);
+}
+
+async function persistMechanic(m: Mechanic): Promise<void> {
+  if (!dbPool) return;
+  try {
+    await dbPool.query(
+      `INSERT INTO mechanics (id, name, garage_name, phone, city, area, specialties, has_scanner, certified, active, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (id) DO UPDATE SET name=$2, garage_name=$3, phone=$4, city=$5, area=$6, specialties=$7, has_scanner=$8, certified=$9, active=$10`,
+      [m.id, m.name, m.garageName || null, m.phone, m.city, m.area || null, m.specialties || null, m.hasScanner, m.certified, m.active, m.createdAt]
+    );
+  } catch (err: any) {
+    console.error("[DB] Échec de la sauvegarde du mécanicien:", err.message);
+  }
+}
+
+async function deleteMechanicFromDb(id: string): Promise<void> {
+  if (!dbPool) return;
+  try {
+    await dbPool.query("DELETE FROM mechanics WHERE id = $1", [id]);
+  } catch (err: any) {
+    console.error("[DB] Échec de la suppression du mécanicien:", err.message);
+  }
 }
 
 async function persistSession(token: string): Promise<void> {
@@ -628,6 +698,7 @@ async function startServer() {
         mimeType,    // MIME type (e.g., image/jpeg, audio/wav, etc.)
         files,       // Nouveau : plusieurs pièces jointes { data, mimeType }[] — un mécanicien peut
                      // joindre plusieurs photos/vidéos/audio en une seule fois (voyant + moteur + code OBD...)
+        accountType, // "mechanic" (défaut) ou "owner" — adapte le niveau technique de la réponse
       } = req.body;
 
       // Construct parts array for Gemini 3.5 Flash
@@ -690,6 +761,21 @@ Analyse-les attentivement pour y repérer des voyants, des codes d'erreur DTC te
       }
 
       parts.push({ text: promptText });
+
+      // Mode "propriétaire de véhicule" : langage simple, pas de manipulation technique,
+      // et orientation systématique vers un mécanicien agréé du réseau.
+      const ownerModeInstruction = `
+
+MODE PROPRIÉTAIRE DE VÉHICULE (OBLIGATOIRE — l'utilisateur n'est PAS mécanicien) :
+L'utilisateur est un conducteur/propriétaire, pas un professionnel. Adapte-toi STRICTEMENT :
+- Utilise un langage simple et courant. Explique tout terme technique en une phrase.
+- Ne demande JAMAIS de mesure au multimètre, de démontage, de test de continuité, ni aucune manipulation technique. L'utilisateur n'a ni les outils ni la formation.
+- Concentre-toi sur ce qu'il peut constater lui-même : bruit, voyant, odeur, comportement du véhicule, fumée, fuite visible.
+- Indique clairement le niveau d'URGENCE et s'il peut continuer à rouler ou non — c'est l'information la plus utile pour lui.
+- Donne une idée de ce qui est probablement en cause, mais reste prudent et ne prétends jamais à une certitude.
+- Dans "immediateRecommendations", inclus TOUJOURS en premier une recommandation de faire confirmer le diagnostic par un mécanicien agréé équipé d'une valise de diagnostic, car un diagnostic fiable exige la lecture des codes défauts sur le véhicule.
+- Dans "repairGuideSteps", ne donne PAS de procédure de réparation à exécuter soi-même : décris plutôt ce que le mécanicien devra vérifier, pour que l'utilisateur sache de quoi on lui parle et ne se fasse pas surfacturer.
+- Dans "explanationText", explique la situation avec des mots simples et rassurants, sans jargon.`;
 
       const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
 
@@ -762,7 +848,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       const response = await generateContentWithFallbackAndRetry(
         { parts },
         {
-          systemInstruction,
+          systemInstruction: accountType === "owner" ? systemInstruction + ownerModeInstruction : systemInstruction,
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -1604,6 +1690,66 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.get("/api/banners", requireAuth, (req, res) => {
     const active = Array.from(banners.values()).filter((b) => b.active);
     res.json({ success: true, banners: active });
+  });
+
+  // --- Réseau de mécaniciens agréés ---
+
+  // API Route (ADMIN UNIQUEMENT) : liste complète (y compris désactivés)
+  app.get("/api/admin/mechanics", adminLimiter, requireAdminAuth, (req, res) => {
+    const list = Array.from(mechanics.values()).sort((a, b) => b.createdAt - a.createdAt);
+    res.json({ success: true, mechanics: list });
+  });
+
+  // API Route (ADMIN UNIQUEMENT) : ajouter un mécanicien au réseau
+  app.post("/api/admin/mechanics", adminLimiter, requireAdminAuth, (req, res) => {
+    const { name, garageName, phone, city, area, specialties, hasScanner, certified } = req.body;
+    if (!name || !phone || !city) {
+      return res.status(400).json({ success: false, message: "Nom, téléphone et ville sont requis." });
+    }
+    const id = crypto.randomBytes(6).toString("hex");
+    const mechanic: Mechanic = {
+      id,
+      name,
+      garageName: garageName || undefined,
+      phone,
+      city,
+      area: area || undefined,
+      specialties: specialties || undefined,
+      hasScanner: hasScanner !== false,
+      certified: certified !== false,
+      active: true,
+      createdAt: Date.now(),
+    };
+    mechanics.set(id, mechanic);
+    persistMechanic(mechanic).catch(() => {});
+    res.json({ success: true, mechanic });
+  });
+
+  // API Route (ADMIN UNIQUEMENT) : activer/désactiver
+  app.post("/api/admin/mechanics/:id/toggle", adminLimiter, requireAdminAuth, (req, res) => {
+    const m = mechanics.get(req.params.id);
+    if (!m) return res.status(404).json({ success: false, message: "Mécanicien introuvable." });
+    m.active = !m.active;
+    persistMechanic(m).catch(() => {});
+    res.json({ success: true, mechanic: m });
+  });
+
+  // API Route (ADMIN UNIQUEMENT) : supprimer
+  app.delete("/api/admin/mechanics/:id", adminLimiter, requireAdminAuth, (req, res) => {
+    mechanics.delete(req.params.id);
+    deleteMechanicFromDb(req.params.id).catch(() => {});
+    res.json({ success: true });
+  });
+
+  // API Route (utilisateur connecté) : annuaire public des mécaniciens agréés actifs,
+  // affiché aux propriétaires de véhicules pour les orienter vers un professionnel équipé.
+  app.get("/api/mechanics", requireAuth, (req, res) => {
+    const city = (req.query.city as string || "").trim().toLowerCase();
+    let list = Array.from(mechanics.values()).filter((m) => m.active);
+    if (city) {
+      list = list.filter((m) => m.city.toLowerCase().includes(city) || (m.area || "").toLowerCase().includes(city));
+    }
+    res.json({ success: true, mechanics: list });
   });
 
   // API Route : connexion par numéro de téléphone + mot de passe (compte créé par l'admin)

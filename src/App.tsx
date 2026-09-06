@@ -17,6 +17,8 @@ import IntegratedVoiceController from "./components/IntegratedVoiceController";
 import PhoneAuth from "./components/PhoneAuth";
 import LandingPage from "./components/LandingPage";
 import InstallPrompt from "./components/InstallPrompt";
+import ProfileChoice from "./components/ProfileChoice";
+import MechanicDirectory from "./components/MechanicDirectory";
 import VisualRepairAssistant from "./components/VisualRepairAssistant";
 import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
@@ -108,6 +110,13 @@ export default function App() {
   // Page d'accueil publique (vitrine) affichée avant l'écran de connexion — pour le référencement
   // et la présentation du produit aux visiteurs qui n'ont pas encore de compte.
   const [showLandingPage, setShowLandingPage] = useState(true);
+
+  // Type de profil : "mechanic" (professionnel) ou "owner" (propriétaire de véhicule).
+  // Choisi au premier écran après connexion, modifiable ensuite. Conditionne le niveau
+  // technique des diagnostics et l'accès à l'annuaire des mécaniciens agréés.
+  const [accountType, setAccountType] = useState<"mechanic" | "owner" | null>(() => {
+    return (localStorage.getItem("account_type") as "mechanic" | "owner" | null) || null;
+  });
 
   // Connectivity monitoring state
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -205,7 +214,13 @@ export default function App() {
   }, []);
 
   // Navigation tabs
-  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin">("diagnose");
+  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics">("diagnose");
+
+  const handleChooseProfile = (type: "mechanic" | "owner") => {
+    setAccountType(type);
+    localStorage.setItem("account_type", type);
+    setActiveTab("diagnose");
+  };
   const [activeResultTab, setActiveResultTab] = useState<"report" | "chat" | "visual">("report");
   const [showMobileUserMenu, setShowMobileUserMenu] = useState(false);
 
@@ -459,7 +474,7 @@ export default function App() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${localStorage.getItem("auth_session_token")}`
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, accountType }),
       });
 
       if (response.status === 401) {
@@ -733,6 +748,8 @@ export default function App() {
             localStorage.setItem("auth_user_phone", phone);
           }}
         />
+      ) : !showSplash && loggedInUser && !accountType ? (
+        <ProfileChoice onChoose={handleChooseProfile} />
       ) : (
         <div className="min-h-screen bg-slate-950 font-sans text-slate-100 workshop-grid pb-24 lg:pb-0 lg:flex lg:items-stretch">
           
@@ -811,6 +828,26 @@ export default function App() {
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
                 </button>
+
+                {accountType === "owner" && (
+                  <button
+                    onClick={() => {
+                      setActiveTab("mechanics");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
+                      activeTab === "mechanics"
+                        ? "bg-sky-600 text-white shadow-lg shadow-sky-600/25 border border-white/10"
+                        : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Wrench className="w-4.5 h-4.5" />
+                      <span>Mécaniciens</span>
+                    </div>
+                    {activeTab === "mechanics" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  </button>
+                )}
 
                 <button
                   onClick={() => {
@@ -915,6 +952,16 @@ export default function App() {
                   </span>
                 </div>
                 
+                <button
+                  onClick={() => {
+                    setAccountType(null);
+                    localStorage.removeItem("account_type");
+                  }}
+                  className="w-full text-center py-1.5 mb-1.5 bg-slate-800/60 hover:bg-slate-700/60 text-slate-300 hover:text-white border border-white/[0.06] rounded-lg text-[10px] font-black uppercase tracking-wider transition cursor-pointer"
+                >
+                  Changer de profil ({accountType === "owner" ? "Propriétaire" : "Mécanicien"})
+                </button>
+
                 <button 
                   onClick={() => {
                     if (confirm("Voulez-vous vraiment vous déconnecter de votre compte DiagAssist ?")) {
@@ -1084,6 +1131,23 @@ export default function App() {
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
               </span>
             </button>
+
+            {accountType === "owner" && (
+              <button
+                onClick={() => {
+                  setActiveTab("mechanics");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
+                  activeTab === "mechanics"
+                    ? "bg-slate-950 text-sky-400 border border-white/[0.04]"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Wrench className="w-5 h-5" />
+                <span className="text-[9px] font-black uppercase tracking-wider">Méca</span>
+              </button>
+            )}
 
             <button
               onClick={() => {
@@ -1343,6 +1407,13 @@ export default function App() {
         </div>
 
         {/* TAB 3: Clean Public Subscription Panel */}
+        {/* Annuaire des mécaniciens agréés — réservé aux propriétaires de véhicules */}
+        {activeTab === "mechanics" && accountType === "owner" && (
+          <div className="max-w-4xl mx-auto">
+            <MechanicDirectory />
+          </div>
+        )}
+
         {activeTab === "prices" && (
           <div className={isAdminAccount ? "max-w-6xl mx-auto space-y-8 animate-fade-in" : "max-w-3xl mx-auto space-y-8 animate-fade-in"}>
             {/* User Subscription Selection Panel (ou tableau de bord complet si admin) */}

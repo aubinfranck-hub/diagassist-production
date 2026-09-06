@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
+import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight, Wrench } from "lucide-react";
 
 interface Account {
   phone: string;
@@ -22,6 +22,20 @@ interface SessionInfo {
 interface HistoryEntry {
   phone: string;
   timestamp: number;
+}
+
+interface MechanicEntry {
+  id: string;
+  name: string;
+  garageName?: string;
+  phone: string;
+  city: string;
+  area?: string;
+  specialties?: string;
+  hasScanner: boolean;
+  certified: boolean;
+  active: boolean;
+  createdAt: number;
 }
 
 interface Banner {
@@ -142,6 +156,70 @@ export default function AdminClientDashboard() {
   const [bannerCreating, setBannerCreating] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
 
+  // Réseau de mécaniciens agréés
+  const [mechanicsList, setMechanicsList] = useState<MechanicEntry[]>([]);
+  const [mName, setMName] = useState("");
+  const [mGarage, setMGarage] = useState("");
+  const [mPhone, setMPhone] = useState("");
+  const [mCity, setMCity] = useState("");
+  const [mArea, setMArea] = useState("");
+  const [mSpecialties, setMSpecialties] = useState("");
+  const [mHasScanner, setMHasScanner] = useState(true);
+  const [mCertified, setMCertified] = useState(true);
+  const [mCreating, setMCreating] = useState(false);
+  const [mError, setMError] = useState<string | null>(null);
+
+  const handleCreateMechanic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMCreating(true);
+    setMError(null);
+    try {
+      const res = await fetch("/api/admin/mechanics", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          name: mName,
+          garageName: mGarage || undefined,
+          phone: mPhone,
+          city: mCity,
+          area: mArea || undefined,
+          specialties: mSpecialties || undefined,
+          hasScanner: mHasScanner,
+          certified: mCertified,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMName(""); setMGarage(""); setMPhone(""); setMCity(""); setMArea(""); setMSpecialties("");
+        loadData();
+      } else {
+        setMError(data.message || "Échec de l'ajout du mécanicien.");
+      }
+    } catch {
+      setMError("Erreur réseau.");
+    } finally {
+      setMCreating(false);
+    }
+  };
+
+  const handleToggleMechanic = async (id: string) => {
+    try {
+      await fetch(`/api/admin/mechanics/${id}/toggle`, { method: "POST", headers: authHeaders() });
+      loadData();
+    } catch {
+      // silencieux — l'utilisateur peut réessayer via le bouton rafraîchir
+    }
+  };
+
+  const handleDeleteMechanic = async (id: string) => {
+    try {
+      await fetch(`/api/admin/mechanics/${id}`, { method: "DELETE", headers: authHeaders() });
+      loadData();
+    } catch {
+      // silencieux
+    }
+  };
+
   const generatePassword = (): string => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let pwd = "";
@@ -153,22 +231,25 @@ export default function AdminClientDashboard() {
     setLoadingList(true);
     setListError(null);
     try {
-      const [accRes, sessRes, histRes, bannerRes] = await Promise.all([
+      const [accRes, sessRes, histRes, bannerRes, mechRes] = await Promise.all([
         fetch("/api/admin/accounts", { headers: authHeaders() }),
         fetch("/api/admin/sessions", { headers: authHeaders() }),
         fetch("/api/admin/connection-history", { headers: authHeaders() }),
         fetch("/api/admin/banners", { headers: authHeaders() }),
+        fetch("/api/admin/mechanics", { headers: authHeaders() }),
       ]);
       const accData = await accRes.json();
       const sessData = await sessRes.json();
       const histData = await histRes.json();
       const bannerData = await bannerRes.json();
+      const mechData = await mechRes.json();
 
       const errors: string[] = [];
       if (accData.success) setAccounts(accData.accounts); else errors.push(accData.message || "comptes");
       if (sessData.success) setActiveSessions(sessData.sessions); else errors.push(sessData.message || "sessions");
       if (histData.success) setHistory(histData.history); else errors.push(histData.message || "historique");
       if (bannerData.success) setBannerList(bannerData.banners); else errors.push(bannerData.message || "bannières");
+      if (mechData.success) setMechanicsList(mechData.mechanics); else errors.push(mechData.message || "mécaniciens");
 
       if (errors.length > 0) setListError(`Certaines données n'ont pas pu être chargées : ${errors.join(", ")}`);
     } catch {
@@ -551,6 +632,99 @@ export default function AdminClientDashboard() {
               })}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Réseau de mécaniciens agréés */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+          <Wrench className="w-4 h-4 text-sky-400" />
+          Réseau de mécaniciens agréés ({mechanicsList.length})
+        </h3>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          Ces mécaniciens sont proposés aux propriétaires de véhicules pour confirmer un diagnostic avec une vraie valise.
+        </p>
+
+        <form onSubmit={handleCreateMechanic} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          <input
+            type="text" required placeholder="Nom du mécanicien *"
+            value={mName} onChange={(e) => setMName(e.target.value)}
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          />
+          <input
+            type="text" placeholder="Nom du garage (optionnel)"
+            value={mGarage} onChange={(e) => setMGarage(e.target.value)}
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          />
+          <input
+            type="tel" required placeholder="Téléphone * (+225...)"
+            value={mPhone} onChange={(e) => setMPhone(e.target.value)}
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500 font-mono"
+          />
+          <input
+            type="text" required placeholder="Ville * (ex: Abidjan)"
+            value={mCity} onChange={(e) => setMCity(e.target.value)}
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          />
+          <input
+            type="text" placeholder="Quartier (ex: Yopougon)"
+            value={mArea} onChange={(e) => setMArea(e.target.value)}
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          />
+          <input
+            type="text" placeholder="Spécialités (ex: Diesel, boîte auto)"
+            value={mSpecialties} onChange={(e) => setMSpecialties(e.target.value)}
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
+          />
+          <label className="flex items-center gap-1.5 text-xs text-slate-400 font-bold cursor-pointer bg-slate-950 border border-white/[0.08] rounded-xl justify-center py-2.5">
+            <input type="checkbox" checked={mHasScanner} onChange={(e) => setMHasScanner(e.target.checked)} className="cursor-pointer accent-sky-500" />
+            A une valise
+          </label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-400 font-bold cursor-pointer bg-slate-950 border border-white/[0.08] rounded-xl justify-center py-2.5">
+            <input type="checkbox" checked={mCertified} onChange={(e) => setMCertified(e.target.checked)} className="cursor-pointer accent-emerald-500" />
+            Agréé
+          </label>
+          <button
+            type="submit" disabled={mCreating}
+            className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer disabled:opacity-50 w-full"
+          >
+            {mCreating ? "Ajout..." : "Ajouter au réseau"}
+          </button>
+        </form>
+
+        {mError && (
+          <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs p-3 rounded-xl flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{mError}</span>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {mechanicsList.length === 0 && <p className="text-xs text-slate-500">Aucun mécanicien dans le réseau.</p>}
+          {mechanicsList.map((m) => (
+            <div key={m.id} className="flex items-center justify-between gap-3 bg-slate-950 border border-white/[0.06] rounded-xl p-3">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-white truncate">
+                  {m.garageName || m.name} <span className="font-mono text-slate-400">— {m.phone}</span>
+                </p>
+                <p className="text-[10px] text-slate-500">
+                  {m.area ? `${m.area}, ${m.city}` : m.city}
+                  {m.specialties ? ` · ${m.specialties}` : ""}
+                  {m.hasScanner ? " · 🔧 valise" : ""}
+                  {m.certified ? " · ✅ agréé" : ""}
+                  {!m.active ? " · ⛔ désactivé" : ""}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => handleToggleMechanic(m.id)} className="text-slate-400 hover:text-white cursor-pointer" title={m.active ? "Désactiver" : "Activer"}>
+                  {m.active ? <ToggleRight className="w-5 h-5 text-emerald-400" /> : <ToggleLeft className="w-5 h-5" />}
+                </button>
+                <button onClick={() => handleDeleteMechanic(m.id)} className="text-rose-400 hover:text-rose-300 cursor-pointer" title="Supprimer">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
