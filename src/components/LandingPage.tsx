@@ -1,17 +1,19 @@
 import React from "react";
 import {
   Wrench, Camera, Mic, MessageCircle, ShieldCheck, Zap, Check,
-  Smartphone, Clock, Sparkles, ArrowRight, MapPin, Phone
+  Smartphone, Clock, Sparkles, ArrowRight, MapPin, Phone, Package, AlertTriangle, Coins
 } from "lucide-react";
 
 interface LandingPageProps {
   onGetStarted: () => void;
+  isOwner?: boolean;
+  onChangeProfile?: () => void;
 }
 
 const WHATSAPP_NUMBER = "2250141116026";
 const waLink = (message: string) => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
 
-export default function LandingPage({ onGetStarted }: LandingPageProps) {
+export default function LandingPage({ onGetStarted, isOwner = false, onChangeProfile }: LandingPageProps) {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans overflow-x-hidden relative">
       {/* Bouton WhatsApp flottant, visible partout sur la page */}
@@ -31,7 +33,17 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg shadow-red-600/20 overflow-hidden">
             <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
           </div>
-          <span className="font-display font-black text-lg uppercase tracking-tight">DiagAssist</span>
+          <div>
+            <span className="font-display font-black text-lg uppercase tracking-tight block leading-none">DiagAssist</span>
+            {onChangeProfile && (
+              <button
+                onClick={onChangeProfile}
+                className="text-[10px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
+              >
+                {isOwner ? "Propriétaire" : "Mécanicien"} · changer
+              </button>
+            )}
+          </div>
         </div>
         <button
           onClick={onGetStarted}
@@ -59,23 +71,36 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(220,38,38,0.12),transparent_60%)]" />
 
           <span className="inline-block bg-red-600/15 border border-red-500/30 text-red-400 text-[11px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 relative">
-            🔧 Essai Gratuit Immédiat
+            {isOwner ? "🚗 Essai Gratuit Immédiat" : "🔧 Essai Gratuit Immédiat"}
           </span>
 
           <h1 className="text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl relative">
-            NE RATEZ PLUS <span className="text-red-500">AUCUNE PANNE</span>
+            {isOwner ? (
+              <>VOTRE VOITURE FAIT UN BRUIT ? <span className="text-red-500">SACHEZ SI C'EST GRAVE</span></>
+            ) : (
+              <>NE RATEZ PLUS <span className="text-red-500">AUCUNE PANNE</span></>
+            )}
           </h1>
 
           <p className="text-slate-300 text-sm md:text-base max-w-xl mt-4 leading-relaxed relative">
-            Décrivez le symptôme, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation.
+            {isOwner
+              ? "Décrivez ce que vous constatez, en mots simples. DiagAssist vous explique ce qui se passe, si vous pouvez rouler, combien ça devrait coûter — et vous oriente vers un mécanicien agréé près de chez vous."
+              : "Décrivez le symptôme, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation."}
           </p>
 
           <div className="space-y-2.5 mt-6 relative">
-            {[
-              "Diagnostic immédiat, en quelques secondes",
-              "Activation en moins de 2 minutes",
-              "Sans engagement, annulez à tout moment",
-            ].map((t, i) => (
+            {(isOwner
+              ? [
+                  "Comprenez la panne sans jargon technique",
+                  "Sachez si vous pouvez rouler ou non",
+                  "Évitez de vous faire surfacturer au garage",
+                ]
+              : [
+                  "Diagnostic immédiat, en quelques secondes",
+                  "Activation en moins de 2 minutes",
+                  "Sans engagement, annulez à tout moment",
+                ]
+            ).map((t, i) => (
               <div key={i} className="flex items-center gap-2.5 text-sm text-slate-200">
                 <span className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
                   <Check className="w-3 h-3 text-emerald-400" />
@@ -107,17 +132,27 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
       {/* Fonctionnalités */}
       <section className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
         <h2 className="text-xl md:text-2xl font-display font-black text-center mb-10 uppercase tracking-tight">
-          Tout ce qu'il faut pour diagnostiquer vite et bien
+          {isOwner ? "Tout ce qu'il faut savoir sur votre véhicule" : "Tout ce qu'il faut pour diagnostiquer vite et bien"}
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {[
-            { icon: Camera, title: "Photos & vidéos", desc: "Envoyez une photo du voyant, du moteur, ou de l'écran de la valise OBD — l'IA les analyse directement." },
-            { icon: Mic, title: "Assistant vocal live", desc: "Décrivez le bruit du moteur, ou parlez directement à l'IA en mains libres pendant que vous travaillez." },
-            { icon: Wrench, title: "Diagnostic guidé", desc: "Contrôles étape par étape, du plus simple au plus poussé, jusqu'à confirmer la vraie cause de la panne." },
-            { icon: ShieldCheck, title: "Protocole rigoureux", desc: "Jamais de remplacement de pièce à l'aveugle — chaque hypothèse est vérifiée par un test avant conclusion." },
-            { icon: Smartphone, title: "Fonctionne partout", desc: "Sur téléphone, en atelier, même en connexion 3G/4G dégradée." },
-            { icon: Clock, title: "Réponse immédiate", desc: "Plus besoin d'attendre — le rapport de diagnostic arrive en quelques secondes." },
-          ].map((f, i) => (
+          {(isOwner
+            ? [
+                { icon: AlertTriangle, title: "Est-ce grave ?", desc: "Vous savez immédiatement si vous pouvez continuer à rouler ou s'il faut arrêter tout de suite." },
+                { icon: Coins, title: "Le juste prix", desc: "Une fourchette de coût pour la réparation, pour ne pas vous faire surfacturer au garage." },
+                { icon: Camera, title: "Une simple photo suffit", desc: "Photographiez le voyant allumé ou enregistrez le bruit : l'IA analyse directement." },
+                { icon: Wrench, title: "Mécaniciens agréés", desc: "Nous vous orientons vers un professionnel vérifié, équipé d'une valise de diagnostic, près de chez vous." },
+                { icon: Package, title: "Vendeurs de pièces", desc: "Trouvez où acheter la pièce dont vous avez besoin, chez des fournisseurs vérifiés." },
+                { icon: Smartphone, title: "Sans jargon technique", desc: "Tout est expliqué avec des mots simples. Pas besoin d'être mécanicien pour comprendre." },
+              ]
+            : [
+                { icon: Camera, title: "Photos & vidéos", desc: "Envoyez une photo du voyant, du moteur, ou de l'écran de la valise OBD — l'IA les analyse directement." },
+                { icon: Mic, title: "Assistant vocal live", desc: "Décrivez le bruit du moteur, ou parlez directement à l'IA en mains libres pendant que vous travaillez." },
+                { icon: Wrench, title: "Diagnostic guidé", desc: "Contrôles étape par étape, du plus simple au plus poussé, jusqu'à confirmer la vraie cause de la panne." },
+                { icon: ShieldCheck, title: "Protocole rigoureux", desc: "Jamais de remplacement de pièce à l'aveugle — chaque hypothèse est vérifiée par un test avant conclusion." },
+                { icon: Smartphone, title: "Fonctionne partout", desc: "Sur téléphone, en atelier, même en connexion 3G/4G dégradée." },
+                { icon: Clock, title: "Réponse immédiate", desc: "Plus besoin d'attendre — le rapport de diagnostic arrive en quelques secondes." },
+              ]
+          ).map((f, i) => (
             <div key={i} className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-3">
               <div className="w-11 h-11 bg-red-600/10 text-red-500 rounded-xl flex items-center justify-center">
                 <f.icon className="w-5 h-5" />
@@ -147,11 +182,18 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[
-            { n: "01", title: "Décrivez le symptôme", desc: "Marque, modèle, année, et ce que vous constatez sur le véhicule." },
-            { n: "02", title: "Joignez une preuve", desc: "Photo, vidéo ou son — pour un diagnostic plus précis." },
-            { n: "03", title: "Suivez le guide", desc: "Contrôles étape par étape jusqu'à la réparation confirmée." },
-          ].map((s, i) => (
+          {(isOwner
+            ? [
+                { n: "01", title: "Décrivez le problème", desc: "Le bruit, le voyant, ce que vous constatez — avec vos mots." },
+                { n: "02", title: "Recevez l'explication", desc: "Ce qui se passe, si c'est urgent, et le coût à prévoir." },
+                { n: "03", title: "Trouvez un pro", desc: "Nous vous orientons vers un mécanicien agréé près de chez vous." },
+              ]
+            : [
+                { n: "01", title: "Décrivez le symptôme", desc: "Marque, modèle, année, et ce que vous constatez sur le véhicule." },
+                { n: "02", title: "Joignez une preuve", desc: "Photo, vidéo ou son — pour un diagnostic plus précis." },
+                { n: "03", title: "Suivez le guide", desc: "Contrôles étape par étape jusqu'à la réparation confirmée." },
+              ]
+          ).map((s, i) => (
             <div key={i} className="text-center space-y-2">
               <div className="text-3xl font-black text-red-600/40 font-mono">{s.n}</div>
               <h3 className="font-bold text-sm text-white">{s.title}</h3>
@@ -168,6 +210,37 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </h2>
         <p className="text-center text-slate-500 text-xs mb-10">Choisissez la formule qui vous convient</p>
 
+        {isOwner ? (
+          /* Offres propriétaires : simples, deux choix seulement */
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
+            <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-3 text-center">
+              <h3 className="font-bold text-xs text-sky-400 uppercase tracking-wide">Essai Gratuit</h3>
+              <p className="text-3xl font-black text-white">0F</p>
+              <p className="text-[11px] text-slate-500">Pour découvrir</p>
+              <ul className="text-left space-y-1.5 pt-2">
+                {["3 diagnostics offerts", "Sans carte bancaire", "Accès aux mécaniciens agréés"].map((t, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
+                    <Check className="w-3 h-3 text-sky-400 shrink-0 mt-0.5" /> {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="bg-slate-900/80 border-2 border-emerald-500/40 rounded-2xl p-6 space-y-3 text-center relative overflow-hidden">
+              <span className="absolute top-3 right-3 text-[9px] bg-emerald-500 text-slate-950 font-black px-2 py-0.5 rounded-full uppercase">Populaire</span>
+              <h3 className="font-bold text-xs text-emerald-400 uppercase tracking-wide">Pass Semaine</h3>
+              <p className="text-3xl font-black text-white">500F</p>
+              <p className="text-[11px] text-slate-500">Pour 7 jours</p>
+              <ul className="text-left space-y-1.5 pt-2">
+                {["15 diagnostics sur 7 jours", "Fourchette de prix détaillée", "Mécaniciens et vendeurs de pièces"].map((t, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
+                    <Check className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" /> {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-5xl mx-auto">
           {/* Forfait Jour — nouveau, mis en avant */}
           <div className="bg-slate-900/80 border-2 border-emerald-500/40 rounded-2xl p-6 space-y-3 text-center relative overflow-hidden">
@@ -227,6 +300,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
             </ul>
           </div>
         </div>
+        )}
 
         <div className="text-center mt-8">
           <a
@@ -243,9 +317,9 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
       {/* CTA final */}
       <section className="w-full max-w-4xl mx-auto px-5 py-16 border-t border-white/[0.05] text-center">
         <h2 className="text-xl md:text-2xl font-display font-black mb-4 uppercase tracking-tight">
-          Prêt à diagnostiquer plus vite ?
+          {isOwner ? "Prêt à comprendre votre véhicule ?" : "Prêt à diagnostiquer plus vite ?"}
         </h2>
-        <p className="text-slate-400 text-sm mb-6">Rejoignez les mécaniciens qui utilisent déjà DiagAssist au quotidien.</p>
+        <p className="text-slate-400 text-sm mb-6">{isOwner ? "Rejoignez les conducteurs qui ne se font plus surprendre par une panne." : "Rejoignez les mécaniciens qui utilisent déjà DiagAssist au quotidien."}</p>
         <button
           onClick={onGetStarted}
           className="inline-flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-8 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"

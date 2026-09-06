@@ -739,8 +739,18 @@ export default function App() {
         </div>
       )}
 
-      {!showSplash && !loggedInUser && showLandingPage ? (
-        <LandingPage onGetStarted={() => setShowLandingPage(false)} />
+      {/* Parcours : choix du profil EN PREMIER, puis page d'accueil adaptée, puis connexion */}
+      {!showSplash && !loggedInUser && !accountType ? (
+        <ProfileChoice onChoose={handleChooseProfile} />
+      ) : !showSplash && !loggedInUser && showLandingPage ? (
+        <LandingPage
+          onGetStarted={() => setShowLandingPage(false)}
+          isOwner={accountType === "owner"}
+          onChangeProfile={() => {
+            setAccountType(null);
+            localStorage.removeItem("account_type");
+          }}
+        />
       ) : !showSplash && !loggedInUser ? (
         <PhoneAuth
           onLoginSuccess={(phone) => {
