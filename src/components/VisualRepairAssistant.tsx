@@ -158,7 +158,7 @@ export default function VisualRepairAssistant({ diagnosis, currentPlan, onUpgrad
       <div className="border-b border-slate-800 pb-4 space-y-2">
         <div className="flex items-center gap-2">
           <span className="bg-red-500/10 border border-red-500/30 text-red-400 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
-            Assistant de Réparation Guidée IA
+            Assistant de Réparation Guidée
           </span>
           <span className="bg-slate-800 text-slate-400 text-[10px] px-2 py-0.5 rounded font-mono">
             {brandModel}
@@ -182,7 +182,7 @@ export default function VisualRepairAssistant({ diagnosis, currentPlan, onUpgrad
           { id: 2, label: "2. Emplacement", icon: "📍" },
           { id: 3, label: "3. Diagnostic", icon: "⚡" },
           { id: 4, label: "4. Réparation", icon: "🛠️" },
-          { id: 5, label: "5. Voix IA", icon: "🎙️" }
+          { id: 5, label: "5. Voix", icon: "🎙️" }
         ].map((mod) => (
           <button
             key={mod.id}
@@ -449,7 +449,7 @@ export default function VisualRepairAssistant({ diagnosis, currentPlan, onUpgrad
           <div className="space-y-4">
             <div className="border-b border-slate-900 pb-2 flex items-center justify-between">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <span className="text-base">🎙️</span> Module 5 : Discuter à voix haute avec l'IA
+                <span className="text-base">🎙️</span> Module 5 : Discuter à voix haute avec DiagAssist
               </h3>
               
               {/* Mic / speaker mute indicator */}
@@ -589,7 +589,7 @@ export default function VisualRepairAssistant({ diagnosis, currentPlan, onUpgrad
             if (activeModule < 5) {
               setActiveModule((prev) => prev + 1);
             } else {
-              alert("Vous avez parcouru tous les modules de l'Assistant de Réparation Guidée IA !");
+              alert("Vous avez parcouru tous les modules de l'Assistant de Réparation Guidée !");
             }
           }}
           className="flex items-center gap-1.5 py-2 px-4 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs transition"

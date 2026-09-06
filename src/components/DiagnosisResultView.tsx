@@ -341,7 +341,7 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
           </div>
         </div>
 
-        {/* Questions de clarification de l'IA — bien visibles, si des infos essentielles manquent */}
+        {/* Questions de clarification de DiagAssist — bien visibles, si des infos essentielles manquent */}
         {diagnosis.clarifyingQuestions && diagnosis.clarifyingQuestions.length > 0 && (
           <div className="mb-7 p-5 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
             <div className="flex items-center gap-2 mb-3">

@@ -139,14 +139,14 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             ? [
                 { icon: AlertTriangle, title: "Est-ce grave ?", desc: "Vous savez immédiatement si vous pouvez continuer à rouler ou s'il faut arrêter tout de suite." },
                 { icon: Coins, title: "Le juste prix", desc: "Une fourchette de coût pour la réparation, pour ne pas vous faire surfacturer au garage." },
-                { icon: Camera, title: "Une simple photo suffit", desc: "Photographiez le voyant allumé ou enregistrez le bruit : l'IA analyse directement." },
+                { icon: Camera, title: "Une simple photo suffit", desc: "Photographiez le voyant allumé ou enregistrez le bruit : DiagAssist analyse directement." },
                 { icon: Wrench, title: "Mécaniciens agréés", desc: "Nous vous orientons vers un professionnel vérifié, équipé d'une valise de diagnostic, près de chez vous." },
                 { icon: Package, title: "Vendeurs de pièces", desc: "Trouvez où acheter la pièce dont vous avez besoin, chez des fournisseurs vérifiés." },
                 { icon: Smartphone, title: "Sans jargon technique", desc: "Tout est expliqué avec des mots simples. Pas besoin d'être mécanicien pour comprendre." },
               ]
             : [
-                { icon: Camera, title: "Photos & vidéos", desc: "Envoyez une photo du voyant, du moteur, ou de l'écran de la valise OBD — l'IA les analyse directement." },
-                { icon: Mic, title: "Assistant vocal live", desc: "Décrivez le bruit du moteur, ou parlez directement à l'IA en mains libres pendant que vous travaillez." },
+                { icon: Camera, title: "Photos & vidéos", desc: "Envoyez une photo du voyant, du moteur, ou de l'écran de la valise OBD — DiagAssist les analyse directement." },
+                { icon: Mic, title: "Assistant vocal live", desc: "Décrivez le bruit du moteur, ou parlez directement à DiagAssist en mains libres pendant que vous travaillez." },
                 { icon: Wrench, title: "Diagnostic guidé", desc: "Contrôles étape par étape, du plus simple au plus poussé, jusqu'à confirmer la vraie cause de la panne." },
                 { icon: ShieldCheck, title: "Protocole rigoureux", desc: "Jamais de remplacement de pièce à l'aveugle — chaque hypothèse est vérifiée par un test avant conclusion." },
                 { icon: Smartphone, title: "Fonctionne partout", desc: "Sur téléphone, en atelier, même en connexion 3G/4G dégradée." },
@@ -292,7 +292,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             <p className="text-3xl font-black text-white">15 000F</p>
             <p className="text-[11px] text-slate-500">Par mois</p>
             <ul className="text-left space-y-1.5 pt-2">
-              {["Diagnostics illimités", "Explications vocales IA", "Données techniques Haynes Pro"].map((t, i) => (
+              {["Diagnostics illimités", "Explications vocales", "Données techniques Haynes Pro"].map((t, i) => (
                 <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
                   <Check className="w-3 h-3 text-red-400 shrink-0 mt-0.5" /> {t}
                 </li>

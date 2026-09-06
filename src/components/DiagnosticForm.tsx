@@ -453,7 +453,7 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
-                  <span>Analyse technique par l'IA en cours...</span>
+                  <span>Analyse technique en cours...</span>
                 </div>
               ) : (
                 <>
@@ -465,7 +465,7 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
 
             <div className="flex items-start gap-3 text-xs text-slate-400 bg-slate-950/40 p-4 rounded-2xl border border-white/[0.04] leading-relaxed">
               <AlertCircle className="w-4 h-4 text-red-500/70 shrink-0 mt-0.5" />
-              <p>Les analyses de cette IA sont indicatives. Faites toujours valider le diagnostic final par un mécanicien certifié avant toute réparation complexe.</p>
+              <p>Les analyses de DiagAssist sont indicatives. Faites toujours valider le diagnostic final par un mécanicien certifié avant toute réparation complexe.</p>
             </div>
           </div>
         )}

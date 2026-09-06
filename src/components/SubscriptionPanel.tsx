@@ -361,7 +361,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-red-500 shrink-0" />
-                <span>Analyses & dialogues avec l'IA illimités</span>
+                <span>Analyses & dialogues illimités</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-red-500 shrink-0" />

@@ -194,7 +194,7 @@ export default function DiagAssistLiveScreen({
         setActiveLoopState(data.state);
         setActiveTurnResponse(data.response);
         setShowLoopOverlay(true);
-        setToast("✓ Diagnostic boucle IA activé en direct.");
+        setToast("✓ Diagnostic guidé activé en direct.");
         if (data.response?.next_question) {
           setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "DiagAssist (Diagnostic): " + data.response.next_question);
         }
@@ -1006,7 +1006,7 @@ Codes DTC: ${dtcCodes}`;
           }}
         >
           <Wrench size={14} />
-          <span>{activeLoopSessionId ? (showLoopOverlay ? "Masquer Boucle" : "Panneau IA") : "Lancer Boucle IA"}</span>
+          <span>{activeLoopSessionId ? (showLoopOverlay ? "Masquer Boucle" : "Panneau guidé") : "Lancer diagnostic guidé"}</span>
         </button>
       </div>
 
@@ -1327,7 +1327,7 @@ Codes DTC: ${dtcCodes}`;
                 <button
                   type="button"
                   onClick={() => speakText(msg.text, msg.id)}
-                  title="Écouter la réponse de l'IA"
+                  title="Écouter la réponse de DiagAssist"
                   style={{
                     marginLeft: "auto",
                     background: currentlySpeakingId === msg.id ? T.accent : T.panel,
@@ -1440,7 +1440,7 @@ Codes DTC: ${dtcCodes}`;
           type="text"
           value={liveInputText}
           onChange={(e) => setLiveInputText(e.target.value)}
-          placeholder="Posez une question à l'IA en direct..."
+          placeholder="Posez une question à DiagAssist en direct..."
           disabled={isSendingChat}
           style={{
             flex: 1,

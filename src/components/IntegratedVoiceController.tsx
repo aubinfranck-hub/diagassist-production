@@ -997,7 +997,7 @@ ESTIMATION DES COÛTS DE RÉPARATION CONSEILLÉS À ABIDJAN :
             {/* Direct Active Badge */}
             <div className="absolute top-3 left-3 bg-emerald-600 border border-emerald-400 text-white text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow animate-pulse">
               <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
-              EN DIRECT AVEC L'IA
+              EN DIRECT AVEC DIAGASSIST
             </div>
 
             {/* Visualizer bars over the photo */}
@@ -1113,7 +1113,7 @@ ESTIMATION DES COÛTS DE RÉPARATION CONSEILLÉS À ABIDJAN :
                 type="button"
                 onClick={() => liveFileInputRef.current?.click()}
                 className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/50 transition duration-150 flex items-center justify-center cursor-pointer shrink-0"
-                title="Joindre une photo, vidéo ou audio à l'IA pendant le direct"
+                title="Joindre une photo, vidéo ou audio pendant le direct"
               >
                 <Paperclip className="w-4 h-4" />
               </button>
@@ -1131,7 +1131,7 @@ ESTIMATION DES COÛTS DE RÉPARATION CONSEILLÉS À ABIDJAN :
                 type="submit"
                 disabled={isSendingChat || (!liveInputText.trim() && !attachedLiveFile)}
                 className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-800 disabled:text-slate-600 text-white p-2.5 rounded-xl transition duration-150 flex items-center justify-center cursor-pointer shrink-0 shadow-lg shadow-emerald-950/40"
-                title="Envoyer à l'IA en direct"
+                title="Envoyer à DiagAssist en direct"
               >
                 <Send className="w-4 h-4" />
               </button>

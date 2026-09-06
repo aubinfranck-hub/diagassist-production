@@ -534,7 +534,7 @@ export default function App() {
           ...prev,
         ]);
       } else {
-        alert(data.message || "Impossible d'effectuer le diagnostic avec l'IA.");
+        alert(data.message || "Impossible d'effectuer le diagnostic pour le moment.");
       }
     } catch (err: any) {
       console.error("Erreur d'appel API de diagnostic:", err);
@@ -789,7 +789,7 @@ export default function App() {
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-500 mt-1 font-medium tracking-wide">
-                    Copilote de Diagnostic Auto IA
+                    Assistant mécanique pro
                   </p>
                 </div>
               </div>
@@ -1023,7 +1023,7 @@ export default function App() {
                     PRO
                   </span>
                 </div>
-                <p className="text-[9px] text-slate-500">Multimédia Auto IA</p>
+                <p className="text-[9px] text-slate-500">Multimédia Auto</p>
               </div>
             </div>
 
@@ -1493,14 +1493,14 @@ export default function App() {
       {/* Immersive technical footer */}
       <footer className="max-w-7xl mx-auto px-4 mt-16 border-t border-slate-900 pt-6 text-center text-[11px] text-slate-600 flex flex-col sm:flex-row justify-between gap-4">
         <div>
-          © 2026 <strong>DiagAssist v1 (Diagnostiqueur Auto IA)</strong>. Tous droits réservés.
+          © 2026 <strong>DiagAssist v1 (Assistant mécanique pro)</strong>. Tous droits réservés.
         </div>
         <div className="flex items-center justify-center gap-4">
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span> Service en ligne opérationnel
           </span>
           <span className="text-slate-700">|</span>
-          <span>Propulsé par IA de Diagnostic Auto</span>
+          <span>DiagAssist, assistant mécanique pro</span>
         </div>
       </footer>
 

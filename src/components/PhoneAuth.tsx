@@ -153,7 +153,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
             DiagAssist <span className="text-red-500">v1</span>
           </h1>
           <p className="text-xs text-slate-400 mt-1.5 font-medium tracking-wide">
-            Valise de diagnostic auto intelligente par IA
+            DiagAssist, assistant mécanique pro
           </p>
         </div>
 

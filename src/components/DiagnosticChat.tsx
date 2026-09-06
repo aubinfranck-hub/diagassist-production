@@ -771,7 +771,7 @@ export default function DiagnosticChat({ diagnosis, chatHistory, onSendMessage, 
           disabled={isSending}
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
-          placeholder={isListening ? "Parlez maintenant, l'IA écoute..." : attachedFile ? "Ajoutez une explication ou envoyez directement..." : "Posez une question ou rejoignez une photo/audio..."}
+          placeholder={isListening ? "Parlez maintenant, DiagAssist écoute..." : attachedFile ? "Ajoutez une explication ou envoyez directement..." : "Posez une question ou rejoignez une photo/audio..."}
           className={`flex-1 bg-slate-950 border focus:border-red-500 rounded-xl px-4 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none disabled:opacity-60 disabled:pointer-events-none transition duration-150 ${
             isListening ? "border-red-500/50 ring-1 ring-red-500/30" : "border-slate-850"
           }`}
