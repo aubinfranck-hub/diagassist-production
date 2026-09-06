@@ -40,10 +40,11 @@ interface Banner {
 }
 const banners = new Map<string, Banner>();
 
-// Réseau de mécaniciens agréés, ajoutés manuellement par l'admin.
-// Affiché aux propriétaires de véhicules pour les orienter vers un professionnel équipé.
+// Réseau de partenaires ajoutés manuellement par l'admin : mécaniciens agréés et
+// vendeurs de pièces détachées. Affichés aux propriétaires dans deux sections distinctes.
 interface Mechanic {
   id: string;
+  type: "mechanic" | "parts_vendor";
   name: string;
   garageName?: string;
   phone: string;
@@ -71,10 +72,11 @@ const userPlans = new Map<string, { plan: string; activatedAt: number; customDur
 // forfait expire automatiquement et repasse à "free_expired". L'admin peut aussi fixer une durée
 // personnalisée (jour/semaine/mois) au moment de la création du compte, qui prime sur ces valeurs.
 const PLAN_DURATIONS_MS: Record<string, number> = {
-  free_trial: 24 * 60 * 60 * 1000,   // 24h
-  payg_active: 24 * 60 * 60 * 1000,  // pass 24h
-  lite: 30 * 24 * 60 * 60 * 1000,    // 30 jours
-  premium: 30 * 24 * 60 * 60 * 1000, // 30 jours
+  free_trial: 24 * 60 * 60 * 1000,        // 24h
+  payg_active: 24 * 60 * 60 * 1000,       // pass 24h (mécaniciens)
+  owner_week: 7 * 24 * 60 * 60 * 1000,    // pass semaine 500F (propriétaires de véhicules)
+  lite: 30 * 24 * 60 * 60 * 1000,         // 30 jours
+  premium: 30 * 24 * 60 * 60 * 1000,      // 30 jours
 };
 
 // Convertit une durée admin (valeur + unité) en millisecondes
@@ -179,6 +181,8 @@ async function initDatabase(): Promise<void> {
       active BOOLEAN NOT NULL DEFAULT true,
       created_at BIGINT NOT NULL
     );
+    -- Migration sûre : ajoute le type de partenaire sans casser les enregistrements existants
+    ALTER TABLE mechanics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'mechanic';
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 }
@@ -221,6 +225,7 @@ async function loadPersistedData(): Promise<void> {
   for (const row of mechanicsRes.rows) {
     mechanics.set(row.id, {
       id: row.id,
+      type: row.type === "parts_vendor" ? "parts_vendor" : "mechanic",
       name: row.name,
       garageName: row.garage_name || undefined,
       phone: row.phone,
@@ -250,10 +255,10 @@ async function persistMechanic(m: Mechanic): Promise<void> {
   if (!dbPool) return;
   try {
     await dbPool.query(
-      `INSERT INTO mechanics (id, name, garage_name, phone, city, area, specialties, has_scanner, certified, active, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       ON CONFLICT (id) DO UPDATE SET name=$2, garage_name=$3, phone=$4, city=$5, area=$6, specialties=$7, has_scanner=$8, certified=$9, active=$10`,
-      [m.id, m.name, m.garageName || null, m.phone, m.city, m.area || null, m.specialties || null, m.hasScanner, m.certified, m.active, m.createdAt]
+      `INSERT INTO mechanics (id, name, garage_name, phone, city, area, specialties, has_scanner, certified, active, created_at, type)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (id) DO UPDATE SET name=$2, garage_name=$3, phone=$4, city=$5, area=$6, specialties=$7, has_scanner=$8, certified=$9, active=$10, type=$12`,
+      [m.id, m.name, m.garageName || null, m.phone, m.city, m.area || null, m.specialties || null, m.hasScanner, m.certified, m.active, m.createdAt, m.type]
     );
   } catch (err: any) {
     console.error("[DB] Échec de la sauvegarde du mécanicien:", err.message);
@@ -472,6 +477,7 @@ const PLAN_LIMITS: Record<string, number> = {
   free_trial: 3,        // 3 diagnostics gratuits à vie
   free_expired: 0,
   payg_active: Infinity, // payé à l'usage, facturé ailleurs
+  owner_week: 15,        // Pass Semaine propriétaire (500F) — plafonné pour maîtriser le coût IA
   lite: 30,              // par mois
   premium: Infinity,
 };
@@ -1702,20 +1708,23 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // API Route (ADMIN UNIQUEMENT) : ajouter un mécanicien au réseau
   app.post("/api/admin/mechanics", adminLimiter, requireAdminAuth, (req, res) => {
-    const { name, garageName, phone, city, area, specialties, hasScanner, certified } = req.body;
+    const { type, name, garageName, phone, city, area, specialties, hasScanner, certified } = req.body;
     if (!name || !phone || !city) {
       return res.status(400).json({ success: false, message: "Nom, téléphone et ville sont requis." });
     }
+    const partnerType: "mechanic" | "parts_vendor" = type === "parts_vendor" ? "parts_vendor" : "mechanic";
     const id = crypto.randomBytes(6).toString("hex");
     const mechanic: Mechanic = {
       id,
+      type: partnerType,
       name,
       garageName: garageName || undefined,
       phone,
       city,
       area: area || undefined,
       specialties: specialties || undefined,
-      hasScanner: hasScanner !== false,
+      // La valise ne concerne que les mécaniciens, pas les vendeurs de pièces
+      hasScanner: partnerType === "mechanic" ? hasScanner !== false : false,
       certified: certified !== false,
       active: true,
       createdAt: Date.now(),
@@ -1745,7 +1754,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // affiché aux propriétaires de véhicules pour les orienter vers un professionnel équipé.
   app.get("/api/mechanics", requireAuth, (req, res) => {
     const city = (req.query.city as string || "").trim().toLowerCase();
+    const type = (req.query.type as string || "").trim();
     let list = Array.from(mechanics.values()).filter((m) => m.active);
+    if (type === "mechanic" || type === "parts_vendor") {
+      list = list.filter((m) => m.type === type);
+    }
     if (city) {
       list = list.filter((m) => m.city.toLowerCase().includes(city) || (m.area || "").toLowerCase().includes(city));
     }

@@ -11,6 +11,7 @@ interface SubscriptionPanelProps {
   currentPlan: SubscriptionPlan;
   onPlanChange: (plan: SubscriptionPlan) => void;
   isAdmin?: boolean;
+  isOwner?: boolean;
   onActivatePayg: () => void;
   onRequestActivation: (plan: SubscriptionPlan, amount: number) => void;
   // Props supplémentaires transmises à l'ancien panel admin (coûts/tokens), fusionné ici
@@ -22,7 +23,7 @@ interface SubscriptionPanelProps {
   onAddMockLog?: () => void;
 }
 
-export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivatePayg, onRequestActivation, isAdmin, sessionCostUSD, totalTokensUsed, queriesCount, apiLogs, onClearStats, onAddMockLog }: SubscriptionPanelProps) {
+export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivatePayg, onRequestActivation, isAdmin, isOwner, sessionCostUSD, totalTokensUsed, queriesCount, apiLogs, onClearStats, onAddMockLog }: SubscriptionPanelProps) {
   
   // State to hold the dynamically selected payment amount for Wave
   const [selectedAmount, setSelectedAmount] = useState<number>(6000);
@@ -87,7 +88,12 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
   };
 
   const handleConfirmTransfer = (amount: number) => {
-    const plan: SubscriptionPlan = amount === 15000 ? "premium" : amount === 500 ? "payg_active" : "lite";
+    // À 500F, le forfait diffère selon le profil : Pass 24h pour un mécanicien,
+    // Pass Semaine pour un propriétaire de véhicule (usage occasionnel).
+    const plan: SubscriptionPlan =
+      amount === 15000 ? "premium"
+      : amount === 500 ? (isOwner ? "owner_week" : "payg_active")
+      : "lite";
     onRequestActivation(plan, amount);
     setRequestSent(true);
   };
@@ -218,30 +224,32 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
       {/* Official Tiers Layout */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
 
-        {/* Tier 1: Pass 24h (Forfait Jour) */}
+        {/* Tier 1 : Pass 24h (mécaniciens) ou Pass Semaine (propriétaires) — même prix, durée adaptée à l'usage */}
         <div className={`premium-glass-card rounded-3xl p-6 md:p-8 flex flex-col justify-between shadow-2xl relative overflow-hidden transition-all duration-300 ${selectedAmount === 500 ? "border-2 border-emerald-400/50 bg-slate-900/85" : "border border-white/[0.05]"}`}>
           <div>
             <span className="text-xs text-slate-400 font-mono font-black uppercase tracking-wider block mb-1">Palier 1</span>
             <h3 className="text-xl font-display font-black text-white flex items-center gap-1.5">
-              Forfait Jour
+              {isOwner ? "Pass Semaine" : "Forfait Jour"}
             </h3>
 
             <div className="my-5">
               <div className="text-xs text-slate-400">Accès à l'usage :</div>
-              <div className="text-3xl font-display font-extrabold text-emerald-400">500 F CFA <span className="text-sm font-normal text-slate-500">/ 24h</span></div>
+              <div className="text-3xl font-display font-extrabold text-emerald-400">
+                500 F CFA <span className="text-sm font-normal text-slate-500">/ {isOwner ? "semaine" : "24h"}</span>
+              </div>
               <div className="text-xs text-slate-400 mt-1.5 font-medium">
-                Diagnostics illimités pendant 24 heures
+                {isOwner ? "15 diagnostics pendant 7 jours" : "Diagnostics illimités pendant 24 heures"}
               </div>
             </div>
 
             <ul className="space-y-3.5 text-sm text-slate-300 mt-6 border-t border-white/[0.05] pt-4">
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Diagnostics illimités 24h</span>
+                <span>{isOwner ? "15 diagnostics sur 7 jours" : "Diagnostics illimités 24h"}</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Activation immédiate</span>
+                <span>{isOwner ? "Accès aux mécaniciens agréés" : "Activation immédiate"}</span>
               </li>
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -262,7 +270,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               }`}
             >
               {selectedAmount === 500 ? <Check className="w-4 h-4" /> : null}
-              <span>{selectedAmount === 500 ? "Formule sélectionnée" : "Choisir le Pass Jour (500F)"}</span>
+              <span>{selectedAmount === 500 ? "Formule sélectionnée" : (isOwner ? "Choisir le Pass Semaine (500F)" : "Choisir le Pass Jour (500F)")}</span>
             </button>
           </div>
         </div>

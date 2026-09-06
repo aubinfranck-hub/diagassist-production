@@ -3,7 +3,7 @@ import { AnimatePresence } from "motion/react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText, 
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench,
-  Sun, Moon, Monitor, Users
+  Sun, Moon, Monitor, Users, Package
 } from "lucide-react";
 
 import DiagnosticForm from "./components/DiagnosticForm";
@@ -214,7 +214,7 @@ export default function App() {
   }, []);
 
   // Navigation tabs
-  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics">("diagnose");
+  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts">("diagnose");
 
   const handleChooseProfile = (type: "mechanic" | "owner") => {
     setAccountType(type);
@@ -849,6 +849,26 @@ export default function App() {
                   </button>
                 )}
 
+                {accountType === "owner" && (
+                  <button
+                    onClick={() => {
+                      setActiveTab("parts");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
+                      activeTab === "parts"
+                        ? "bg-amber-600 text-white shadow-lg shadow-amber-600/25 border border-white/10"
+                        : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Package className="w-4.5 h-4.5" />
+                      <span>Pièces détachées</span>
+                    </div>
+                    {activeTab === "parts" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  </button>
+                )}
+
                 <button
                   onClick={() => {
                     setActiveTab("prices");
@@ -1149,6 +1169,23 @@ export default function App() {
               </button>
             )}
 
+            {accountType === "owner" && (
+              <button
+                onClick={() => {
+                  setActiveTab("parts");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
+                  activeTab === "parts"
+                    ? "bg-slate-950 text-amber-400 border border-white/[0.04]"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Package className="w-5 h-5" />
+                <span className="text-[9px] font-black uppercase tracking-wider">Pièces</span>
+              </button>
+            )}
+
             <button
               onClick={() => {
                 setActiveTab("prices");
@@ -1414,6 +1451,13 @@ export default function App() {
           </div>
         )}
 
+        {/* Annuaire des vendeurs de pièces — réservé aux propriétaires */}
+        {activeTab === "parts" && accountType === "owner" && (
+          <div className="max-w-4xl mx-auto">
+            <MechanicDirectory partnerType="parts_vendor" />
+          </div>
+        )}
+
         {activeTab === "prices" && (
           <div className={isAdminAccount ? "max-w-6xl mx-auto space-y-8 animate-fade-in" : "max-w-3xl mx-auto space-y-8 animate-fade-in"}>
             {/* User Subscription Selection Panel (ou tableau de bord complet si admin) */}
@@ -1423,6 +1467,7 @@ export default function App() {
               onActivatePayg={() => handlePlanChange("payg_active")}
               onRequestActivation={handleRequestActivation}
               isAdmin={isAdminAccount}
+              isOwner={accountType === "owner"}
               sessionCostUSD={sessionCostUSD}
               totalTokensUsed={totalTokensUsed}
               queriesCount={queriesCount}

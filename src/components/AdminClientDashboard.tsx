@@ -26,6 +26,7 @@ interface HistoryEntry {
 
 interface MechanicEntry {
   id: string;
+  type: "mechanic" | "parts_vendor";
   name: string;
   garageName?: string;
   phone: string;
@@ -58,6 +59,7 @@ const PLAN_LABELS: Record<string, string> = {
   lite: "Lite",
   premium: "Premium",
   payg_active: "Pass 24h",
+  owner_week: "Pass Semaine",
 };
 
 const formatDate = (ts: number) => new Date(ts).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
@@ -158,6 +160,7 @@ export default function AdminClientDashboard() {
 
   // Réseau de mécaniciens agréés
   const [mechanicsList, setMechanicsList] = useState<MechanicEntry[]>([]);
+  const [mType, setMType] = useState<"mechanic" | "parts_vendor">("mechanic");
   const [mName, setMName] = useState("");
   const [mGarage, setMGarage] = useState("");
   const [mPhone, setMPhone] = useState("");
@@ -178,6 +181,7 @@ export default function AdminClientDashboard() {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
+          type: mType,
           name: mName,
           garageName: mGarage || undefined,
           phone: mPhone,
@@ -414,6 +418,7 @@ export default function AdminClientDashboard() {
             <option value="lite">Lite</option>
             <option value="premium">Premium</option>
             <option value="payg_active">Pass 24h</option>
+            <option value="owner_week">Pass Semaine (propriétaire)</option>
           </select>
           <input
             type="number"
@@ -635,17 +640,25 @@ export default function AdminClientDashboard() {
         </div>
       </div>
 
-      {/* Réseau de mécaniciens agréés */}
+      {/* Réseau de partenaires : mécaniciens agréés et vendeurs de pièces */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
         <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
           <Wrench className="w-4 h-4 text-sky-400" />
-          Réseau de mécaniciens agréés ({mechanicsList.length})
+          Réseau de partenaires ({mechanicsList.length})
         </h3>
         <p className="text-[11px] text-slate-500 leading-relaxed">
-          Ces mécaniciens sont proposés aux propriétaires de véhicules pour confirmer un diagnostic avec une vraie valise.
+          Mécaniciens agréés et vendeurs de pièces proposés aux propriétaires de véhicules, dans deux sections séparées de l'application.
         </p>
 
         <form onSubmit={handleCreateMechanic} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          <select
+            value={mType}
+            onChange={(e) => setMType(e.target.value as "mechanic" | "parts_vendor")}
+            className="w-full bg-slate-950 border border-white/[0.08] text-slate-300 rounded-xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:border-sky-500 cursor-pointer"
+          >
+            <option value="mechanic">Type : Mécanicien</option>
+            <option value="parts_vendor">Type : Vendeur de pièces</option>
+          </select>
           <input
             type="text" required placeholder="Nom du mécanicien *"
             value={mName} onChange={(e) => setMName(e.target.value)}
@@ -708,6 +721,10 @@ export default function AdminClientDashboard() {
                   {m.garageName || m.name} <span className="font-mono text-slate-400">— {m.phone}</span>
                 </p>
                 <p className="text-[10px] text-slate-500">
+                  <span className={m.type === "parts_vendor" ? "text-amber-400 font-bold" : "text-sky-400 font-bold"}>
+                    {m.type === "parts_vendor" ? "📦 Pièces" : "🔧 Mécanicien"}
+                  </span>
+                  {" · "}
                   {m.area ? `${m.area}, ${m.city}` : m.city}
                   {m.specialties ? ` · ${m.specialties}` : ""}
                   {m.hasScanner ? " · 🔧 valise" : ""}

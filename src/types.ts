@@ -1,4 +1,4 @@
-export type SubscriptionPlan = 'free_trial' | 'free_expired' | 'payg_active' | 'lite' | 'premium';
+export type SubscriptionPlan = 'free_trial' | 'free_expired' | 'payg_active' | 'owner_week' | 'lite' | 'premium';
 
 export interface DtcCode {
   code: string;

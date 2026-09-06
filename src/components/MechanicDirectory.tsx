@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { MapPin, Phone, MessageCircle, ShieldCheck, Search, Wrench, RefreshCw, Cpu } from "lucide-react";
+import { MapPin, Phone, MessageCircle, ShieldCheck, Search, Wrench, RefreshCw, Cpu, Package } from "lucide-react";
 
-interface Mechanic {
+interface Partner {
   id: string;
+  type: "mechanic" | "parts_vendor";
   name: string;
   garageName?: string;
   phone: string;
@@ -15,8 +16,15 @@ interface Mechanic {
 
 const toWaMeNumber = (phone: string) => phone.replace(/[^0-9]/g, "");
 
-export default function MechanicDirectory() {
-  const [mechanics, setMechanics] = useState<Mechanic[]>([]);
+interface MechanicDirectoryProps {
+  // "mechanic" : garages agréés équipés d'une valise — "parts_vendor" : vendeurs de pièces détachées
+  partnerType?: "mechanic" | "parts_vendor";
+}
+
+export default function MechanicDirectory({ partnerType = "mechanic" }: MechanicDirectoryProps) {
+  const isVendor = partnerType === "parts_vendor";
+
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -26,14 +34,14 @@ export default function MechanicDirectory() {
     setError(null);
     try {
       const token = localStorage.getItem("auth_session_token");
-      const res = await fetch("/api/mechanics", {
+      const res = await fetch(`/api/mechanics?type=${partnerType}`, {
         headers: { "Authorization": `Bearer ${token || ""}` },
       });
       const data = await res.json();
       if (data.success) {
-        setMechanics(data.mechanics);
+        setPartners(data.mechanics);
       } else {
-        setError(data.message || "Impossible de charger la liste des mécaniciens.");
+        setError(data.message || "Impossible de charger la liste.");
       }
     } catch {
       setError("Erreur réseau. Vérifiez votre connexion.");
@@ -44,9 +52,9 @@ export default function MechanicDirectory() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [partnerType]);
 
-  const filtered = mechanics.filter((m) => {
+  const filtered = partners.filter((m) => {
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
@@ -58,19 +66,27 @@ export default function MechanicDirectory() {
     );
   });
 
+  const accent = isVendor ? "amber" : "sky";
+
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="premium-glass-card rounded-3xl p-6 md:p-8">
         <div className="flex items-center gap-3 mb-2">
-          <div className="w-11 h-11 bg-sky-500/10 text-sky-400 rounded-2xl flex items-center justify-center shrink-0">
-            <Wrench className="w-5 h-5" />
+          <div
+            className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${
+              isVendor ? "bg-amber-500/10 text-amber-400" : "bg-sky-500/10 text-sky-400"
+            }`}
+          >
+            {isVendor ? <Package className="w-5 h-5" /> : <Wrench className="w-5 h-5" />}
           </div>
           <div>
             <h2 className="text-lg md:text-xl font-display font-black text-white uppercase tracking-tight">
-              Mécaniciens agréés
+              {isVendor ? "Vendeurs de pièces" : "Mécaniciens agréés"}
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Professionnels vérifiés, équipés d'une valise de diagnostic.
+              {isVendor
+                ? "Fournisseurs de pièces détachées vérifiés près de chez vous."
+                : "Professionnels vérifiés, équipés d'une valise de diagnostic."}
             </p>
           </div>
         </div>
@@ -79,10 +95,18 @@ export default function MechanicDirectory() {
           <Search className="w-4 h-4 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Rechercher par ville, quartier ou spécialité..."
+            placeholder={
+              isVendor
+                ? "Rechercher par ville, quartier ou type de pièce..."
+                : "Rechercher par ville, quartier ou spécialité..."
+            }
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl pl-11 pr-4 py-3.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-500/10 transition"
+            className={`w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl pl-11 pr-4 py-3.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none transition ${
+              isVendor
+                ? "focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10"
+                : "focus:border-sky-500 focus:ring-4 focus:ring-sky-500/10"
+            }`}
           />
         </div>
       </div>
@@ -96,17 +120,17 @@ export default function MechanicDirectory() {
         </div>
       )}
 
-      {loading && (
-        <p className="text-xs text-slate-500 text-center py-8">Chargement des mécaniciens...</p>
-      )}
+      {loading && <p className="text-xs text-slate-500 text-center py-8">Chargement...</p>}
 
       {!loading && filtered.length === 0 && !error && (
         <div className="premium-glass-card rounded-2xl p-8 text-center">
-          <p className="text-sm text-slate-300 font-bold">Aucun mécanicien trouvé</p>
+          <p className="text-sm text-slate-300 font-bold">
+            {isVendor ? "Aucun vendeur de pièces trouvé" : "Aucun mécanicien trouvé"}
+          </p>
           <p className="text-xs text-slate-500 mt-1.5">
             {search.trim()
               ? "Essayez une autre ville ou un autre quartier."
-              : "Le réseau de mécaniciens agréés est en cours de constitution. Revenez bientôt."}
+              : "Le réseau de partenaires est en cours de constitution. Revenez bientôt."}
           </p>
         </div>
       )}
@@ -116,14 +140,12 @@ export default function MechanicDirectory() {
           <div key={m.id} className="premium-glass-card rounded-2xl p-5 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="font-bold text-sm text-white truncate">
-                  {m.garageName || m.name}
-                </h3>
+                <h3 className="font-bold text-sm text-white truncate">{m.garageName || m.name}</h3>
                 {m.garageName && <p className="text-[11px] text-slate-400 truncate">{m.name}</p>}
               </div>
               {m.certified && (
                 <span className="shrink-0 inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-1">
-                  <ShieldCheck className="w-3 h-3" /> Agréé
+                  <ShieldCheck className="w-3 h-3" /> {isVendor ? "Vérifié" : "Agréé"}
                 </span>
               )}
             </div>
@@ -133,14 +155,18 @@ export default function MechanicDirectory() {
                 <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                 {m.area ? `${m.area}, ${m.city}` : m.city}
               </p>
-              {m.hasScanner && (
+              {!isVendor && m.hasScanner && (
                 <p className="text-[11px] text-sky-400 flex items-center gap-1.5">
                   <Cpu className="w-3.5 h-3.5 shrink-0" /> Équipé d'une valise de diagnostic
                 </p>
               )}
               {m.specialties && (
                 <p className="text-[11px] text-slate-400 flex items-start gap-1.5">
-                  <Wrench className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+                  {isVendor ? (
+                    <Package className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+                  ) : (
+                    <Wrench className="w-3.5 h-3.5 text-slate-500 shrink-0 mt-0.5" />
+                  )}
                   <span>{m.specialties}</span>
                 </p>
               )}
