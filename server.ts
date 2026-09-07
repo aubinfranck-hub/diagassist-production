@@ -1793,6 +1793,25 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
 
     loginAttempts.delete(fullPhone);
+
+    // SESSION UNIQUE : seuls les comptes admin peuvent être connectés sur plusieurs appareils.
+    // Pour un client normal, toute nouvelle connexion déconnecte de force les sessions
+    // précédentes — cela empêche le partage d'un même abonnement entre plusieurs personnes.
+    const isAdminAccount = userAccounts.get(fullPhone)?.isAdmin === true;
+    if (!isAdminAccount) {
+      let revoked = 0;
+      for (const [oldToken, s] of sessions) {
+        if (s.phone === fullPhone) {
+          sessions.delete(oldToken);
+          deleteSessionFromDb(oldToken).catch(() => {});
+          revoked += 1;
+        }
+      }
+      if (revoked > 0) {
+        console.log(`[Session unique] ${revoked} session(s) precedente(s) deconnectee(s) pour ${fullPhone}.`);
+      }
+    }
+
     const token = createSession(fullPhone);
     logConnectionEvent(fullPhone);
     res.json({ success: true, message: "Connexion réussie.", sessionToken: token });

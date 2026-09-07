@@ -309,10 +309,12 @@ export default function App() {
       })
       .then(res => {
         if (res.status === 401) {
-          // Session invalid, log out
+          // Session invalidée : soit expirée, soit déconnectée par une nouvelle connexion
+          // sur un autre appareil (règle de session unique pour les comptes non-admin).
           setLoggedInUser(null);
           localStorage.removeItem("auth_user_phone");
           localStorage.removeItem("auth_session_token");
+          alert("Votre session a été fermée : votre compte vient d'être utilisé sur un autre appareil. Reconnectez-vous si besoin.");
           throw new Error("Session invalide ou expirée.");
         }
         return res.json();
