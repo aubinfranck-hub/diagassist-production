@@ -336,6 +336,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
         <div className="flex items-center gap-2">
           <Phone className="w-3.5 h-3.5" /> 0141116026
         </div>
+        <a href="/blog/" className="hover:text-slate-300 underline">Guides & conseils</a>
         <div>© {new Date().getFullYear()} DiagAssist. Tous droits réservés.</div>
       </footer>
     </div>
