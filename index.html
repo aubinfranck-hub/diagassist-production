@@ -34,6 +34,84 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/icon-16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png" />
+    <!-- Données structurées : permettent à Google d'afficher l'entreprise avec
+         ses informations (localisation, contact, services) plutôt qu'un simple lien -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "AutoRepair",
+      "name": "DiagAssist",
+      "alternateName": "DiagAssist — Assistant Mécanique Pro",
+      "description": "Assistant de diagnostic automobile pour mécaniciens et propriétaires de véhicules en Côte d'Ivoire. Diagnostic guidé par photo, son ou description, et réseau de mécaniciens agréés.",
+      "url": "https://www.diagassist.app/",
+      "logo": "https://www.diagassist.app/icon-512.png",
+      "image": "https://www.diagassist.app/icon-512.png",
+      "telephone": "+2250141116026",
+      "priceRange": "500 - 15000 XOF",
+      "currenciesAccepted": "XOF",
+      "paymentAccepted": "Wave, Mobile Money",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Abidjan",
+        "addressCountry": "CI"
+      },
+      "areaServed": [
+        { "@type": "Country", "name": "Côte d'Ivoire" },
+        { "@type": "Country", "name": "Burkina Faso" },
+        { "@type": "Country", "name": "Mali" },
+        { "@type": "Country", "name": "Sénégal" },
+        { "@type": "Country", "name": "Togo" },
+        { "@type": "Country", "name": "Bénin" }
+      ],
+      "inLanguage": "fr",
+      "parentOrganization": {
+        "@type": "Organization",
+        "name": "NTIC Strategy"
+      }
+    }
+    </script>
+
+    <!-- Questions fréquentes : Google peut les afficher directement dans les résultats -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Comment savoir pourquoi ma voiture fait un bruit anormal ?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Avec DiagAssist, décrivez le bruit avec vos mots ou enregistrez-le directement. Vous recevez une explication simple de ce qui se passe, si vous pouvez continuer à rouler, et une estimation du coût de réparation."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Combien coûte un diagnostic automobile à Abidjan ?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "DiagAssist propose un essai gratuit, puis un Pass à 500 F CFA. Vous obtenez une fourchette de prix pour la réparation, ce qui vous évite de vous faire surfacturer au garage."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Que signifie un code défaut OBD sur ma voiture ?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Un code défaut indique une anomalie détectée par le calculateur du véhicule, mais il ne désigne pas toujours la pièce à remplacer. DiagAssist vous guide étape par étape avec des contrôles à effectuer pour identifier la vraie cause avant tout remplacement."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Où trouver un mécanicien agréé près de chez moi en Côte d'Ivoire ?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "DiagAssist propose un réseau de mécaniciens vérifiés et équipés d'une valise de diagnostic, ainsi que des vendeurs de pièces détachées, filtrables par ville et par quartier."
+          }
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>
