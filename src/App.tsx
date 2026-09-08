@@ -1215,7 +1215,7 @@ export default function App() {
           </nav>
 
           {/* MAIN CONTAINER PANEL */}
-          <div className="flex-1 flex flex-col lg:pl-0 min-h-screen">
+          <div className="flex-1 flex flex-col lg:pl-0">
             {/* Main Workspace Layout Wrapper */}
             <main className="w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-6 lg:py-10">
             {/* Bannières / images flottantes définies par l'admin */}
@@ -1493,7 +1493,7 @@ export default function App() {
       </main>
 
       {/* Immersive technical footer */}
-      <footer className="max-w-7xl mx-auto px-4 mt-16 border-t border-slate-900 pt-6 text-center text-[11px] text-slate-600 flex flex-col sm:flex-row justify-between gap-4">
+      <footer className="max-w-7xl mx-auto px-4 mt-32 lg:mt-16 mb-8 border-t border-slate-900 pt-6 text-center text-[11px] text-slate-600 flex flex-col sm:flex-row justify-between gap-4 w-full">
         <div>
           © 2026 <strong>DiagAssist v1 (Assistant mécanique pro)</strong>. Tous droits réservés.
         </div>
