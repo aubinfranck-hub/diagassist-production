@@ -876,18 +876,16 @@ Codes DTC: ${dtcCodes}`;
             width: 34,
             height: 34,
             borderRadius: 10,
-            background: `linear-gradient(135deg, ${T.accent}, ${T.accentDim})`,
+            overflow: "hidden",
+            background: "#fff",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontFamily: "'Barlow Condensed', sans-serif",
-            fontWeight: 700,
-            fontSize: 15,
             flexShrink: 0,
             boxShadow: `0 4px 12px ${T.accentDim}`,
           }}
         >
-          DA
+          <img src="/icon-192.png" alt="DiagAssist" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
