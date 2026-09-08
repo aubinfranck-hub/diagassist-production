@@ -182,7 +182,14 @@ export default function DiagAssistLiveScreen({
           Authorization: token ? `Bearer ${token}` : ""
         },
         body: JSON.stringify({
-          vehicule: vehicule || { marque: "Toyota", modele: "Corolla", moteur: "2.0 L D4D", kilometrage: 120000 },
+          // BUG CORRIGÉ : un véhicule fictif ("Toyota Corolla") partait systématiquement en absence
+          // de paramètre explicite, écrasant silencieusement les vraies infos déjà saisies par
+          // l'utilisateur dans le diagnostic initial — Gemini redemandait alors marque/année car
+          // la fiche reçue ne correspondait à rien de réel. On utilise maintenant les vraies infos
+          // du diagnostic en cours si disponibles, sinon on l'indique honnêtement comme non précisé.
+          vehicule: vehicule || (diagnosis?.brandModelInfo
+            ? { marque: diagnosis.brandModelInfo, modele: "", moteur: "", kilometrage: 0 }
+            : { marque: "Non précisé par l'utilisateur", modele: "", moteur: "", kilometrage: 0 }),
           symptome: symptome || diagnosis?.explanationText || "Recherche de panne en direct atelier",
           codesDtc: dtc || diagnosis?.dtcCodesDetected.map(c => c.code) || [],
           preuvesInitiales: preuvesInitiales || [],
