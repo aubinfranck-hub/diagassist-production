@@ -44,7 +44,9 @@ interface AutoQuestioningLoopProps {
 }
 
 export default function AutoQuestioningLoop({
-  initialVehicle = { marque: "Toyota", modele: "Corolla", moteur: "1.8 VVTi", kilometrage: 120000 },
+  // Aucune valeur fictive par défaut : mieux vaut des champs vides que de faire croire
+  // qu'une information a été donnée alors que ce n'est pas le cas.
+  initialVehicle = { marque: "", modele: "", moteur: "", kilometrage: 0 },
   initialDtcCodes = [],
   initialSymptom = "",
   userPlan = "free_trial",
