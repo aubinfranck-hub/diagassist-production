@@ -76,17 +76,27 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
         {/* Center Logo & Graphics Area */}
         <div className="flex-1 flex flex-col items-center justify-center max-w-lg w-full relative z-10 my-8">
           
-          {/* Vraie mascotte DiagAssist (image), remplace l'ancien SVG dessiné à la main */}
+          {/* Vraie mascotte DiagAssist (image), animée en boucle pendant le chargement */}
           <motion.div 
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.6, ease: "easeOut" }}
             className="w-72 h-72 md:w-80 md:h-80 relative flex items-center justify-center"
           >
-            <img
+            {/* Anneau de pulsation façon battement, derrière la mascotte */}
+            <motion.div
+              className="absolute inset-0 rounded-full bg-red-500/10 pointer-events-none"
+              animate={{ scale: [1, 1.12, 1], opacity: [0.5, 0.15, 0.5] }}
+              transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+            />
+
+            {/* La mascotte : léger balancement continu, façon "salut" */}
+            <motion.img
               src="/icon-512.png"
               alt="DiagAssist"
-              className="w-full h-full object-contain drop-shadow-[0_10px_35px_rgba(220,38,38,0.22)]"
+              className="w-full h-full object-contain drop-shadow-[0_10px_35px_rgba(220,38,38,0.22)] relative"
+              animate={{ rotate: [0, -3, 0, 3, 0], y: [0, -6, 0] }}
+              transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
             />
 
             {/* Glowing heartbeat pulse animation overlays */}
