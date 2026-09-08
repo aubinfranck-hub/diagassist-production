@@ -185,7 +185,8 @@ export default function DiagAssistLiveScreen({
           vehicule: vehicule || { marque: "Toyota", modele: "Corolla", moteur: "2.0 L D4D", kilometrage: 120000 },
           symptome: symptome || diagnosis?.explanationText || "Recherche de panne en direct atelier",
           codesDtc: dtc || diagnosis?.dtcCodesDetected.map(c => c.code) || [],
-          preuvesInitiales: preuvesInitiales || []
+          preuvesInitiales: preuvesInitiales || [],
+          accountType: localStorage.getItem("account_type") || "mechanic",
         })
       });
       const data = await res.json();

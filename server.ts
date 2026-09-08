@@ -2000,6 +2000,27 @@ jamais une conclusion hâtive.
 
 7. Réponds UNIQUEMENT en JSON selon le schéma fourni, aucun texte hors JSON.`;
 
+  // Mode "propriétaire de véhicule" pour la boucle interactive : remplace les demandes de
+  // mesures techniques (multimètre, valise, tests de continuité) par des demandes simples
+  // adaptées à un conducteur non-mécanicien (photo, vidéo, son, description en mots simples).
+  const LOOP_OWNER_MODE_INSTRUCTION = `
+
+MODE PROPRIÉTAIRE DE VÉHICULE (OBLIGATOIRE — remplace toute demande technique) :
+L'utilisateur est un CONDUCTEUR, pas un mécanicien. Il n'a ni multimètre, ni valise de
+diagnostic, ni formation technique. Tu DOIS adapter chaque "next_question" à ce niveau :
+- INTERDIT : demander une mesure (tension, résistance, continuité), un test avec un outil,
+  un contrôle sous le capot nécessitant un démontage, ou la lecture d'une valise OBD.
+- AUTORISÉ et à privilégier : demander une photo du voyant/de la zone concernée, une vidéo
+  ou un enregistrement du bruit, ou une description simple ("le bruit arrive plutôt à
+  l'accélération ou au freinage ?", "la fumée est blanche, noire ou bleue ?").
+- Si une information ne peut raisonnablement être obtenue que par un professionnel équipé
+  (mesure électrique, code défaut précis, démontage), N'ATTENDS PAS cette info : passe
+  directement à la conclusion en recommandant de faire confirmer par un mécanicien agréé,
+  plutôt que de bloquer la boucle sur une demande que l'utilisateur ne peut pas satisfaire.
+- Le "explanationText" et "next_question" restent en langage simple, sans jargon technique.
+- La priorité reste : niveau d'urgence (peut-il rouler ?) et orientation vers un professionnel
+  équipé, jamais une tentative de réparation par l'utilisateur lui-même.`;
+
   // Start a new Diagnostic Loop (Tour 0)
   app.post("/api/diagnostic/loop/start", requireAuth, async (req: any, res) => {
     try {
@@ -2016,6 +2037,7 @@ jamais une conclusion hâtive.
         preuvesInitiales,
         file,
         mimeType,
+        accountType, // "mechanic" (défaut) ou "owner" — adapte le niveau technique de la boucle
       } = req.body;
 
       const sessionId = `loop_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
@@ -2028,6 +2050,7 @@ jamais une conclusion hâtive.
         session_id: sessionId,
         _lastActivity: Date.now(),
         _ownerPhone: phone, // Propriétaire de la session — vérifié sur les routes step/session pour empêcher qu'un autre utilisateur y accède (faille IDOR corrigée)
+        _accountType: accountType === "owner" ? "owner" : "mechanic", // conservé pour tous les tours suivants
         vehicule: {
           marque: vehicule?.marque || "Inconnu",
           modele: vehicule?.modele || "",
@@ -2078,7 +2101,7 @@ Instructions Tour 0 :
           model: "gemini-3.5-flash",
           contents: parts,
           config: {
-            systemInstruction: LOOP_SYSTEM_INSTRUCTION,
+            systemInstruction: state._accountType === "owner" ? LOOP_SYSTEM_INSTRUCTION + LOOP_OWNER_MODE_INSTRUCTION : LOOP_SYSTEM_INSTRUCTION,
             responseMimeType: "application/json",
             responseSchema: loopResponseSchema,
             temperature: 0.2,
@@ -2207,7 +2230,7 @@ Directives pour ce tour :
           model: "gemini-3.5-flash",
           contents: parts,
           config: {
-            systemInstruction: LOOP_SYSTEM_INSTRUCTION,
+            systemInstruction: state._accountType === "owner" ? LOOP_SYSTEM_INSTRUCTION + LOOP_OWNER_MODE_INSTRUCTION : LOOP_SYSTEM_INSTRUCTION,
             responseMimeType: "application/json",
             responseSchema: loopResponseSchema,
             temperature: 0.2,

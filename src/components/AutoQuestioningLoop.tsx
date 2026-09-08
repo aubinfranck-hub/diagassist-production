@@ -213,7 +213,8 @@ export default function AutoQuestioningLoop({
           codesDtc: dtcInput.split(/[\s,]+/).filter(Boolean),
           preuvesInitiales: initialProofs,
           file: base64File,
-          mimeType
+          mimeType,
+          accountType: localStorage.getItem("account_type") || "mechanic",
         })
       });
 
