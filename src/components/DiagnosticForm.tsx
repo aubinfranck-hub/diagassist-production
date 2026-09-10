@@ -78,6 +78,31 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
   const [vehicleModel, setVehicleModel] = useState("");
   const [vehicleYear, setVehicleYear] = useState("");
   const [vehicleEngine, setVehicleEngine] = useState("Essence");
+
+  // Suggestions live depuis la base véhicules (Auto-Data.net) — vient compléter la liste
+  // statique existante, jamais la remplacer : si la base est vide/pas encore synchronisée,
+  // le formulaire se comporte exactement comme avant.
+  const [liveBrands, setLiveBrands] = useState<string[]>([]);
+  const [liveModels, setLiveModels] = useState<string[]>([]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("auth_session_token");
+    if (!token) return;
+    fetch("/api/vehicles/brands", { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((data) => { if (data.success) setLiveBrands(data.brands); })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const token = localStorage.getItem("auth_session_token");
+    if (!token || !vehicleBrand.trim()) { setLiveModels([]); return; }
+    fetch(`/api/vehicles/models?brand=${encodeURIComponent(vehicleBrand.trim())}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((data) => { if (data.success) setLiveModels(data.models); })
+      .catch(() => {});
+  }, [vehicleBrand]);
+
   const [textDescription, setTextDescription] = useState("");
 
   // Plusieurs pièces jointes possibles à la fois
@@ -261,7 +286,7 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
                 className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-3.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
               />
               <datalist id="marques-courantes">
-                {MARQUES_COURANTES.map((m) => <option key={m} value={m} />)}
+                {Array.from(new Set([...liveBrands, ...MARQUES_COURANTES])).map((m) => <option key={m} value={m} />)}
               </datalist>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -269,11 +294,15 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
                 <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">Modèle</label>
                 <input
                   type="text"
+                  list="modeles-suggeres"
                   placeholder="ex: Corolla"
                   value={vehicleModel}
                   onChange={(e) => setVehicleModel(e.target.value)}
                   className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-3.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
                 />
+                <datalist id="modeles-suggeres">
+                  {liveModels.map((m) => <option key={m} value={m} />)}
+                </datalist>
               </div>
               <div>
                 <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">Année</label>

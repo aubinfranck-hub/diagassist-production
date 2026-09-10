@@ -10,6 +10,7 @@ import crypto from "crypto";
 import { WebSocketServer } from "ws";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import { XMLParser } from "fast-xml-parser";
 
 dotenv.config();
 
@@ -183,6 +184,27 @@ async function initDatabase(): Promise<void> {
     );
     -- Migration sûre : ajoute le type de partenaire sans casser les enregistrements existants
     ALTER TABLE mechanics ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'mechanic';
+    -- Base véhicules importée depuis l'API Auto-Data.net (marque > modèle > génération > motorisation)
+    CREATE TABLE IF NOT EXISTS vehicles (
+      id SERIAL PRIMARY KEY,
+      brand TEXT NOT NULL,
+      brand_id INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      model_id INTEGER NOT NULL,
+      generation TEXT NOT NULL,
+      generation_id INTEGER NOT NULL,
+      year_start INTEGER,
+      year_stop INTEGER,
+      engine_code TEXT,
+      engine_displacement INTEGER,
+      power_hp INTEGER,
+      fuel_system TEXT,
+      cylinders INTEGER,
+      image_url TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_vehicles_brand ON vehicles (brand);
+    CREATE INDEX IF NOT EXISTS idx_vehicles_brand_model ON vehicles (brand, model);
+    CREATE INDEX IF NOT EXISTS idx_vehicles_bmg ON vehicles (brand, model, generation);
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 }
@@ -249,6 +271,58 @@ async function loadPersistedData(): Promise<void> {
     }
   }
   console.log(`[DB] Données rechargées : ${accountsRes.rows.length} compte(s), ${plansRes.rows.length} forfait(s), ${bannersRes.rows.length} bannière(s), ${loadedSessions} session(s).`);
+}
+
+// --- Synchronisation base véhicules depuis l'API Auto-Data.net ---
+// Récupère le flux XML marques > modèles > générations > motorisations et le stocke en base,
+// pour alimenter des menus déroulants en cascade côté app (au lieu de la saisie libre).
+async function syncVehiclesFromAutoData(apiCode: string): Promise<{ inserted: number; brands: number }> {
+  if (!dbPool) throw new Error("Base de données non configurée.");
+
+  const response = await fetch(`https://api.auto-data.net/?code=${encodeURIComponent(apiCode)}`);
+  if (!response.ok) throw new Error(`Auto-Data.net a répondu ${response.status}`);
+  const xmlText = await response.text();
+
+  const parser = new XMLParser({ ignoreAttributes: true, isArray: (name) => ["brand", "model", "generation", "modification"].includes(name) });
+  const parsed = parser.parse(xmlText);
+  const brandsRaw = parsed?.brands?.brand || [];
+
+  let inserted = 0;
+  for (const brand of brandsRaw) {
+    const brandName = brand.name;
+    const brandId = Number(brand.id);
+    const models = brand.models?.model || [];
+    for (const model of models) {
+      const modelName = model.name;
+      const modelId = Number(model.id);
+      const generations = model.generations?.generation || [];
+      for (const gen of generations) {
+        const genName = gen.name;
+        const genId = Number(gen.id);
+        const imageUrl = gen.images?.image?.[0]?.big || gen.images?.image?.big || null;
+        const modifications = gen.modifications?.modification || [];
+        for (const mod of modifications) {
+          await dbPool.query(
+            `INSERT INTO vehicles (brand, brand_id, model, model_id, generation, generation_id, year_start, year_stop, engine_code, engine_displacement, power_hp, fuel_system, cylinders, image_url)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+            [
+              brandName, brandId, modelName, modelId, genName, genId,
+              mod.yearstart ? Number(mod.yearstart) : null,
+              mod.yearstop ? Number(mod.yearstop) : null,
+              mod.engineCode || null,
+              mod.engineDisplacement ? Number(mod.engineDisplacement) : null,
+              mod.powerHp ? Number(mod.powerHp) : null,
+              mod.fuelSystem || null,
+              mod.cilinders ? Number(mod.cilinders) : null,
+              imageUrl,
+            ]
+          );
+          inserted++;
+        }
+      }
+    }
+  }
+  return { inserted, brands: brandsRaw.length };
 }
 
 async function persistMechanic(m: Mechanic): Promise<void> {
@@ -1748,6 +1822,65 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     mechanics.delete(req.params.id);
     deleteMechanicFromDb(req.params.id).catch(() => {});
     res.json({ success: true });
+  });
+
+  // API Route (ADMIN UNIQUEMENT) : synchronise la base véhicules depuis Auto-Data.net.
+  // Le code d'accès est fourni dans le corps de la requête (ou via AUTO_DATA_API_CODE en env).
+  app.post("/api/admin/vehicles/sync", adminLimiter, requireAdminAuth, async (req, res) => {
+    const apiCode = req.body?.apiCode || process.env.AUTO_DATA_API_CODE;
+    if (!apiCode) return res.status(400).json({ success: false, message: "Code d'accès Auto-Data.net requis." });
+    if (!dbPool) return res.status(503).json({ success: false, message: "Base de données indisponible." });
+    try {
+      await dbPool.query("DELETE FROM vehicles"); // resynchronisation complète, pas de doublons
+      const result = await syncVehiclesFromAutoData(apiCode);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error("[Auto-Data] Échec synchronisation:", err.message);
+      res.status(500).json({ success: false, message: err.message || "Échec de la synchronisation." });
+    }
+  });
+
+  app.get("/api/admin/vehicles/count", adminLimiter, requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, count: 0, brands: 0 });
+    const { rows } = await dbPool.query("SELECT COUNT(*) AS total, COUNT(DISTINCT brand) AS brands FROM vehicles");
+    res.json({ success: true, count: Number(rows[0].total), brands: Number(rows[0].brands) });
+  });
+
+  // API Routes (utilisateur connecté) : menus en cascade marque > modèle > génération > moteur
+  app.get("/api/vehicles/brands", requireAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, brands: [] });
+    const { rows } = await dbPool.query("SELECT DISTINCT brand FROM vehicles ORDER BY brand ASC");
+    res.json({ success: true, brands: rows.map((r) => r.brand) });
+  });
+
+  app.get("/api/vehicles/models", requireAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, models: [] });
+    const brand = req.query.brand as string;
+    if (!brand) return res.status(400).json({ success: false, message: "Marque requise." });
+    const { rows } = await dbPool.query("SELECT DISTINCT model FROM vehicles WHERE brand = $1 ORDER BY model ASC", [brand]);
+    res.json({ success: true, models: rows.map((r) => r.model) });
+  });
+
+  app.get("/api/vehicles/generations", requireAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, generations: [] });
+    const { brand, model } = req.query as { brand?: string; model?: string };
+    if (!brand || !model) return res.status(400).json({ success: false, message: "Marque et modèle requis." });
+    const { rows } = await dbPool.query(
+      "SELECT DISTINCT generation, MIN(year_start) as year_start, MAX(year_stop) as year_stop, MAX(image_url) as image_url FROM vehicles WHERE brand = $1 AND model = $2 GROUP BY generation ORDER BY year_start DESC NULLS LAST",
+      [brand, model]
+    );
+    res.json({ success: true, generations: rows });
+  });
+
+  app.get("/api/vehicles/modifications", requireAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, modifications: [] });
+    const { brand, model, generation } = req.query as { brand?: string; model?: string; generation?: string };
+    if (!brand || !model || !generation) return res.status(400).json({ success: false, message: "Marque, modèle et génération requis." });
+    const { rows } = await dbPool.query(
+      "SELECT engine_code, engine_displacement, power_hp, fuel_system, cylinders, year_start, year_stop FROM vehicles WHERE brand = $1 AND model = $2 AND generation = $3 ORDER BY engine_displacement ASC",
+      [brand, model, generation]
+    );
+    res.json({ success: true, modifications: rows });
   });
 
   // API Route (utilisateur connecté) : annuaire public des mécaniciens agréés actifs,

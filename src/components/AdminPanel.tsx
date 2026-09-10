@@ -52,6 +52,45 @@ export default function AdminPanel({
   // suivantes (création d'accès manuel, etc.) sans redemander le code à chaque fois.
   const [adminCode, setAdminCode] = useState("");
 
+  // Synchronisation base véhicules (Auto-Data.net)
+  const [vehiclesApiCode, setVehiclesApiCode] = useState("");
+  const [vehiclesSyncing, setVehiclesSyncing] = useState(false);
+  const [vehiclesSyncResult, setVehiclesSyncResult] = useState<string | null>(null);
+  const [vehiclesCount, setVehiclesCount] = useState<{ count: number; brands: number } | null>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem("auth_session_token");
+    if (!token) return;
+    fetch("/api/admin/vehicles/count", { headers: { Authorization: `Bearer ${token}`, "x-admin-code": adminCode } })
+      .then((r) => r.json())
+      .then((data) => { if (data.success) setVehiclesCount({ count: data.count, brands: data.brands }); })
+      .catch(() => {});
+  }, [adminCode]);
+
+  const handleSyncVehicles = async () => {
+    setVehiclesSyncing(true);
+    setVehiclesSyncResult(null);
+    try {
+      const token = localStorage.getItem("auth_session_token");
+      const res = await fetch("/api/admin/vehicles/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "x-admin-code": adminCode },
+        body: JSON.stringify({ apiCode: vehiclesApiCode }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setVehiclesSyncResult(`${data.inserted} motorisation(s) importée(s), ${data.brands} marque(s).`);
+        setVehiclesCount({ count: data.inserted, brands: data.brands });
+      } else {
+        setVehiclesSyncResult(`Erreur : ${data.message}`);
+      }
+    } catch {
+      setVehiclesSyncResult("Erreur réseau.");
+    } finally {
+      setVehiclesSyncing(false);
+    }
+  };
+
   // Création d'accès manuel (numéro + code, alternative à l'OTP)
   const [accessPhone, setAccessPhone] = useState("");
   const [accessCountryCode, setAccessCountryCode] = useState("+225");
@@ -224,7 +263,32 @@ export default function AdminPanel({
 
   return (
     <div className="space-y-8 animate-fade-in">
-      
+
+      {/* Synchronisation base véhicules (Auto-Data.net) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+        <h3 className="text-sm font-extrabold uppercase tracking-wider text-slate-300 mb-1">Base véhicules (Auto-Data.net)</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          {vehiclesCount ? `${vehiclesCount.count.toLocaleString("fr-FR")} motorisation(s) en base, ${vehiclesCount.brands} marque(s).` : "Chargement..."}
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <input
+            type="text"
+            placeholder="Code d'accès API Auto-Data.net"
+            value={vehiclesApiCode}
+            onChange={(e) => setVehiclesApiCode(e.target.value)}
+            className="flex-1 bg-slate-950/90 border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 font-mono"
+          />
+          <button
+            onClick={handleSyncVehicles}
+            disabled={vehiclesSyncing || !vehiclesApiCode.trim()}
+            className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold px-5 py-2.5 rounded-xl transition cursor-pointer whitespace-nowrap"
+          >
+            {vehiclesSyncing ? "Synchronisation..." : "Synchroniser"}
+          </button>
+        </div>
+        {vehiclesSyncResult && <p className="text-xs text-slate-400 mt-2.5">{vehiclesSyncResult}</p>}
+      </div>
+
       {/* Admin Status Header */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative overflow-hidden">
         <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 opacity-[0.03] select-none pointer-events-none">
