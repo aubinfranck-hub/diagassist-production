@@ -470,6 +470,15 @@ export default function AdminClientDashboard() {
             <p className="text-xs text-slate-300">Numéro : <span className="font-mono font-bold text-white">{createdAccount.phone}</span></p>
             <p className="text-xs text-slate-300">Mot de passe : <span className="font-mono font-bold text-white text-base">{createdAccount.password}</span></p>
             <p className="text-[10px] text-emerald-400/70">⚠️ Ce mot de passe ne sera plus jamais affiché ici.</p>
+            <a
+              href={`https://wa.me/${createdAccount.phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
+                `Bonjour, voici vos identifiants DiagAssist :\n\nNuméro : ${createdAccount.phone}\nMot de passe : ${createdAccount.password}\n\nConnectez-vous sur l'application pour commencer.`
+              )}`}
+              target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 mt-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-lg"
+            >
+              <MessageCircle className="w-3.5 h-3.5" /> Envoyer par WhatsApp
+            </a>
           </div>
         )}
       </div>
