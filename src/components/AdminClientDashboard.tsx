@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight, Wrench } from "lucide-react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight, Wrench, Upload } from "lucide-react";
 
 interface Account {
   phone: string;
@@ -153,6 +153,23 @@ export default function AdminClientDashboard() {
 
   // Bannières / publicités
   const [bannerImageUrl, setBannerImageUrl] = useState("");
+  const [bannerUploading, setBannerUploading] = useState(false);
+  const bannerFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleBannerFileUpload = (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image trop volumineuse (max 5 Mo).");
+      return;
+    }
+    setBannerUploading(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setBannerImageUrl(reader.result as string);
+      setBannerUploading(false);
+    };
+    reader.onerror = () => setBannerUploading(false);
+    reader.readAsDataURL(file);
+  };
   const [bannerLinkUrl, setBannerLinkUrl] = useState("");
   const [bannerType, setBannerType] = useState<"banner" | "floating">("banner");
   const [bannerCreating, setBannerCreating] = useState(false);
@@ -773,6 +790,18 @@ export default function AdminClientDashboard() {
             onChange={(e) => setBannerImageUrl(e.target.value)}
             className="sm:col-span-2 w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-fuchsia-500"
           />
+          <input
+            ref={bannerFileInputRef} type="file" accept="image/*" className="hidden"
+            onChange={(e) => e.target.files?.[0] && handleBannerFileUpload(e.target.files[0])}
+          />
+          <button
+            type="button"
+            onClick={() => bannerFileInputRef.current?.click()}
+            disabled={bannerUploading}
+            className="flex items-center justify-center gap-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold px-3 py-2.5 rounded-xl cursor-pointer"
+          >
+            <Upload className="w-3.5 h-3.5" /> {bannerUploading ? "Chargement..." : "ou uploader une image"}
+          </button>
           <input
             type="url"
             placeholder="Lien au clic (optionnel)"
