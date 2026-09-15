@@ -1492,7 +1492,7 @@ Codes DTC: ${dtcCodes}`;
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,video/*,audio/*"
+          accept="image/*,video/*,audio/*,application/pdf"
           multiple
           style={{ display: "none" }}
           onChange={(e) => {

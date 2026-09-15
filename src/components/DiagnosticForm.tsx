@@ -351,7 +351,7 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
 
             <div>
               <label className="block text-xs text-slate-300 font-extrabold uppercase tracking-wider mb-2">
-                Preuves (photos, vidéos, sons) — {attachments.length}/{MAX_ATTACHMENTS}
+                Preuves (photos, vidéos, sons, rapport PDF) — {attachments.length}/{MAX_ATTACHMENTS}
               </label>
 
               <div className="grid grid-cols-2 gap-3 mb-3">
@@ -371,11 +371,11 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
                     ref={fileInputRef}
                     multiple
                     onChange={(e) => e.target.files && addFilesAsAttachments(e.target.files)}
-                    accept="image/*,video/*,audio/*"
+                    accept="image/*,video/*,audio/*,application/pdf"
                     className="hidden"
                   />
                   <Upload className="w-6 h-6 text-slate-400" />
-                  <span className="text-sm text-slate-200 font-bold">Ajouter photo/vidéo</span>
+                  <span className="text-sm text-slate-200 font-bold">Ajouter photo/vidéo/PDF</span>
                   <span className="text-[10px] text-slate-500">Plusieurs à la fois, max 15 Mo</span>
                 </button>
 
@@ -415,6 +415,8 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
                         <img src={`data:${att.mimeType};base64,${att.base64}`} alt={att.name} className="w-full h-full object-cover" />
                       ) : att.mimeType.startsWith("video/") ? (
                         <Video className="w-7 h-7 text-sky-500" />
+                      ) : att.mimeType === "application/pdf" ? (
+                        <FileText className="w-7 h-7 text-orange-500" />
                       ) : (
                         <Mic className="w-7 h-7 text-rose-500" />
                       )}

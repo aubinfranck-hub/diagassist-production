@@ -752,7 +752,7 @@ export default function DiagnosticChat({ diagnosis, chatHistory, onSendMessage, 
           type="file"
           ref={fileInputRef}
           onChange={handleFileSelect}
-          accept="image/*,video/*,audio/*"
+          accept="image/*,video/*,audio/*,application/pdf"
           className="hidden"
         />
 

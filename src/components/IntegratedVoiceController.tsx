@@ -1105,7 +1105,7 @@ ESTIMATION DES COÛTS DE RÉPARATION CONSEILLÉS À ABIDJAN :
                 type="file"
                 ref={liveFileInputRef}
                 onChange={handleLiveFileSelect}
-                accept="image/*,video/*,audio/*"
+                accept="image/*,video/*,audio/*,application/pdf"
                 className="hidden"
               />
 
