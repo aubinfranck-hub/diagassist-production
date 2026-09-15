@@ -705,6 +705,7 @@ async function startServer() {
     "/api/diagnose",
     "/api/diagnostic/loop/start",
     "/api/diagnostic/loop/step",
+    "/api/admin/banners",
   ]);
   const SMALL_PAYLOAD_LIMIT_BYTES = 2 * 1024 * 1024; // 2MB
   app.use((req, res, next) => {
