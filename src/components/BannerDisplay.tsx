@@ -58,13 +58,18 @@ export default function BannerDisplay() {
         <div
           key={b.id}
           className="fixed z-50 shadow-2xl rounded-2xl overflow-hidden border-2 border-white/20 cursor-pointer animate-fade-in"
-          style={{ bottom: `${20 + i * 140}px`, right: "20px", maxWidth: "220px" }}
+          style={{
+            bottom: `${20 + i * 140}px`,
+            right: "20px",
+            maxWidth: "min(220px, calc(100vw - 40px))",
+            maxHeight: "35vh",
+          }}
           onClick={() => {
             setDismissedFloating((prev) => new Set(prev).add(b.id));
             if (b.linkUrl) window.open(b.linkUrl, "_blank");
           }}
         >
-          <img src={b.imageUrl} alt="Publicité" className="w-full h-auto block" />
+          <img src={b.imageUrl} alt="Publicité" className="w-full h-full object-contain block" style={{ maxHeight: "35vh" }} />
           <div className="absolute top-1.5 right-1.5 bg-black/50 text-white rounded-full p-0.5">
             <X className="w-3 h-3" />
           </div>
