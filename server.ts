@@ -205,6 +205,84 @@ async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_vehicles_brand ON vehicles (brand);
     CREATE INDEX IF NOT EXISTS idx_vehicles_brand_model ON vehicles (brand, model);
     CREATE INDEX IF NOT EXISTS idx_vehicles_bmg ON vehicles (brand, model, generation);
+
+    -- === BOUTIQUE / CRM (section separee du diagnostic, cahier des charges DiagAssist) ===
+    CREATE TABLE IF NOT EXISTS shop_categories (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      type TEXT NOT NULL DEFAULT 'produit', -- produit | mise_a_jour | piece
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS shop_products (
+      id SERIAL PRIMARY KEY,
+      category_id INTEGER REFERENCES shop_categories(id),
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      price_fcfa INTEGER,
+      description TEXT,
+      specs TEXT,
+      compatibility TEXT,
+      box_contents TEXT,
+      warranty TEXT,
+      availability TEXT DEFAULT 'disponible', -- disponible | rupture | sur_commande
+      photos JSONB DEFAULT '[]',
+      videos JSONB DEFAULT '[]',
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_shop_products_category ON shop_products (category_id);
+    -- Clients CRM: identifies par numero de telephone
+    CREATE TABLE IF NOT EXISTS shop_customers (
+      phone TEXT PRIMARY KEY,
+      name TEXT,
+      city TEXT,
+      categories JSONB DEFAULT '[]', -- ex: ["scanner","diagzone","pieces"]
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_interaction_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS shop_orders (
+      id SERIAL PRIMARY KEY,
+      customer_phone TEXT NOT NULL REFERENCES shop_customers(phone),
+      product_id INTEGER REFERENCES shop_products(id),
+      product_name_snapshot TEXT,
+      status TEXT NOT NULL DEFAULT 'nouvelle', -- nouvelle | a_contacter | contactee | confirmee | en_traitement | prete | livree | annulee | client_injoignable
+      quantity INTEGER DEFAULT 1,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_shop_orders_customer ON shop_orders (customer_phone);
+    CREATE INDEX IF NOT EXISTS idx_shop_orders_status ON shop_orders (status);
+    -- Demandes de pieces a l'etranger (avec carte grise)
+    CREATE TABLE IF NOT EXISTS shop_part_requests (
+      id SERIAL PRIMARY KEY,
+      customer_phone TEXT NOT NULL REFERENCES shop_customers(phone),
+      part_description TEXT NOT NULL,
+      part_photo_base64 TEXT,
+      carte_grise_base64 TEXT,
+      extra_info TEXT,
+      status TEXT NOT NULL DEFAULT 'nouvelle', -- nouvelle | recherche | devis_envoye | devis_accepte | commandee | en_transit | recue | livree | annulee
+      quote_fcfa INTEGER,
+      quote_details TEXT,
+      estimated_days INTEGER DEFAULT 15,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_part_requests_customer ON shop_part_requests (customer_phone);
+    -- Relances (historique + programmation)
+    CREATE TABLE IF NOT EXISTS shop_followups (
+      id SERIAL PRIMARY KEY,
+      customer_phone TEXT NOT NULL REFERENCES shop_customers(phone),
+      message TEXT,
+      channel TEXT DEFAULT 'whatsapp', -- whatsapp | appel | sms
+      scheduled_for TIMESTAMP,
+      status TEXT NOT NULL DEFAULT 'programmee', -- programmee | envoyee | client_joint | commande_confirmee | echec
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_followups_customer ON shop_followups (customer_phone);
+    CREATE INDEX IF NOT EXISTS idx_followups_scheduled ON shop_followups (scheduled_for);
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 }
@@ -706,6 +784,7 @@ async function startServer() {
     "/api/diagnostic/loop/start",
     "/api/diagnostic/loop/step",
     "/api/admin/banners",
+    "/api/shop/part-requests",
   ]);
   const SMALL_PAYLOAD_LIMIT_BYTES = 2 * 1024 * 1024; // 2MB
   app.use((req, res, next) => {
@@ -753,6 +832,15 @@ async function startServer() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { success: false, message: "Trop de tentatives de connexion. Veuillez réessayer dans quelques minutes." },
+  });
+  // Limite les routes boutique publiques (commande/demande de pièce) sans authentification —
+  // évite le spam/abus sur des endpoints ouverts à tous.
+  const shopPublicLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de demandes. Veuillez réessayer dans quelques minutes." },
   });
 
   // API Route: Health Check
@@ -1882,6 +1970,281 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       [brand, model, generation]
     );
     res.json({ success: true, modifications: rows });
+  });
+
+  // ============================================================
+  // BOUTIQUE / CRM — section indépendante du diagnostic technique
+  // ============================================================
+
+  // --- Public : catalogue ---
+  app.get("/api/shop/categories", async (req, res) => {
+    if (!dbPool) return res.json({ success: true, categories: [] });
+    const { rows } = await dbPool.query("SELECT * FROM shop_categories ORDER BY name ASC");
+    res.json({ success: true, categories: rows });
+  });
+
+  app.get("/api/shop/products", async (req, res) => {
+    if (!dbPool) return res.json({ success: true, products: [] });
+    const { category } = req.query as { category?: string };
+    let query = "SELECT p.*, c.name as category_name, c.slug as category_slug FROM shop_products p LEFT JOIN shop_categories c ON c.id = p.category_id WHERE p.is_active = true";
+    const params: any[] = [];
+    if (category) { params.push(category); query += ` AND c.slug = $${params.length}`; }
+    query += " ORDER BY p.created_at DESC";
+    const { rows } = await dbPool.query(query, params);
+    res.json({ success: true, products: rows });
+  });
+
+  app.get("/api/shop/products/:slug", async (req, res) => {
+    if (!dbPool) return res.status(404).json({ success: false, message: "Produit introuvable." });
+    const { rows } = await dbPool.query(
+      "SELECT p.*, c.name as category_name, c.slug as category_slug FROM shop_products p LEFT JOIN shop_categories c ON c.id = p.category_id WHERE p.slug = $1 AND p.is_active = true",
+      [req.params.slug]
+    );
+    if (rows.length === 0) return res.status(404).json({ success: false, message: "Produit introuvable." });
+    res.json({ success: true, product: rows[0] });
+  });
+
+  // Crée/retrouve le client CRM par téléphone (appelé à chaque commande ou demande)
+  async function upsertShopCustomer(phone: string, name?: string, city?: string, category?: string) {
+    if (!dbPool) return;
+    const existing = await dbPool.query("SELECT * FROM shop_customers WHERE phone = $1", [phone]);
+    if (existing.rows.length === 0) {
+      await dbPool.query(
+        "INSERT INTO shop_customers (phone, name, city, categories) VALUES ($1,$2,$3,$4)",
+        [phone, name || null, city || null, JSON.stringify(category ? [category] : [])]
+      );
+    } else {
+      const cats: string[] = existing.rows[0].categories || [];
+      const newCats = category && !cats.includes(category) ? [...cats, category] : cats;
+      await dbPool.query(
+        "UPDATE shop_customers SET name = COALESCE($2, name), city = COALESCE($3, city), categories = $4, last_interaction_at = CURRENT_TIMESTAMP WHERE phone = $1",
+        [phone, name || null, city || null, JSON.stringify(newCats)]
+      );
+    }
+  }
+
+  // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
+  app.post("/api/shop/orders", shopPublicLimiter, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { phone, name, city, product_id, quantity, notes } = req.body;
+    if (!phone || !product_id) return res.status(400).json({ success: false, message: "Téléphone et produit requis." });
+    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+
+    const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [product_id]);
+    if (productRes.rows.length === 0) return res.status(404).json({ success: false, message: "Produit introuvable." });
+    const product = productRes.rows[0];
+
+    await upsertShopCustomer(cleanPhone, name, city, "produit");
+    const orderRes = await dbPool.query(
+      `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, quantity, notes)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [cleanPhone, product_id, product.name, quantity || 1, notes || null]
+    );
+    res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_id: orderRes.rows[0].id });
+  });
+
+  // --- Public : demande de pièce à l'étranger (avec carte grise) ---
+  app.post("/api/shop/part-requests", shopPublicLimiter, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { phone, name, part_description, part_photo_base64, carte_grise_base64, extra_info } = req.body;
+    if (!phone || !part_description) return res.status(400).json({ success: false, message: "Téléphone et description de la pièce requis." });
+    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+
+    await upsertShopCustomer(cleanPhone, name, undefined, "pieces");
+    const result = await dbPool.query(
+      `INSERT INTO shop_part_requests (customer_phone, part_description, part_photo_base64, carte_grise_base64, extra_info)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [cleanPhone, part_description, part_photo_base64 || null, carte_grise_base64 || null, extra_info || null]
+    );
+    res.json({ success: true, message: "Demande envoyée. Nous préparons une cotation sous environ 15 jours.", request_id: result.rows[0].id });
+  });
+
+  // --- Admin : gestion produits ---
+  app.get("/api/admin/shop/products", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, products: [] });
+    const { rows } = await dbPool.query("SELECT p.*, c.name as category_name FROM shop_products p LEFT JOIN shop_categories c ON c.id = p.category_id ORDER BY p.created_at DESC");
+    res.json({ success: true, products: rows });
+  });
+
+  app.post("/api/admin/shop/products", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { category_id, name, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: "Nom requis." });
+    const slug = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") + "-" + Date.now().toString(36);
+    const result = await dbPool.query(
+      `INSERT INTO shop_products (category_id, name, slug, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [category_id || null, name, slug, price_fcfa || null, description || null, specs || null, compatibility || null,
+       box_contents || null, warranty || null, availability || "disponible", JSON.stringify(photos || []), JSON.stringify(videos || [])]
+    );
+    res.json({ success: true, id: result.rows[0].id, slug });
+  });
+
+  app.patch("/api/admin/shop/products/:id", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const fields = req.body;
+    const allowed = ["category_id", "name", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active"];
+    const jsonFields = ["photos", "videos"];
+    const sets: string[] = [];
+    const values: any[] = [];
+    let i = 1;
+    for (const key of allowed) {
+      if (fields[key] !== undefined) { sets.push(`${key} = $${i++}`); values.push(fields[key]); }
+    }
+    for (const key of jsonFields) {
+      if (fields[key] !== undefined) { sets.push(`${key} = $${i++}`); values.push(JSON.stringify(fields[key])); }
+    }
+    if (sets.length === 0) return res.status(400).json({ success: false, message: "Rien à mettre à jour." });
+    values.push(req.params.id);
+    await dbPool.query(`UPDATE shop_products SET ${sets.join(", ")} WHERE id = $${i}`, values);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/admin/shop/products/:id", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    await dbPool.query("UPDATE shop_products SET is_active = false WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  });
+
+  // --- Admin : catégories ---
+  app.get("/api/admin/shop/categories", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, categories: [] });
+    const { rows } = await dbPool.query("SELECT * FROM shop_categories ORDER BY name ASC");
+    res.json({ success: true, categories: rows });
+  });
+
+  app.post("/api/admin/shop/categories", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { name, type } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: "Nom requis." });
+    const slug = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const result = await dbPool.query(
+      "INSERT INTO shop_categories (name, slug, type) VALUES ($1,$2,$3) ON CONFLICT (slug) DO NOTHING RETURNING id",
+      [name, slug, type || "produit"]
+    );
+    res.json({ success: true, id: result.rows[0]?.id });
+  });
+
+  // --- Admin : commandes ---
+  app.get("/api/admin/shop/orders", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, orders: [] });
+    const { status } = req.query as { status?: string };
+    let query = "SELECT o.*, c.name as customer_name, c.city as customer_city FROM shop_orders o LEFT JOIN shop_customers c ON c.phone = o.customer_phone";
+    const params: any[] = [];
+    if (status) { params.push(status); query += ` WHERE o.status = $1`; }
+    query += " ORDER BY o.created_at DESC LIMIT 200";
+    const { rows } = await dbPool.query(query, params);
+    res.json({ success: true, orders: rows });
+  });
+
+  app.patch("/api/admin/shop/orders/:id", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { status, notes } = req.body;
+    const sets: string[] = ["updated_at = CURRENT_TIMESTAMP"];
+    const values: any[] = [];
+    let i = 1;
+    if (status !== undefined) { sets.push(`status = $${i++}`); values.push(status); }
+    if (notes !== undefined) { sets.push(`notes = $${i++}`); values.push(notes); }
+    values.push(req.params.id);
+    await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = $${i}`, values);
+    res.json({ success: true });
+  });
+
+  // --- Admin : demandes de pièces ---
+  app.get("/api/admin/shop/part-requests", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, requests: [] });
+    const { rows } = await dbPool.query(
+      "SELECT r.*, c.name as customer_name FROM shop_part_requests r LEFT JOIN shop_customers c ON c.phone = r.customer_phone ORDER BY r.created_at DESC LIMIT 200"
+    );
+    res.json({ success: true, requests: rows });
+  });
+
+  app.patch("/api/admin/shop/part-requests/:id", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { status, quote_fcfa, quote_details, estimated_days } = req.body;
+    const sets: string[] = ["updated_at = CURRENT_TIMESTAMP"];
+    const values: any[] = [];
+    let i = 1;
+    if (status !== undefined) { sets.push(`status = $${i++}`); values.push(status); }
+    if (quote_fcfa !== undefined) { sets.push(`quote_fcfa = $${i++}`); values.push(quote_fcfa); }
+    if (quote_details !== undefined) { sets.push(`quote_details = $${i++}`); values.push(quote_details); }
+    if (estimated_days !== undefined) { sets.push(`estimated_days = $${i++}`); values.push(estimated_days); }
+    values.push(req.params.id);
+    await dbPool.query(`UPDATE shop_part_requests SET ${sets.join(", ")} WHERE id = $${i}`, values);
+    res.json({ success: true });
+  });
+
+  // --- Admin : clients CRM ---
+  app.get("/api/admin/shop/customers", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, customers: [] });
+    const { search } = req.query as { search?: string };
+    let query = "SELECT * FROM shop_customers";
+    const params: any[] = [];
+    if (search) { params.push(`%${search}%`); query += ` WHERE phone ILIKE $1 OR name ILIKE $1`; }
+    query += " ORDER BY last_interaction_at DESC LIMIT 200";
+    const { rows } = await dbPool.query(query, params);
+    res.json({ success: true, customers: rows });
+  });
+
+  app.get("/api/admin/shop/customers/:phone", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(404).json({ success: false, message: "Introuvable." });
+    const phone = decodeURIComponent(req.params.phone);
+    const customer = await dbPool.query("SELECT * FROM shop_customers WHERE phone = $1", [phone]);
+    if (customer.rows.length === 0) return res.status(404).json({ success: false, message: "Client introuvable." });
+    const orders = await dbPool.query("SELECT * FROM shop_orders WHERE customer_phone = $1 ORDER BY created_at DESC", [phone]);
+    const partRequests = await dbPool.query("SELECT * FROM shop_part_requests WHERE customer_phone = $1 ORDER BY created_at DESC", [phone]);
+    const followups = await dbPool.query("SELECT * FROM shop_followups WHERE customer_phone = $1 ORDER BY created_at DESC", [phone]);
+    res.json({ success: true, customer: customer.rows[0], orders: orders.rows, partRequests: partRequests.rows, followups: followups.rows });
+  });
+
+  app.patch("/api/admin/shop/customers/:phone", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const phone = decodeURIComponent(req.params.phone);
+    const { name, city, notes } = req.body;
+    await dbPool.query(
+      "UPDATE shop_customers SET name = COALESCE($2, name), city = COALESCE($3, city), notes = COALESCE($4, notes) WHERE phone = $1",
+      [phone, name, city, notes]
+    );
+    res.json({ success: true });
+  });
+
+  // --- Admin : relances ---
+  app.post("/api/admin/shop/followups", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { customer_phone, message, channel, scheduled_for, status } = req.body;
+    if (!customer_phone) return res.status(400).json({ success: false, message: "Client requis." });
+    const result = await dbPool.query(
+      `INSERT INTO shop_followups (customer_phone, message, channel, scheduled_for, status) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [customer_phone, message || null, channel || "whatsapp", scheduled_for || null, status || "programmee"]
+    );
+    res.json({ success: true, id: result.rows[0].id });
+  });
+
+  app.patch("/api/admin/shop/followups/:id", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { status } = req.body;
+    await dbPool.query("UPDATE shop_followups SET status = $1 WHERE id = $2", [status, req.params.id]);
+    res.json({ success: true });
+  });
+
+  // --- Admin : tableau de bord (compteurs) ---
+  app.get("/api/admin/shop/dashboard", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, stats: {} });
+    const [orders, parts, customers, followups] = await Promise.all([
+      dbPool.query("SELECT status, COUNT(*) FROM shop_orders GROUP BY status"),
+      dbPool.query("SELECT status, COUNT(*) FROM shop_part_requests GROUP BY status"),
+      dbPool.query("SELECT COUNT(*) FROM shop_customers"),
+      dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'programmee' AND scheduled_for <= NOW() + INTERVAL '7 days'"),
+    ]);
+    res.json({
+      success: true,
+      stats: {
+        ordersByStatus: orders.rows,
+        partRequestsByStatus: parts.rows,
+        totalCustomers: Number(customers.rows[0].count),
+        followupsDueSoon: Number(followups.rows[0].count),
+      },
+    });
   });
 
   // API Route (utilisateur connecté) : annuaire public des mécaniciens agréés actifs,
