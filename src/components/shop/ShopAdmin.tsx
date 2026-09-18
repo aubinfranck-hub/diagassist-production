@@ -120,14 +120,98 @@ function PartsTab({ auth }: { auth: any }) {
 }
 
 function FollowupsTab({ auth }: { auth: any }) {
-  const [followups, setFollowups] = useState<any[]>([]), [showForm, setShowForm] = useState(false), [phone, setPhone] = useState(""), [message, setMessage] = useState(""), [channel, setChannel] = useState("whatsapp"), [scheduledFor, setScheduledFor] = useState(""), [saving, setSaving] = useState(false), [waStatus, setWaStatus] = useState<any>(null);
-  const load = () => { shopFetch(auth, "/api/admin/shop/followups").then((d) => d.success && setFollowups(d.followups)); shopFetch(auth, "/api/admin/shop/whatsapp-status").then((d) => d.success && setWaStatus(d)); };
-  useEffect(load, [auth]);
-  const create = async (e: React.FormEvent) => { e.preventDefault(); setSaving(true); await shopFetch(auth, "/api/admin/shop/followups", { method: "POST", body: JSON.stringify({ customer_phone: phone.replace(/[\s-]/g, ""), message, channel, scheduled_for: scheduledFor || null }) }); setSaving(false); setPhone(""); setMessage(""); setScheduledFor(""); setShowForm(false); load(); };
-  const markDone = async (id: number, status: string) => { await shopFetch(auth, `/api/admin/shop/followups/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); setFollowups((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f))); };
-  return <div className="space-y-3"><div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center justify-between mb-3"><div><p className="text-sm font-bold text-white">Automatisation WhatsApp</p><p className="text-[10px] text-slate-500">Le worker vérifie les relances toutes les 5 minutes.</p></div><button type="button" onClick={load} className="p-2 bg-slate-800 rounded-lg text-slate-400 hover:text-white cursor-pointer" title="Actualiser"><RefreshCw className="w-4 h-4" /></button></div><div className="grid grid-cols-3 gap-2"><div className="rounded-lg bg-slate-950 p-2.5"><p className="text-[9px] uppercase text-slate-500">Envoyées aujourd’hui</p><p className="text-lg font-bold text-white">{waStatus?.sentToday ?? "—"}</p></div><div className="rounded-lg bg-slate-950 p-2.5"><p className="text-[9px] uppercase text-slate-500">À envoyer</p><p className="text-lg font-bold text-amber-400">{waStatus?.due ?? "—"}</p></div><div className="rounded-lg bg-slate-950 p-2.5"><p className="text-[9px] uppercase text-slate-500">Échecs</p><p className="text-lg font-bold text-red-400">{waStatus?.failed ?? "—"}</p></div></div><div className="flex flex-wrap gap-2 mt-3"><span className={"px-2.5 py-1 rounded-full text-[10px] " + (waStatus?.configured ? "bg-emerald-900/40 text-emerald-400" : "bg-red-900/40 text-red-400")}>{waStatus?.configured ? "● Twilio connecté" : "● Twilio non configuré"}</span><span className={"px-2.5 py-1 rounded-full text-[10px] " + (waStatus?.templateConfigured ? "bg-sky-900/40 text-sky-400" : "bg-amber-900/40 text-amber-400")}>{waStatus?.templateConfigured ? "Template WhatsApp configuré" : "Template à configurer"}</span>{waStatus?.senderMasked && <span className="px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 text-[10px]">{waStatus.senderMasked}</span>}</div></div>{!showForm ? <button onClick={() => setShowForm(true)} className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer"><Plus className="w-4 h-4" /> Programmer une relance</button> : <form onSubmit={create} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5"><div className="flex justify-between items-center mb-1"><p className="text-sm font-bold text-white">Nouvelle relance</p><button type="button" onClick={() => setShowForm(false)} className="text-slate-500 cursor-pointer"><X className="w-4 h-4" /></button></div><input required placeholder="Téléphone du client" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /><textarea placeholder="Message" rows={2} value={message} onChange={(e) => setMessage(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" /><div className="flex gap-2"><select value={channel} onChange={(e) => setChannel(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"><option value="whatsapp">WhatsApp</option><option value="appel">Appel</option><option value="sms">SMS</option></select><input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /></div><button type="submit" disabled={saving} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-lg cursor-pointer">{saving ? "Enregistrement..." : "Programmer"}</button></form>}{followups.length === 0 ? <p className="text-sm text-slate-500 text-center py-10">Aucune relance programmée.</p> : followups.map((f) => <div key={f.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1.5"><div className="flex justify-between items-start"><div><p className="text-sm font-semibold text-white">{f.customer_name || f.customer_phone}</p><p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {f.customer_phone} · {f.channel}</p></div><span className={`text-[10px] font-bold px-2 py-1 rounded-full ${f.status === "programmee" ? "bg-amber-900/40 text-amber-400" : f.status === "commande_confirmee" ? "bg-emerald-900/40 text-emerald-400" : "bg-slate-800 text-slate-400"}`}>{f.status}</span></div>{f.message && <p className="text-xs text-slate-300">{f.message}</p>}{f.scheduled_for && <p className="text-[10px] text-slate-500">Prévu : {new Date(f.scheduled_for).toLocaleString("fr-FR")}</p>}{f.status === "programmee" && <div className="flex gap-1.5 pt-1"><button onClick={() => markDone(f.id, "envoyee")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Envoyée</button><button onClick={() => markDone(f.id, "client_joint")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Client joint</button><button onClick={() => markDone(f.id, "commande_confirmee")} className="text-[10px] font-semibold bg-emerald-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Commande confirmée</button></div>}</div>)}</div>;
-}
+  const [followups, setFollowups] = useState<any[]>([]);
+  const [waStatus, setWaStatus] = useState<any>(null);
+  const [testPhone, setTestPhone] = useState("");
+  const [testMessage, setTestMessage] = useState("Bonjour, ceci est un message test envoyé par DiagAssist.");
+  const [busy, setBusy] = useState<"connection" | "message" | "template" | null>(null);
+  const [feedback, setFeedback] = useState<{type:"success"|"error"|"info"; text:string} | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [message, setMessage] = useState("");
+  const [channel, setChannel] = useState("whatsapp");
+  const [scheduledFor, setScheduledFor] = useState("");
+  const [saving, setSaving] = useState(false);
 
+  const load = async () => {
+    const [f, s] = await Promise.all([
+      shopFetch(auth, "/api/admin/shop/followups"),
+      shopFetch(auth, "/api/admin/shop/whatsapp-status"),
+    ]);
+    if (f.success) setFollowups(f.followups);
+    if (s.success) setWaStatus(s);
+  };
+  useEffect(() => { load(); }, [auth]);
+
+  const runTest = async (kind: "connection" | "message" | "template") => {
+    setBusy(kind); setFeedback(null);
+    try {
+      const url = kind === "connection" ? "/api/admin/shop/whatsapp-test-connection" : kind === "message" ? "/api/admin/shop/whatsapp-test-message" : "/api/admin/shop/whatsapp-test-template";
+      const body = kind === "message" ? { phone: testPhone.replace(/[\s-]/g, ""), message: testMessage } : {};
+      const d = await shopFetch(auth, url, { method: "POST", body: JSON.stringify(body) });
+      setFeedback({ type: d.success ? "success" : "error", text: d.message || (d.success ? "Test réussi." : "Le test a échoué.") });
+      if (d.success) load();
+    } catch { setFeedback({ type: "error", text: "Impossible de contacter le serveur." }); }
+    finally { setBusy(null); }
+  };
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault(); setSaving(true);
+    const d = await shopFetch(auth, "/api/admin/shop/followups", { method: "POST", body: JSON.stringify({ customer_phone: phone.replace(/[\s-]/g, ""), message, channel, scheduled_for: scheduledFor || null }) });
+    setSaving(false);
+    if (d.success) { setPhone(""); setMessage(""); setScheduledFor(""); setShowForm(false); load(); }
+  };
+  const markDone = async (id: number, status: string) => {
+    await shopFetch(auth, `/api/admin/shop/followups/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    setFollowups((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
+  };
+  const badge = (ok: boolean | undefined, yes: string, no: string) => <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold ${ok ? "bg-emerald-900/40 text-emerald-300" : "bg-red-900/40 text-red-300"}`}>{ok ? "●" : "●"} {ok ? yes : no}</span>;
+
+  return <div className="space-y-5">
+    <div className="flex items-start justify-between gap-3">
+      <div><p className="text-xl font-bold text-white">WhatsApp & relances</p><p className="text-xs text-slate-500 mt-1">Configuration, tests et automatisation commerciale</p></div>
+      <button onClick={load} className="shrink-0 p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white" title="Actualiser"><RefreshCw className="w-4 h-4" /></button>
+    </div>
+
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[10px] uppercase tracking-wide text-slate-500">Envoyées aujourd'hui</p><p className="text-2xl font-bold text-white mt-1">{waStatus?.sentToday ?? "—"}</p></div>
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[10px] uppercase tracking-wide text-slate-500">En attente</p><p className="text-2xl font-bold text-amber-400 mt-1">{waStatus?.due ?? "—"}</p></div>
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4"><p className="text-[10px] uppercase tracking-wide text-slate-500">Échecs</p><p className="text-2xl font-bold text-red-400 mt-1">{waStatus?.failed ?? "—"}</p></div>
+    </div>
+
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+      <div className="px-4 py-4 border-b border-slate-800 flex items-center justify-between">
+        <div><p className="text-sm font-bold text-white">État de la connexion</p><p className="text-[11px] text-slate-500 mt-0.5">Les identifiants restent uniquement côté serveur.</p></div>
+        {badge(waStatus?.configured, "Twilio connecté", "Twilio non configuré")}
+      </div>
+      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-xl bg-slate-950 border border-slate-800 p-3"><p className="text-[10px] uppercase text-slate-500">Expéditeur</p><p className="text-sm text-white mt-1">{waStatus?.senderMasked || "Non configuré"}</p></div>
+        <div className="rounded-xl bg-slate-950 border border-slate-800 p-3"><p className="text-[10px] uppercase text-slate-500">Template</p><p className="text-sm text-white mt-1">{waStatus?.templateConfigured ? "Content Template détecté" : "Aucun Content SID configuré"}</p></div>
+      </div>
+      <div className="px-4 pb-4 flex flex-col sm:flex-row gap-2">
+        <button onClick={() => runTest("connection")} disabled={busy !== null} className="flex-1 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold py-3">{busy === "connection" ? "Test en cours..." : "Tester la connexion Twilio"}</button>
+        <button onClick={() => runTest("template")} disabled={busy !== null || !waStatus?.templateConfigured} className="flex-1 rounded-xl border border-slate-700 hover:bg-slate-800 disabled:opacity-40 text-white text-xs font-bold py-3">{busy === "template" ? "Vérification..." : "Vérifier le template"}</button>
+      </div>
+    </div>
+
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+      <div className="flex items-start gap-3 mb-4"><div className="w-10 h-10 rounded-xl bg-emerald-900/30 flex items-center justify-center shrink-0"><MessageCircle className="w-5 h-5 text-emerald-400" /></div><div><p className="text-sm font-bold text-white">Envoyer un message test</p><p className="text-[11px] text-slate-500 mt-0.5">Utilisez votre propre numéro WhatsApp pour valider le circuit d'envoi.</p></div></div>
+      <div className="space-y-3">
+        <div><label className="text-[10px] uppercase tracking-wide text-slate-500">Numéro destinataire</label><input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="+225 07 00 00 00 00" className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-3 text-sm text-white" /></div>
+        <div><label className="text-[10px] uppercase tracking-wide text-slate-500">Message</label><textarea value={testMessage} onChange={(e) => setTestMessage(e.target.value)} rows={3} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-3 text-sm text-white resize-none" /></div>
+        <button onClick={() => runTest("message")} disabled={busy !== null || !testPhone.trim() || !waStatus?.configured} className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-bold py-3">{busy === "message" ? "Envoi en cours..." : "Envoyer le message test"}</button>
+      </div>
+    </div>
+
+    {feedback && <div className={`rounded-xl border p-3 text-xs ${feedback.type === "success" ? "bg-emerald-950/30 border-emerald-800 text-emerald-300" : feedback.type === "info" ? "bg-sky-950/30 border-sky-800 text-sky-300" : "bg-red-950/30 border-red-800 text-red-300"}`}>{feedback.text}</div>}
+
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+      <div className="flex items-center justify-between gap-2 mb-3"><div><p className="text-sm font-bold text-white">Relances programmées</p><p className="text-[11px] text-slate-500">J+1 et J+3 après commande, J+2 pour les demandes de pièces.</p></div><button onClick={() => setShowForm(!showForm)} className="shrink-0 bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-3 py-2 rounded-xl">{showForm ? "Fermer" : "Nouvelle relance"}</button></div>
+      {showForm && <form onSubmit={create} className="mb-4 p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5"><input required placeholder="Téléphone du client" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white" /><textarea placeholder="Message" rows={2} value={message} onChange={(e) => setMessage(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white resize-none" /><div className="grid grid-cols-1 sm:grid-cols-2 gap-2"><select value={channel} onChange={(e) => setChannel(e.target.value)} className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white"><option value="whatsapp">WhatsApp</option><option value="appel">Appel</option><option value="sms">SMS</option></select><input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)} className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white" /></div><button disabled={saving} className="w-full bg-red-600 disabled:opacity-40 text-white text-xs font-bold py-2.5 rounded-lg">{saving ? "Enregistrement..." : "Programmer la relance"}</button></form>}
+      {followups.length === 0 ? <p className="text-xs text-slate-600 py-6 text-center">Aucune relance programmée.</p> : <div className="space-y-2">{followups.map((f) => <div key={f.id} className="rounded-xl bg-slate-950 border border-slate-800 p-3"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2"><div><p className="text-sm font-semibold text-white">{f.customer_name || f.customer_phone}</p><p className="text-[10px] text-slate-500 mt-0.5">{f.customer_phone} · {f.channel}{f.scheduled_for ? ` · ${new Date(f.scheduled_for).toLocaleString("fr-FR")}` : ""}</p></div><span className="self-start text-[10px] font-bold px-2 py-1 rounded-full bg-slate-800 text-slate-300">{f.status}</span></div>{f.message && <p className="text-xs text-slate-300 mt-2">{f.message}</p>}{f.status === "programmee" && <div className="flex flex-wrap gap-1.5 mt-2"><button onClick={() => markDone(f.id, "envoyee")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1.5 rounded-lg">Marquer envoyée</button><button onClick={() => markDone(f.id, "client_joint")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1.5 rounded-lg">Client joint</button><button onClick={() => markDone(f.id, "commande_confirmee")} className="text-[10px] font-semibold bg-emerald-800 text-white px-2.5 py-1.5 rounded-lg">Commande confirmée</button></div>}</div>)}</div>}
+    </div>
+  </div>;
+}
 function CustomersTab({ auth }: { auth: any }) {
   const openWhatsApp = (phone: string, message = "") => {
     const clean = phone.replace(/[^\d+]/g, "").replace(/^00/, "+");
@@ -148,5 +232,5 @@ export default function ShopAdmin() {
   if (checking) return <div className="flex justify-center py-24"><Loader2 className="w-6 h-6 text-slate-500 animate-spin" /></div>;
   if (!auth) return <AdminGate onValidated={saveCode} />;
   const tabs: { id: Tab; label: string; icon: any }[] = [{ id: "dashboard", label: "Accueil", icon: LayoutDashboard }, { id: "products", label: "Produits", icon: Package }, { id: "orders", label: "Commandes", icon: ShoppingCart }, { id: "parts", label: "Pièces", icon: Wrench }, { id: "customers", label: "Clients", icon: Users }, { id: "followups", label: "Relances", icon: Bell }];
-  return <div className="min-h-screen bg-slate-950 pb-20"><header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur z-10"><span className="font-bold text-white text-sm">Admin Boutique</span><button onClick={clear} className="text-xs text-slate-500 cursor-pointer">Déconnexion</button></header><div className="max-w-xl mx-auto px-4 py-4">{tab === "dashboard" && <Dashboard auth={auth} />}{tab === "products" && <ProductsTab auth={auth} />}{tab === "orders" && <OrdersTab auth={auth} />}{tab === "parts" && <PartsTab auth={auth} />}{tab === "customers" && <CustomersTab auth={auth} />}{tab === "followups" && <FollowupsTab auth={auth} />}</div><nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 cursor-pointer ${tab === t.id ? "text-red-500" : "text-slate-500"}`}><t.icon className="w-4.5 h-4.5" /><span className="text-[10px]">{t.label}</span></button>)}</nav></div>;
+  return <div className="min-h-screen bg-slate-950 text-slate-200 pb-24"><header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur z-20"><div><span className="font-bold text-white text-sm">DiagAssist</span><span className="text-[10px] text-slate-600 ml-2">Administration boutique</span></div><button onClick={clear} className="text-xs text-slate-500 hover:text-white cursor-pointer">Déconnexion</button></header><div className="max-w-6xl mx-auto px-4 md:px-6 py-5"><div className="hidden md:flex gap-2 overflow-x-auto pb-4 border-b border-slate-800 mb-5">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold ${tab === t.id ? "bg-red-600 text-white" : "bg-slate-900 text-slate-400 hover:text-white"}`}><t.icon className="w-4 h-4" />{t.label}</button>)}</div>{tab === "dashboard" && <Dashboard auth={auth} />}{tab === "products" && <ProductsTab auth={auth} />}{tab === "orders" && <OrdersTab auth={auth} />}{tab === "parts" && <PartsTab auth={auth} />}{tab === "customers" && <CustomersTab auth={auth} />}{tab === "followups" && <FollowupsTab auth={auth} />}</div><nav className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur border-t border-slate-800 flex z-20 md:hidden">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 cursor-pointer ${tab === t.id ? "text-red-500" : "text-slate-500"}`}><t.icon className="w-4.5 h-4.5" /><span className="text-[10px]">{t.label}</span></button>)}</nav></div>;
 }
