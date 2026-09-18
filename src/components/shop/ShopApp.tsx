@@ -180,74 +180,29 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
 }
 
 function ShopProductPage({ slug, onBack, cart, onGoToCart }: { slug: string; onBack: () => void; cart: ReturnType<typeof useCart>; onGoToCart: () => void }) {
-  const [product, setProduct] = useState<ShopProduct | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [quantity, setQuantity] = useState(1);
-  const [showOrderForm, setShowOrderForm] = useState(false);
-  const [phone, setPhone] = useState(""); const [name, setName] = useState(""); const [city, setCity] = useState("");
-  const [submitting, setSubmitting] = useState(false); const [orderDone, setOrderDone] = useState(false); const [orderRef, setOrderRef] = useState<string | null>(null); const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setLoading(true); fetch(`/api/shop/products/${slug}`).then(r => r.json()).then(d => d.success && setProduct(d.product)).finally(() => setLoading(false)); }, [slug]);
-
-  const handleOrder = async (e: React.FormEvent) => {
-    e.preventDefault(); if (!product) return; setSubmitting(true); setError(null);
-    try {
-      const res = await fetch("/api/shop/orders", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({phone,name,city,product_id:product.id,quantity}) });
-      const data = await res.json(); if (data.success) { setOrderRef(data.order_ref || null); setOrderDone(true); } else setError(data.message || "Échec de la commande.");
-    } catch { setError("Erreur réseau. Vérifiez votre connexion et réessayez."); } finally { setSubmitting(false); }
-  };
-
-  if (loading) return <div className="py-24 text-center text-sm text-[#73777d]">Chargement du produit...</div>;
-  if (!product) return <div className="py-24 text-center text-sm text-[#73777d]">Produit introuvable.</div>;
-  if (orderDone) return <div className="mx-auto max-w-md px-5 py-24 text-center"><CheckCircle2 className="mx-auto mb-4 h-16 w-16 text-emerald-500" /><h2 className="text-2xl font-black text-[#07090c]">Commande enregistrée</h2>{orderRef && <p className="mt-3 text-sm text-[#73777d]">Référence : <strong className="text-[#ed1c24]">{orderRef}</strong></p>}<p className="mt-3 text-sm text-[#73777d]">Notre équipe vous contactera par téléphone ou WhatsApp pour confirmer votre commande.</p><div className="mt-6 grid gap-2"><button onClick={()=>window.history.pushState({}, "", "/boutique/suivi")} className="rounded-xl bg-[#ed1c24] px-6 py-3 text-sm font-black text-white">Suivre ma commande</button><button onClick={onBack} className="rounded-xl bg-[#07090c] px-6 py-3 text-sm font-bold text-white">Retour au catalogue</button></div></div>;
-
-  return (
-    <main className="mx-auto max-w-7xl px-5 py-7 sm:px-8">
-      <button onClick={onBack} className="mb-7 flex items-center gap-2 text-xs font-bold text-[#73777d] hover:text-[#07090c]"><ArrowLeft className="h-4 w-4" /> Retour au catalogue</button>
-      <div className="grid gap-10 lg:grid-cols-2">
-        <div>
-          <div className="overflow-hidden rounded-3xl border border-[#e4e6e8] bg-[#f5f6f7]">
-            <div className="aspect-square">
-              {product.photos?.[0] ? <img src={product.photos[0]} alt={product.name} className="h-full w-full object-contain p-8 sm:p-12" /> : <Package className="mx-auto mt-40 h-16 w-16 text-[#73777d]" />}
-            </div>
-          </div>
-          <div className="mt-4 flex gap-2 overflow-x-auto">{product.photos?.slice(0,5).map((src,i)=><img key={i} src={src} alt="" className="h-20 w-20 rounded-xl border border-[#e4e6e8] object-contain p-2" />)}</div>
-        </div>
-        <div className="lg:pt-4">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">{product.category_name || "Diagnostic automobile"}</p>
-          <h1 className="mt-2 text-3xl font-black leading-tight text-[#07090c] sm:text-4xl">{product.name}</h1>
-          <div className="mt-5 flex items-center gap-3"><span className="rounded-full bg-[#f5f6f7] px-3 py-1 text-[10px] font-black uppercase text-[#73777d]">{product.availability || "Disponible"}</span><span className="flex items-center gap-1 text-xs text-[#73777d]"><Star className="h-4 w-4 fill-current text-[#ed1c24]" /> Équipement professionnel</span></div>
-          <p className="mt-7 text-3xl font-black text-[#ed1c24]">{formatFcfa(product.price_fcfa)}</p>
-          {product.description && <p className="mt-5 whitespace-pre-wrap text-sm leading-7 text-[#10141a]">{product.description}</p>}
-          <div className="mt-7 grid grid-cols-2 gap-3">
-            {[["Garantie", product.warranty || "Selon produit"], ["Livraison", "Côte d'Ivoire & Afrique"], ["Support", "Conseil technique"], ["Paiement", "À confirmer avec l'équipe"]].map(([a,b])=><div key={a} className="rounded-xl border border-[#e4e6e8] p-3"><p className="text-[9px] font-black uppercase text-[#73777d]">{a}</p><p className="mt-1 text-xs font-bold text-[#07090c]">{b}</p></div>)}
-          </div>
-          <div className="mt-7 flex items-center gap-3"><button onClick={()=>setQuantity(Math.max(1,quantity-1))} className="h-11 w-11 rounded-xl border font-bold">−</button><span className="w-8 text-center font-black">{quantity}</span><button onClick={()=>setQuantity(quantity+1)} className="h-11 w-11 rounded-xl border font-bold">+</button></div>
-          {!showOrderForm ? <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <button onClick={()=>{cart.add(product,quantity);onGoToCart();}} className="rounded-xl bg-[#07090c] py-4 text-sm font-black text-white"><ShoppingBag className="mr-2 inline h-4 w-4" /> Ajouter au panier</button>
-            <button onClick={()=>setShowOrderForm(true)} className="rounded-xl bg-[#ed1c24] py-4 text-sm font-black text-white hover:bg-[#b90f16]">Commander maintenant</button>
-          </div> :
-          <form onSubmit={handleOrder} className="mt-5 rounded-2xl border border-[#e4e6e8] bg-[#f5f6f7] p-5">
-            <p className="mb-4 text-sm font-black">Vos coordonnées</p>
-            <div className="grid gap-3"><input required type="tel" placeholder="Numéro de téléphone" value={phone} onChange={e=>setPhone(e.target.value)} className="rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-[#ed1c24]" /><input placeholder="Nom" value={name} onChange={e=>setName(e.target.value)} className="rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-[#ed1c24]" /><input placeholder="Ville" value={city} onChange={e=>setCity(e.target.value)} className="rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-[#ed1c24]" /></div>
-            {error && <p className="mt-3 text-xs font-bold text-[#ed1c24]">{error}</p>}
-            <button disabled={submitting} className="mt-4 w-full rounded-xl bg-[#ed1c24] py-3.5 text-sm font-black text-white disabled:opacity-50">{submitting ? "Envoi..." : "Valider la commande"}</button>
-            <p className="mt-3 text-center text-[10px] text-[#73777d]">Notre équipe confirme prix, disponibilité et livraison avant paiement.</p>
-          </form>}
-          <a href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(`Bonjour DiagAssist, je suis intéressé par le ${product.name}. Pouvez-vous me renseigner ?`) }`} target="_blank" rel="noreferrer" className="mt-3 flex items-center justify-center gap-2 rounded-xl border border-[#e4e6e8] py-3.5 text-sm font-black text-[#07090c] hover:bg-[#f5f6f7]"><MessageCircle className="h-4 w-4 text-[#16a34a]" /> Demander conseil sur WhatsApp</a>
-        </div>
-      </div>
-      <div className="mt-14 grid gap-5 lg:grid-cols-3">
-        {[
-          ["Caractéristiques", product.specs],
-          ["Compatibilité", product.compatibility],
-          ["Contenu de la boîte", product.box_contents],
-        ].map(([title,body]) => <section key={title as string} className="rounded-2xl border border-[#e4e6e8] p-5"><h2 className="text-sm font-black uppercase text-[#07090c]">{title as string}</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#73777d]">{body || "Informations disponibles sur demande."}</p></section>)}
-      </div>
-      {product.videos?.[0] && <div className="mt-5 rounded-2xl border border-[#e4e6e8] p-5"><h2 className="mb-4 text-sm font-black uppercase">Démonstration</h2><div className="aspect-video overflow-hidden rounded-xl bg-black"><video src={product.videos[0]} controls className="h-full w-full" /></div></div>}
-    </main>
-  );
+  const [product,setProduct]=useState<ShopProduct|null>(null); const [loading,setLoading]=useState(true); const [quantity,setQuantity]=useState(1);
+  const [activePhoto,setActivePhoto]=useState(0); const [showOrderForm,setShowOrderForm]=useState(false);
+  const [phone,setPhone]=useState(""); const [name,setName]=useState(""); const [city,setCity]=useState("");
+  const [submitting,setSubmitting]=useState(false); const [orderDone,setOrderDone]=useState(false); const [orderRef,setOrderRef]=useState<string|null>(null); const [error,setError]=useState<string|null>(null);
+  useEffect(()=>{setLoading(true);setActivePhoto(0);fetch("/api/shop/products/"+slug).then(r=>r.json()).then(d=>d.success&&setProduct(d.product)).finally(()=>setLoading(false));},[slug]);
+  const handleOrder=async(e:React.FormEvent)=>{e.preventDefault();if(!product)return;setSubmitting(true);setError(null);try{const r=await fetch("/api/shop/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone,name,city,product_id:product.id,quantity})});const d=await r.json();if(d.success){setOrderRef(d.order_ref||null);setOrderDone(true)}else setError(d.message||"Échec de la commande.")}catch{setError("Erreur réseau. Vérifiez votre connexion.")}finally{setSubmitting(false)}};
+  if(loading)return <div className="py-32 text-center text-sm text-[#73777d]">Chargement du produit...</div>;
+  if(!product)return <div className="py-32 text-center text-sm text-[#73777d]">Produit introuvable.</div>;
+  if(orderDone)return <div className="mx-auto max-w-md px-5 py-24 text-center"><CheckCircle2 className="mx-auto h-16 w-16 text-emerald-500"/><h2 className="mt-5 text-2xl font-black">Commande enregistrée</h2>{orderRef&&<p className="mt-3 text-sm text-[#73777d]">Référence : <strong className="text-[#ed1c24]">{orderRef}</strong></p>}<p className="mt-3 text-sm text-[#73777d]">Notre équipe vous contactera par téléphone ou WhatsApp.</p><button onClick={onBack} className="mt-7 rounded-xl bg-[#ed1c24] px-6 py-3 text-sm font-black text-white">Retour au catalogue</button></div>;
+  const photos=product.photos||[]; const current=photos[activePhoto];
+  return <main className="mx-auto max-w-7xl px-5 py-6 sm:px-8">
+    <div className="mb-5 flex items-center gap-2 text-[10px] text-[#73777d]"><button onClick={onBack} className="font-bold hover:text-[#ed1c24]">Accueil</button><ChevronRight className="h-3 w-3"/><span>{product.category_name||"Scanners Diagnostic"}</span><ChevronRight className="h-3 w-3"/><strong className="text-[#07090c]">{product.name}</strong></div>
+    <div className="grid gap-8 lg:grid-cols-[1.05fr_.95fr_320px]">
+      <div><div className="relative overflow-hidden rounded-2xl border border-[#e4e6e8] bg-[#f5f6f7]"><div className="absolute left-4 top-4 z-10 rounded-lg bg-[#ed1c24] px-3 py-1.5 text-[10px] font-black uppercase text-white">Best-seller</div><div className="aspect-square">{current?<img src={current} alt={product.name} className="h-full w-full object-contain p-8 sm:p-12"/>:<Package className="mx-auto mt-40 h-16 w-16 text-[#73777d]"/>}</div></div>
+      <div className="mt-3 flex gap-2 overflow-x-auto">{photos.slice(0,6).map((src,i)=><button key={i} onClick={()=>setActivePhoto(i)} className={`h-20 w-20 shrink-0 rounded-xl border-2 bg-white p-1 ${activePhoto===i?"border-[#ed1c24]":"border-[#e4e6e8]"}`}><img src={src} alt="" className="h-full w-full object-contain"/></button>)}{product.videos?.[0]&&<div className="flex h-20 w-24 shrink-0 items-center justify-center rounded-xl bg-[#07090c] text-[10px] font-black text-white">▶ Voir la vidéo</div>}</div></div>
+      <div className="lg:pt-2"><p className="text-xs font-black uppercase tracking-widest text-[#ed1c24]">{product.category_name||"AUTOMOTIVE DIAGNOSTIC"}</p><h1 className="mt-2 text-3xl font-black leading-tight sm:text-4xl">{product.name}</h1><div className="mt-3 flex flex-wrap items-center gap-3 text-xs"><span className="text-[#ed1c24]">★★★★★</span><span className="text-[#73777d]">Équipement professionnel</span></div><div className="mt-5 grid grid-cols-2 gap-2 text-[10px]"><div><span className="text-[#73777d]">Référence</span><p className="font-black">{product.slug}</p></div><div><span className="text-[#73777d]">Marque</span><p className="font-black">{product.name.split(" ")[0]}</p></div><div><span className="text-[#73777d]">Garantie</span><p className="font-black">{product.warranty||"Selon produit"}</p></div><div><span className="text-[#73777d]">Livraison</span><p className="font-black">24 à 72h Abidjan</p></div></div>{product.description&&<p className="mt-6 whitespace-pre-wrap text-sm leading-7 text-[#73777d]">{product.description}</p>}
+      <div className="mt-6 rounded-2xl border border-[#e4e6e8] p-4"><h2 className="text-xs font-black uppercase">Informations clés</h2><div className="mt-3 grid gap-2 text-xs">{[["Disponibilité",product.availability||"Sur commande"],["Garantie",product.warranty||"Selon produit"],["Livraison","Côte d'Ivoire & Afrique"],["Support","Conseil technique"]].map(([a,b])=><div key={a} className="flex justify-between gap-4 border-b border-[#f0f0f0] py-2 last:border-0"><span className="text-[#73777d]">{a}</span><strong>{b}</strong></div>)}</div></div></div>
+      <aside className="h-fit rounded-2xl border border-[#e4e6e8] bg-white p-5 shadow-sm lg:sticky lg:top-28"><div className="inline-flex rounded-lg bg-red-50 px-3 py-1 text-[10px] font-black text-[#ed1c24]">PRIX DIAGASSIST</div><p className="mt-3 text-3xl font-black text-[#ed1c24]">{formatFcfa(product.price_fcfa)}</p><div className="mt-3 flex items-center gap-2 text-xs text-emerald-600"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500"/>{product.availability||"Disponible"}</div><div className="mt-5 flex items-center justify-between rounded-xl border p-2"><span className="text-xs font-bold">Quantité</span><div className="flex items-center gap-4"><button onClick={()=>setQuantity(Math.max(1,quantity-1))} className="h-9 w-9 rounded-lg bg-[#f5f6f7] font-black">−</button><span className="font-black">{quantity}</span><button onClick={()=>setQuantity(quantity+1)} className="h-9 w-9 rounded-lg bg-[#f5f6f7] font-black">+</button></div></div><button onClick={()=>{cart.add(product,quantity);onGoToCart()}} className="mt-4 w-full rounded-xl bg-[#ed1c24] py-4 text-sm font-black text-white"><ShoppingBag className="mr-2 inline h-4 w-4"/>Ajouter au panier</button><button onClick={()=>setShowOrderForm(true)} className="mt-2 w-full rounded-xl border-2 border-[#ed1c24] py-3.5 text-sm font-black text-[#ed1c24]">Acheter maintenant</button><a href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(`Bonjour DiagAssist, je suis intéressé par le ${product.name}.`)}`} target="_blank" rel="noreferrer" className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#16a34a] py-3.5 text-sm font-black text-white"><MessageCircle className="h-4 w-4"/>Commander sur WhatsApp</a>{showOrderForm&&<form onSubmit={handleOrder} className="mt-4 border-t pt-4"><input required type="tel" placeholder="Téléphone" value={phone} onChange={e=>setPhone(e.target.value)} className="mb-2 w-full rounded-xl border px-3 py-3 text-sm"/><input placeholder="Nom" value={name} onChange={e=>setName(e.target.value)} className="mb-2 w-full rounded-xl border px-3 py-3 text-sm"/><input placeholder="Ville" value={city} onChange={e=>setCity(e.target.value)} className="mb-2 w-full rounded-xl border px-3 py-3 text-sm"/>{error&&<p className="mb-2 text-[10px] font-bold text-[#ed1c24]">{error}</p>}<button disabled={submitting} className="w-full rounded-xl bg-[#07090c] py-3 text-xs font-black text-white">{submitting?"Envoi...":"Valider l'achat"}</button></form>}</aside>
+    </div>
+    <div className="mt-10 grid gap-5 lg:grid-cols-3">{[["Caractéristiques",product.specs],["Compatibilité",product.compatibility],["Contenu de la boîte",product.box_contents]].map(([title,body])=><section key={title as string} className="rounded-2xl border border-[#e4e6e8] bg-white p-5"><h2 className="border-b pb-3 text-sm font-black uppercase">{title as string}</h2><p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[#73777d]">{body||"Informations disponibles sur demande."}</p></section>)}</div>
+    {product.videos?.[0]&&<div className="mt-5 rounded-2xl border p-5"><h2 className="mb-4 text-sm font-black uppercase">Démonstration produit</h2><div className="aspect-video overflow-hidden rounded-xl bg-black"><video src={product.videos[0]} controls className="h-full w-full"/></div></div>}
+  </main>;
 }
-
 function ShopCart({cart,onBack,onCheckout}:{cart:ReturnType<typeof useCart>;onBack:()=>void;onCheckout:()=>void}) {
   return <main className="mx-auto max-w-3xl px-5 py-8 sm:px-8"><button onClick={onBack} className="mb-6 flex items-center gap-2 text-xs font-bold text-[#73777d]"><ArrowLeft className="h-4 w-4"/>Continuer mes achats</button><h1 className="text-3xl font-black text-[#07090c]">Mon panier</h1>
     {cart.items.length===0?<div className="py-20 text-center"><ShoppingBag className="mx-auto mb-3 h-12 w-12 text-[#73777d]"/><p className="font-bold">Votre panier est vide.</p></div>:<><div className="mt-7 space-y-3">{cart.items.map(i=><div key={i.product_id} className="flex items-center gap-4 rounded-2xl border border-[#e4e6e8] bg-white p-3"><div className="h-20 w-20 shrink-0 rounded-xl bg-[#f5f6f7] p-2">{i.photo?<img src={i.photo} alt="" className="h-full w-full object-contain"/>:<Package className="m-auto mt-4 h-8 w-8 text-[#73777d]"/>}</div><div className="min-w-0 flex-1"><p className="truncate text-sm font-black">{i.name}</p><p className="mt-1 text-sm font-black text-[#ed1c24]">{formatFcfa(i.price_fcfa)}</p></div><input type="number" min="1" value={i.quantity} onChange={e=>cart.setQuantity(i.product_id,Number(e.target.value))} className="w-16 rounded-lg border p-2 text-center text-sm"/><button onClick={()=>cart.remove(i.product_id)} className="p-2 text-[#73777d]"><X className="h-4 w-4"/></button></div>)}</div><div className="mt-7 rounded-2xl bg-[#07090c] p-5 text-white"><div className="flex justify-between text-sm text-slate-300"><span>{cart.count} article(s)</span><span>Total produits</span></div><div className="mt-2 flex justify-between text-xl font-black"><span>Total</span><span className="text-[#ed1c24]">{formatFcfa(cart.total)}</span></div><button onClick={onCheckout} className="mt-5 w-full rounded-xl bg-[#ed1c24] py-4 text-sm font-black">Passer commande</button></div></>}</main>;
