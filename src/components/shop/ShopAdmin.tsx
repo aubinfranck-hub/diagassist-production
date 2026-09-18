@@ -417,6 +417,11 @@ function FollowupsTab({ auth }: { auth: any }) {
 
 function CustomersTab({ auth }: { auth: any }) {
   const openWhatsApp = (phone: string, message = "") => {
+    const clean = phone.replace(/\D/g, "");
+    window.open(`https://wa.me/${clean}${message ? `?text=${encodeURIComponent(message)}` : ""}`, "_blank", "noopener,noreferrer");
+  };
+
+  const openWhatsApp = (phone: string, message = "") => {
     const clean = phone.replace(/[^\\d+]/g, "").replace(/^00/, "+");
     window.open(`https://wa.me/${clean.replace("+", "")}${message ? `?text=${encodeURIComponent(message)}` : ""}`, "_blank", "noopener,noreferrer");
   };
@@ -424,6 +429,9 @@ function CustomersTab({ auth }: { auth: any }) {
   const [customers, setCustomers] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<any>(null);
+  const [editing, setEditing] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const load = (q?: string) => shopFetch(auth, `/api/admin/shop/customers${q ? `?search=${encodeURIComponent(q)}` : ""}`).then((d) => d.success && setCustomers(d.customers));
   useEffect(() => { load(); }, [auth]);
@@ -438,9 +446,22 @@ function CustomersTab({ auth }: { auth: any }) {
       <div className="space-y-3">
         <button onClick={() => setSelected(null)} className="text-xs text-slate-400 cursor-pointer">← Retour</button>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-          <div>
-            <p className="text-sm font-bold text-white">{selected.customer.name || selected.customer.phone}</p>
-            <p className="text-xs text-slate-500">{selected.customer.phone} {selected.customer.city && `· ${selected.customer.city}`}</p>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-bold text-white">{selected.customer.name || selected.customer.phone}</p>
+              <p className="text-xs text-slate-500">{selected.customer.phone} {selected.customer.city && `· ${selected.customer.city}`}</p>
+            </div>
+            <button onClick={() => { setEditing(!editing); setNotes(selected.customer.notes || ""); }} className="text-[10px] text-sky-400 font-bold">{editing ? "Fermer" : "Modifier"}</button>
+          </div>
+          {editing && <div className="space-y-2">
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes CRM / préférences / informations commerciales" rows={3}
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white resize-none" />
+            <button disabled={saving} onClick={async () => {
+              setSaving(true);
+              await shopFetch(auth, `/api/admin/shop/customers/${encodeURIComponent(selected.customer.phone)}`, { method: "PATCH", body: JSON.stringify({ notes }) });
+              setSelected({ ...selected, customer: { ...selected.customer, notes } });
+              setSaving(false); setEditing(false);
+            }} className="w-full bg-sky-600 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">{saving ? "Enregistrement..." : "Enregistrer les notes"}</button>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <button onClick={() => callCustomer(selected.customer.phone)} className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white"><PhoneCall className="w-3.5 h-3.5" /> Appeler</button>
@@ -455,6 +476,14 @@ function CustomersTab({ auth }: { auth: any }) {
           <div className="flex justify-between gap-2"><span className="text-xs font-semibold text-white">{o.product_name_snapshot}</span><span className="text-[10px] text-slate-500">{o.status}</span></div>
           <p className="text-[10px] text-slate-500">{o.order_ref || `Commande #${o.id}`} · Qté {o.quantity}{o.unit_price_snapshot ? ` · ${Number(o.unit_price_snapshot).toLocaleString("fr-FR")} FCFA` : ""}</p>
         </div> )}
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase text-slate-500 font-semibold">Relances ({selected.followups.length})</p>
+          <button onClick={() => openWhatsApp(selected.customer.phone, `Bonjour ${selected.customer.name || ""}, ici DiagAssist. Nous revenons vers vous pour faire le point sur votre demande.`)} className="text-[10px] text-emerald-400 font-bold">WhatsApp maintenant</button>
+        </div>
+        {selected.followups.slice(0, 5).map((f: any) => <div key={f.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300">
+          <div className="flex justify-between"><span>{f.channel}</span><span className="text-slate-500">{f.status}</span></div>
+          {f.scheduled_for && <p className="text-[10px] text-slate-500 mt-1">{new Date(f.scheduled_for).toLocaleString("fr-FR")}</p>}
+        </div>)}
         <div className="flex items-center justify-between">
           <p className="text-xs uppercase text-slate-500 font-semibold">Demandes de pièces ({selected.partRequests.length})</p>
           <button onClick={() => openWhatsApp(selected.customer.phone, "Bonjour, ici DiagAssist. Nous faisons le point sur votre demande de pièce.")} className="text-[10px] text-emerald-400 font-bold">Relancer</button>
