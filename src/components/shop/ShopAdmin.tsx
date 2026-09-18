@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard, Package, ShoppingCart, Wrench, Users, Plus, X, Lock,
-  Trash2, Loader2, ChevronRight, Phone,
+  Trash2, Loader2, ChevronRight, Phone, Bell,
 } from "lucide-react";
 
-type Tab = "dashboard" | "products" | "orders" | "parts" | "customers";
+type Tab = "dashboard" | "products" | "orders" | "parts" | "customers" | "followups";
 
 const ORDER_STATUSES = ["nouvelle", "a_contacter", "contactee", "confirmee", "en_traitement", "prete", "livree", "annulee", "client_injoignable"];
 const PART_STATUSES = ["nouvelle", "recherche", "devis_envoye", "devis_accepte", "commandee", "en_transit", "recue", "livree", "annulee"];
@@ -311,6 +311,95 @@ function PartsTab({ auth }: { auth: any }) {
   );
 }
 
+function FollowupsTab({ auth }: { auth: any }) {
+  const [followups, setFollowups] = useState<any[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [message, setMessage] = useState("");
+  const [channel, setChannel] = useState("whatsapp");
+  const [scheduledFor, setScheduledFor] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = () => shopFetch(auth, "/api/admin/shop/followups").then((d) => d.success && setFollowups(d.followups));
+  useEffect(load, [auth]);
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    await shopFetch(auth, "/api/admin/shop/followups", {
+      method: "POST",
+      body: JSON.stringify({ customer_phone: phone.replace(/[\s-]/g, ""), message, channel, scheduled_for: scheduledFor || null }),
+    });
+    setSaving(false);
+    setPhone(""); setMessage(""); setScheduledFor(""); setShowForm(false);
+    load();
+  };
+
+  const markDone = async (id: number, status: string) => {
+    await shopFetch(auth, `/api/admin/shop/followups/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    setFollowups((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
+  };
+
+  return (
+    <div className="space-y-3">
+      {!showForm ? (
+        <button onClick={() => setShowForm(true)} className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer">
+          <Plus className="w-4 h-4" /> Programmer une relance
+        </button>
+      ) : (
+        <form onSubmit={create} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
+          <div className="flex justify-between items-center mb-1">
+            <p className="text-sm font-bold text-white">Nouvelle relance</p>
+            <button type="button" onClick={() => setShowForm(false)} className="text-slate-500 cursor-pointer"><X className="w-4 h-4" /></button>
+          </div>
+          <input required placeholder="Téléphone du client" value={phone} onChange={(e) => setPhone(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+          <textarea placeholder="Message" rows={2} value={message} onChange={(e) => setMessage(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" />
+          <div className="flex gap-2">
+            <select value={channel} onChange={(e) => setChannel(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white">
+              <option value="whatsapp">WhatsApp</option>
+              <option value="appel">Appel</option>
+              <option value="sms">SMS</option>
+            </select>
+            <input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)}
+              className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+          </div>
+          <button type="submit" disabled={saving} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-lg cursor-pointer">
+            {saving ? "Enregistrement..." : "Programmer"}
+          </button>
+        </form>
+      )}
+
+      {followups.length === 0 ? (
+        <p className="text-sm text-slate-500 text-center py-10">Aucune relance programmée.</p>
+      ) : followups.map((f) => (
+        <div key={f.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1.5">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-sm font-semibold text-white">{f.customer_name || f.customer_phone}</p>
+              <p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {f.customer_phone} · {f.channel}</p>
+            </div>
+            <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${
+              f.status === "programmee" ? "bg-amber-900/40 text-amber-400" :
+              f.status === "commande_confirmee" ? "bg-emerald-900/40 text-emerald-400" : "bg-slate-800 text-slate-400"
+            }`}>{f.status}</span>
+          </div>
+          {f.message && <p className="text-xs text-slate-300">{f.message}</p>}
+          {f.scheduled_for && <p className="text-[10px] text-slate-500">Prévu : {new Date(f.scheduled_for).toLocaleString("fr-FR")}</p>}
+          {f.status === "programmee" && (
+            <div className="flex gap-1.5 pt-1">
+              <button onClick={() => markDone(f.id, "envoyee")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Envoyée</button>
+              <button onClick={() => markDone(f.id, "client_joint")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Client joint</button>
+              <button onClick={() => markDone(f.id, "commande_confirmee")} className="text-[10px] font-semibold bg-emerald-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Commande confirmée</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CustomersTab({ auth }: { auth: any }) {
   const [customers, setCustomers] = useState<any[]>([]);
   const [search, setSearch] = useState("");
@@ -371,6 +460,7 @@ export default function ShopAdmin() {
     { id: "orders", label: "Commandes", icon: ShoppingCart },
     { id: "parts", label: "Pièces", icon: Wrench },
     { id: "customers", label: "Clients", icon: Users },
+    { id: "followups", label: "Relances", icon: Bell },
   ];
 
   return (
@@ -386,6 +476,7 @@ export default function ShopAdmin() {
         {tab === "orders" && <OrdersTab auth={auth} />}
         {tab === "parts" && <PartsTab auth={auth} />}
         {tab === "customers" && <CustomersTab auth={auth} />}
+        {tab === "followups" && <FollowupsTab auth={auth} />}
       </div>
 
       <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex">
