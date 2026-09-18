@@ -284,10 +284,10 @@ function ShopProductPage({ slug, onBack, cart, onGoToCart }: { slug: string; onB
       <section className="lg:pt-1">
         <p className="text-[10px] font-black uppercase tracking-[.2em] text-[#ed1c24]">{product.category_name||"Diagnostic automobile"}</p>
         <h1 className="mt-2 text-3xl font-black leading-tight tracking-tight sm:text-4xl">{product.name}</h1>
-        <div className="mt-3 flex flex-wrap items-center gap-2"><span className="rounded-full bg-[#f5f6f7] px-3 py-1 text-[10px] font-black">Équipement professionnel</span>{product.availability&&<span className="text-[10px] font-bold text-[#73777d]">{product.availability}</span>}</div>
+        <div className="mt-3 flex flex-wrap items-center gap-2"><span className="rounded-full bg-[#f5f6f7] px-3 py-1 text-[10px] font-black">Équipement professionnel</span>{product.brand&&<span className="rounded-full bg-red-50 px-3 py-1 text-[10px] font-black text-[#ed1c24]">{product.brand}</span>}{product.model&&<span className="rounded-full border border-[#e4e6e8] px-3 py-1 text-[10px] font-black">{product.model}</span>}{product.availability&&<span className="text-[10px] font-bold text-[#73777d]">{product.availability}</span>}</div>
 
         <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 border-y border-[#e4e6e8] py-5 text-xs">
-          <div><span className="text-[10px] text-[#73777d]">Référence</span><p className="mt-1 font-black">{product.slug}</p></div>
+          <div><span className="text-[10px] text-[#73777d]">Marque</span><p className="mt-1 font-black">{product.brand||"—"}</p></div><div><span className="text-[10px] text-[#73777d]">Modèle</span><p className="mt-1 font-black">{product.model||"À renseigner"}</p></div><div><span className="text-[10px] text-[#73777d]">Référence</span><p className="mt-1 font-black">{product.slug}</p></div>
           <div><span className="text-[10px] text-[#73777d]">Catégorie</span><p className="mt-1 font-black">{product.category_name||"—"}</p></div>
           <div><span className="text-[10px] text-[#73777d]">Garantie</span><p className="mt-1 font-black">{product.warranty||"Selon produit"}</p></div>
           <div><span className="text-[10px] text-[#73777d]">Livraison</span><p className="mt-1 font-black">Côte d'Ivoire & Afrique</p></div>
