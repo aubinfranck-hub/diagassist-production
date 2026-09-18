@@ -231,7 +231,10 @@ async function initDatabase(): Promise<void> {
       is_active BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS brand TEXT;
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS model TEXT;
     CREATE INDEX IF NOT EXISTS idx_shop_products_category ON shop_products (category_id);
+    CREATE INDEX IF NOT EXISTS idx_shop_products_brand_model ON shop_products (brand, model);
     -- Clients CRM: identifies par numero de telephone
     CREATE TABLE IF NOT EXISTS shop_customers (
       phone TEXT PRIMARY KEY,
@@ -2314,13 +2317,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   app.post("/api/admin/shop/products", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { category_id, name, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos } = req.body;
+    const { category_id, name, brand, model, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos } = req.body;
     if (!name) return res.status(400).json({ success: false, message: "Nom requis." });
     const slug = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") + "-" + Date.now().toString(36);
     const result = await dbPool.query(
-      `INSERT INTO shop_products (category_id, name, slug, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-      [category_id || null, name, slug, price_fcfa || null, description || null, specs || null, compatibility || null,
+      `INSERT INTO shop_products (category_id, name, slug, brand, model, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      [category_id || null, name, slug, brand || null, model || null, price_fcfa || null, description || null, specs || null, compatibility || null,
        box_contents || null, warranty || null, availability || "disponible", JSON.stringify(photos || []), JSON.stringify(videos || [])]
     );
     res.json({ success: true, id: result.rows[0].id, slug });
@@ -2329,7 +2332,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.patch("/api/admin/shop/products/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const fields = req.body;
-    const allowed = ["category_id", "name", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active"];
+    const allowed = ["category_id", "name", "brand", "model", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active"];
     const jsonFields = ["photos", "videos"];
     const sets: string[] = [];
     const values: any[] = [];
