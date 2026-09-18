@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from "react";
-import { ShoppingBag, Phone, ArrowLeft, Loader2, CheckCircle2, Package, Wrench, Video as VideoIcon, Search, ShieldCheck, Truck, Headphones, X } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft, CheckCircle2, ChevronRight, Headphones, Menu, Package,
+  Phone, Search, ShieldCheck, ShoppingBag, Truck, X, Wrench, Zap,
+  Star, MessageCircle, SlidersHorizontal, MapPin, CreditCard, Clock
+} from "lucide-react";
 import ShopAdmin from "./ShopAdmin";
 
-// Charte graphique DiagAssist (noir / rouge / blanc)
 const DIAG = {
   black: "#07090c",
   dark: "#10141a",
@@ -13,38 +16,14 @@ const DIAG = {
   border: "#e4e6e8",
 };
 
+const WHATSAPP = "2250141116026";
+
 interface CartItem {
   product_id: number;
   name: string;
   price_fcfa: number | null;
   photo: string | null;
   quantity: number;
-}
-
-// Panier persistant (localStorage) — partagé entre toutes les pages de la boutique sans
-// backend dédié tant que la commande n'est pas validée.
-function useCart() {
-  const [items, setItems] = useState<CartItem[]>(() => {
-    try { return JSON.parse(localStorage.getItem("shop_cart") || "[]"); } catch { return []; }
-  });
-
-  useEffect(() => { localStorage.setItem("shop_cart", JSON.stringify(items)); }, [items]);
-
-  const add = (p: ShopProduct, quantity = 1) => {
-    setItems((prev) => {
-      const existing = prev.find((i) => i.product_id === p.id);
-      if (existing) return prev.map((i) => (i.product_id === p.id ? { ...i, quantity: i.quantity + quantity } : i));
-      return [...prev, { product_id: p.id, name: p.name, price_fcfa: p.price_fcfa, photo: p.photos?.[0] || null, quantity }];
-    });
-  };
-  const remove = (productId: number) => setItems((prev) => prev.filter((i) => i.product_id !== productId));
-  const setQuantity = (productId: number, quantity: number) =>
-    setItems((prev) => prev.map((i) => (i.product_id === productId ? { ...i, quantity: Math.max(1, quantity) } : i)));
-  const clear = () => setItems([]);
-  const count = items.reduce((sum, i) => sum + i.quantity, 0);
-  const total = items.reduce((sum, i) => sum + (i.price_fcfa || 0) * i.quantity, 0);
-
-  return { items, add, remove, setQuantity, clear, count, total };
 }
 
 interface ShopProduct {
@@ -71,671 +50,285 @@ interface ShopCategory {
   type: string;
 }
 
-function formatFcfa(n: number | null): string {
-  if (n == null) return "Prix sur demande";
-  return n.toLocaleString("fr-FR") + " FCFA";
+function formatFcfa(n: number | null) {
+  return n == null ? "Prix sur demande" : n.toLocaleString("fr-FR") + " FCFA";
 }
 
-// --- Écran catalogue ---
-function ShopCatalog({ onSelectProduct }: { onSelectProduct: (slug: string) => void }) {
+function useCart() {
+  const [items, setItems] = useState<CartItem[]>(() => {
+    try { return JSON.parse(localStorage.getItem("shop_cart") || "[]"); } catch { return []; }
+  });
+  useEffect(() => localStorage.setItem("shop_cart", JSON.stringify(items)), [items]);
+  const add = (p: ShopProduct, quantity = 1) => setItems(prev => {
+    const found = prev.find(i => i.product_id === p.id);
+    return found
+      ? prev.map(i => i.product_id === p.id ? { ...i, quantity: i.quantity + quantity } : i)
+      : [...prev, { product_id: p.id, name: p.name, price_fcfa: p.price_fcfa, photo: p.photos?.[0] || null, quantity }];
+  });
+  const remove = (id: number) => setItems(prev => prev.filter(i => i.product_id !== id));
+  const setQuantity = (id: number, quantity: number) => setItems(prev => prev.map(i => i.product_id === id ? { ...i, quantity: Math.max(1, quantity) } : i));
+  const clear = () => setItems([]);
+  const count = items.reduce((s, i) => s + i.quantity, 0);
+  const total = items.reduce((s, i) => s + (i.price_fcfa || 0) * i.quantity, 0);
+  return { items, add, remove, setQuantity, clear, count, total };
+}
+
+function WhatsAppButton({ product }: { product?: ShopProduct | null }) {
+  const message = product
+    ? `Bonjour DiagAssist, je suis intéressé par le ${product.name}. Pouvez-vous me renseigner ?`
+    : "Bonjour DiagAssist, je souhaite être renseigné sur vos produits.";
+  return (
+    <a
+      href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(message)}`}
+      target="_blank" rel="noreferrer"
+      className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full bg-[#16a34a] px-4 py-3 text-white shadow-xl hover:scale-105 transition-transform"
+      aria-label="Contacter DiagAssist sur WhatsApp"
+    >
+      <MessageCircle className="w-5 h-5" />
+      <span className="hidden sm:inline text-xs font-black">WhatsApp</span>
+    </a>
+  );
+}
+
+function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: string) => void; onGoCart: () => void }) {
   const [products, setProducts] = useState<ShopProduct[]>([]);
   const [categories, setCategories] = useState<ShopCategory[]>([]);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/shop/categories").then((r) => r.json()).then((d) => d.success && setCategories(d.categories));
+    fetch("/api/shop/categories").then(r => r.json()).then(d => d.success && setCategories(d.categories || [])).catch(() => {});
+    fetch("/api/shop/products").then(r => r.json()).then(d => d.success && setProducts(d.products || [])).finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    const url = activeCategory ? `/api/shop/products?category=${activeCategory}` : "/api/shop/products";
-    fetch(url).then((r) => r.json()).then((d) => {
-      if (d.success) setProducts(d.products);
-      setLoading(false);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return products.filter(p => {
+      const categoryOk = !activeCategory || p.category_slug === activeCategory;
+      const searchOk = !q || [p.name, p.category_name, p.description, p.specs, p.compatibility].filter(Boolean).join(" ").toLowerCase().includes(q);
+      return categoryOk && searchOk;
     });
-  }, [activeCategory]);
+  }, [products, activeCategory, search]);
+
+  const popularCategories = categories.slice(0, 8);
 
   return (
-    <div>
-      {/* Hero */}
-      <div style={{ background: `linear-gradient(135deg, ${DIAG.black}, ${DIAG.dark})` }} className="px-5 py-10 sm:py-14">
-        <div className="max-w-5xl mx-auto">
-          <h1 className="text-2xl sm:text-4xl font-black text-white uppercase leading-tight">
-            La référence du <span style={{ color: DIAG.red }}>diagnostic automobile</span>
-          </h1>
-          <p className="text-sm text-gray-300 mt-3 max-w-md">Scanners, outils de programmation, accessoires et formation.</p>
-          <button
-            onClick={() => document.getElementById("shop-products")?.scrollIntoView({ behavior: "smooth" })}
-            style={{ background: DIAG.red }}
-            className="mt-5 text-white text-sm font-bold px-5 py-2.5 rounded-lg cursor-pointer hover:opacity-90"
-          >
-            Voir nos produits
-          </button>
+    <main>
+      <section className="relative overflow-hidden bg-[#07090c] text-white">
+        <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "radial-gradient(circle at 20% 20%, #ed1c24 0, transparent 28%), radial-gradient(circle at 85% 70%, #334155 0, transparent 30%)" }} />
+        <div className="relative mx-auto max-w-7xl px-5 py-16 sm:px-8 sm:py-24">
+          <div className="max-w-3xl">
+            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">
+              <Zap className="w-3.5 h-3.5 text-[#ed1c24]" /> Solutions professionnelles
+            </div>
+            <h1 className="text-4xl font-black uppercase leading-[0.95] tracking-tight sm:text-6xl">
+              La référence du <span className="text-[#ed1c24]">diagnostic automobile</span>
+            </h1>
+            <p className="mt-5 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
+              Scanners, programmation, J2534, outils atelier, accessoires et formation pour les professionnels de l'automobile.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <button onClick={() => document.getElementById("shop-products")?.scrollIntoView({ behavior: "smooth" })} className="rounded-xl bg-[#ed1c24] px-6 py-3 text-sm font-black hover:bg-[#b90f16] transition-colors">
+                Voir les produits
+              </button>
+              <button onClick={() => document.getElementById("shop-categories")?.scrollIntoView({ behavior: "smooth" })} className="rounded-xl border border-white/15 bg-white/5 px-6 py-3 text-sm font-bold hover:bg-white/10 transition-colors">
+                Explorer les catégories
+              </button>
+            </div>
+            <div className="mt-10 grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-4">
+              {["Diagnostic multimarque", "Programmation & codage", "J2534 / Pass-Thru", "Support technique"].map((x, i) => (
+                <div key={x} className="border-l border-[#ed1c24] pl-3">
+                  <p className="text-xs font-bold text-slate-200">{x}</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* Bandeau de confiance */}
-      <div style={{ borderColor: DIAG.border }} className="border-b bg-white">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex flex-wrap gap-4 justify-center sm:justify-between text-xs font-semibold" style={{ color: DIAG.gray }}>
-          <span className="flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" style={{ color: DIAG.red }} /> Paiement sécurisé</span>
-          <span className="flex items-center gap-1.5"><Truck className="w-3.5 h-3.5" style={{ color: DIAG.red }} /> Livraison Côte d'Ivoire & Afrique</span>
-          <span className="flex items-center gap-1.5"><Headphones className="w-3.5 h-3.5" style={{ color: DIAG.red }} /> Support technique</span>
+      <section className="border-b bg-white">
+        <div className="mx-auto grid max-w-7xl grid-cols-2 divide-x px-5 py-5 sm:grid-cols-4">
+          {[
+            [ShieldCheck, "Garantie", "Produits sélectionnés"],
+            [Truck, "Livraison", "Côte d'Ivoire & Afrique"],
+            [Headphones, "Support", "Conseils techniques"],
+            [CreditCard, "Commande", "Processus sécurisé"],
+          ].map(([Icon, title, text]) => (
+            <div key={title as string} className="flex items-center gap-3 px-3 py-2 first:pl-0">
+              {React.createElement(Icon as any, { className: "w-5 h-5 text-[#ed1c24] shrink-0" })}
+              <div><p className="text-xs font-black text-[#07090c]">{title as string}</p><p className="hidden text-[10px] text-[#73777d] sm:block">{text as string}</p></div>
+            </div>
+          ))}
         </div>
-      </div>
+      </section>
 
-      <div id="shop-products" className="max-w-5xl mx-auto px-4 py-8">
-        <h2 className="text-lg font-extrabold uppercase mb-4" style={{ color: DIAG.black }}>Produits</h2>
+      <section id="shop-categories" className="mx-auto max-w-7xl px-5 py-10 sm:px-8">
+        <div className="mb-5 flex items-end justify-between">
+          <div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">Catalogue</p><h2 className="mt-1 text-2xl font-black uppercase text-[#07090c]">Trouvez votre équipement</h2></div>
+          <button onClick={onGoCart} className="hidden items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold sm:flex"><ShoppingBag className="w-4 h-4" /> Panier</button>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-2">
+          <button onClick={() => setActiveCategory(null)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${!activeCategory ? "bg-[#ed1c24] text-white" : "bg-[#f5f6f7] text-[#73777d]"}`}>Tous</button>
+          {popularCategories.map(c => <button key={c.id} onClick={() => setActiveCategory(c.slug)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${activeCategory === c.slug ? "bg-[#ed1c24] text-white" : "bg-[#f5f6f7] text-[#73777d]"}`}>{c.name}</button>)}
+        </div>
+      </section>
 
-        {categories.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto pb-2 mb-5">
-            <button
-              onClick={() => setActiveCategory(null)}
-              style={!activeCategory ? { background: DIAG.red, color: "white" } : { background: DIAG.light, color: DIAG.gray }}
-              className="shrink-0 text-xs font-bold px-3.5 py-2 rounded-full cursor-pointer"
-            >
-              Tous les produits
+      <section id="shop-products" className="mx-auto max-w-7xl px-5 pb-16 sm:px-8">
+        <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="text-xl font-black uppercase text-[#07090c]">Produits disponibles</h2><p className="mt-1 text-xs text-[#73777d]">{filtered.length} produit(s)</p></div>
+          <div className="relative w-full sm:max-w-md">
+            <Search className="absolute left-3 top-1/2 w-4 h-4 -translate-y-1/2 text-[#73777d]" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un scanner, une marque, une référence..." className="w-full rounded-xl border border-[#e4e6e8] bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-[#ed1c24]" />
+          </div>
+        </div>
+        {loading ? <div className="py-24 text-center text-sm text-[#73777d]">Chargement du catalogue...</div> :
+        filtered.length === 0 ? <div className="rounded-2xl border border-dashed border-[#e4e6e8] py-24 text-center"><Package className="mx-auto mb-3 h-10 w-10 text-[#73777d]" /><p className="text-sm font-bold text-[#07090c]">Aucun produit trouvé</p><p className="mt-1 text-xs text-[#73777d]">Essayez une autre recherche ou catégorie.</p></div> :
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          {filtered.map(p => (
+            <button key={p.id} onClick={() => onSelectProduct(p.slug)} className="group overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white text-left shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl">
+              <div className="relative aspect-square overflow-hidden bg-[#f5f6f7]">
+                {p.photos?.[0] ? <img src={p.photos[0]} alt={p.name} className="h-full w-full object-contain p-4 transition-transform duration-500 group-hover:scale-105" /> : <Package className="mx-auto h-12 w-12 text-[#73777d]" />}
+                {p.availability && <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2 py-1 text-[9px] font-black uppercase text-[#07090c] shadow">{p.availability}</span>}
+              </div>
+              <div className="p-4">
+                <p className="mb-1 text-[9px] font-black uppercase tracking-wider text-[#73777d]">{p.category_name || "Diagnostic automobile"}</p>
+                <p className="min-h-[40px] text-sm font-black leading-5 text-[#07090c]">{p.name}</p>
+                <div className="mt-3 flex items-end justify-between gap-2"><p className="text-sm font-black text-[#ed1c24]">{formatFcfa(p.price_fcfa)}</p><span className="rounded-lg bg-[#07090c] p-2 text-white"><ChevronRight className="h-4 w-4" /></span></div>
+              </div>
             </button>
-            {categories.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setActiveCategory(c.slug)}
-                style={activeCategory === c.slug ? { background: DIAG.red, color: "white" } : { background: DIAG.light, color: DIAG.gray }}
-                className="shrink-0 text-xs font-bold px-3.5 py-2 rounded-full cursor-pointer"
-              >
-                {c.name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {loading ? (
-          <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin" style={{ color: DIAG.gray }} /></div>
-        ) : products.length === 0 ? (
-          <div className="text-center py-20 text-sm" style={{ color: DIAG.gray }}>Aucun produit disponible pour le moment.</div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            {products.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => onSelectProduct(p.slug)}
-                style={{ borderColor: DIAG.border }}
-                className="bg-white border rounded-2xl overflow-hidden text-left cursor-pointer hover:shadow-lg transition-shadow"
-              >
-                <div style={{ background: DIAG.light }} className="aspect-square flex items-center justify-center overflow-hidden">
-                  {p.photos?.[0] ? (
-                    <img src={p.photos[0]} alt={p.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <Package className="w-10 h-10" style={{ color: DIAG.gray }} />
-                  )}
-                </div>
-                <div className="p-3">
-                  <p className="text-[11px] uppercase font-bold mb-0.5" style={{ color: DIAG.gray }}>{p.category_name || "Produit"}</p>
-                  <p className="text-sm font-bold leading-tight line-clamp-2" style={{ color: DIAG.black }}>{p.name}</p>
-                  <p className="text-sm font-black mt-1.5" style={{ color: DIAG.red }}>{formatFcfa(p.price_fcfa)}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+          ))}
+        </div>}
+      </section>
+    </main>
   );
 }
 
-// --- Écran fiche produit + commande ---
 function ShopProductPage({ slug, onBack, cart, onGoToCart }: { slug: string; onBack: () => void; cart: ReturnType<typeof useCart>; onGoToCart: () => void }) {
   const [product, setProduct] = useState<ShopProduct | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showOrderForm, setShowOrderForm] = useState(false);
-  const [phone, setPhone] = useState("");
-  const [name, setName] = useState("");
-  const [city, setCity] = useState("");
   const [quantity, setQuantity] = useState(1);
-  const [submitting, setSubmitting] = useState(false);
-  const [orderDone, setOrderDone] = useState(false);
-  const [orderError, setOrderError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setLoading(true);
-    fetch(`/api/shop/products/${slug}`).then((r) => r.json()).then((d) => {
-      if (d.success) setProduct(d.product);
-      setLoading(false);
-    });
-  }, [slug]);
+  const [showOrderForm, setShowOrderForm] = useState(false);
+  const [phone, setPhone] = useState(""); const [name, setName] = useState(""); const [city, setCity] = useState("");
+  const [submitting, setSubmitting] = useState(false); const [orderDone, setOrderDone] = useState(false); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setLoading(true); fetch(`/api/shop/products/${slug}`).then(r => r.json()).then(d => d.success && setProduct(d.product)).finally(() => setLoading(false)); }, [slug]);
 
   const handleOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!product) return;
-    setSubmitting(true);
-    setOrderError(null);
+    e.preventDefault(); if (!product) return; setSubmitting(true); setError(null);
     try {
-      const res = await fetch("/api/shop/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, name, city, product_id: product.id, quantity }),
-      });
-      const data = await res.json();
-      if (data.success) setOrderDone(true);
-      else setOrderError(data.message || "Échec de la commande.");
-    } catch {
-      setOrderError("Erreur réseau. Vérifiez votre connexion et réessayez.");
-    } finally {
-      setSubmitting(false);
-    }
+      const res = await fetch("/api/shop/orders", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({phone,name,city,product_id:product.id,quantity}) });
+      const data = await res.json(); if (data.success) setOrderDone(true); else setError(data.message || "Échec de la commande.");
+    } catch { setError("Erreur réseau. Vérifiez votre connexion et réessayez."); } finally { setSubmitting(false); }
   };
 
-  if (loading) return <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 text-[#73777d] animate-spin" /></div>;
-  if (!product) return <div className="text-center py-20 text-[#73777d] text-sm">Produit introuvable.</div>;
-
-  if (orderDone) {
-    return (
-      <div className="max-w-md mx-auto px-4 py-16 text-center">
-        <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto mb-4" />
-        <h2 className="text-xl font-bold text-[#07090c] mb-2">Commande enregistrée</h2>
-        <p className="text-sm text-[#73777d] mb-6">Notre équipe vous contactera bientôt par téléphone ou WhatsApp pour confirmer votre commande.</p>
-        <button onClick={onBack} className="bg-[#f5f6f7] hover:bg-[#e4e6e8] text-[#07090c] text-sm font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
-          Retour au catalogue
-        </button>
-      </div>
-    );
-  }
+  if (loading) return <div className="py-24 text-center text-sm text-[#73777d]">Chargement du produit...</div>;
+  if (!product) return <div className="py-24 text-center text-sm text-[#73777d]">Produit introuvable.</div>;
+  if (orderDone) return <div className="mx-auto max-w-md px-5 py-24 text-center"><CheckCircle2 className="mx-auto mb-4 h-16 w-16 text-emerald-500" /><h2 className="text-2xl font-black text-[#07090c]">Commande enregistrée</h2><p className="mt-3 text-sm text-[#73777d]">Notre équipe vous contactera par téléphone ou WhatsApp pour confirmer votre commande.</p><button onClick={onBack} className="mt-7 rounded-xl bg-[#07090c] px-6 py-3 text-sm font-bold text-white">Retour au catalogue</button></div>;
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-[#73777d] mb-4 cursor-pointer">
-        <ArrowLeft className="w-4 h-4" /> Retour
-      </button>
-
-      {product.photos?.length > 0 && (
-        <div className="aspect-video bg-slate-900 rounded-2xl overflow-hidden mb-4">
-          <img src={product.photos[0]} alt={product.name} className="w-full h-full object-cover" />
-        </div>
-      )}
-
-      <p className="text-xs text-[#ed1c24] font-semibold uppercase tracking-wide mb-1">{product.category_name}</p>
-      <h1 className="text-xl font-bold text-[#07090c] mb-1">{product.name}</h1>
-      <p className="text-lg font-bold text-[#ed1c24] mb-4">{formatFcfa(product.price_fcfa)}</p>
-
-      {product.description && <p className="text-sm text-[#10141a] mb-4 whitespace-pre-wrap">{product.description}</p>}
-
-      {product.videos?.length > 0 && (
-        <div className="mb-5">
-          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-2 flex items-center gap-1.5">
-            <VideoIcon className="w-3.5 h-3.5" /> Vidéo de démonstration
-          </p>
-          <div className="aspect-video bg-black rounded-xl overflow-hidden">
-            <video src={product.videos[0]} controls className="w-full h-full" />
-          </div>
-        </div>
-      )}
-
-      {product.specs && (
-        <div className="mb-4">
-          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-1.5">Caractéristiques</p>
-          <p className="text-sm text-[#10141a] whitespace-pre-wrap">{product.specs}</p>
-        </div>
-      )}
-      {product.compatibility && (
-        <div className="mb-4">
-          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-1.5">Compatibilité</p>
-          <p className="text-sm text-[#10141a] whitespace-pre-wrap">{product.compatibility}</p>
-        </div>
-      )}
-      {product.box_contents && (
-        <div className="mb-4">
-          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-1.5">Contenu de la boîte</p>
-          <p className="text-sm text-[#10141a] whitespace-pre-wrap">{product.box_contents}</p>
-        </div>
-      )}
-      {product.warranty && (
-        <div className="mb-6">
-          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-1.5">Garantie</p>
-          <p className="text-sm text-[#10141a]">{product.warranty}</p>
-        </div>
-      )}
-
-      {!showOrderForm ? (
-        <div className="space-y-2.5">
-          <button
-            onClick={() => { cart.add(product); onGoToCart(); }}
-            className="w-full bg-[#07090c] hover:opacity-90 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer flex items-center justify-center gap-2"
-          >
-            <ShoppingBag className="w-4 h-4" /> Ajouter au panier
-          </button>
-          <button
-            onClick={() => setShowOrderForm(true)}
-            className="w-full bg-[#ed1c24] hover:bg-[#b90f16] text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer flex items-center justify-center gap-2"
-          >
-            Commander directement
-          </button>
-        </div>
-      ) : (
-        <form onSubmit={handleOrder} className="bg-white border rounded-2xl p-4 space-y-3">
-          <p className="text-sm font-semibold text-[#07090c] flex items-center gap-1.5">
-            <Phone className="w-4 h-4" /> Vos coordonnées
-          </p>
-          <input
-            type="tel" required placeholder="Numéro de téléphone" value={phone} onChange={(e) => setPhone(e.target.value)}
-            className="w-full bg-[#f5f6f7] border border-[#e4e6e8] rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]"
-          />
-          <input
-            type="text" placeholder="Nom (optionnel)" value={name} onChange={(e) => setName(e.target.value)}
-            className="w-full bg-[#f5f6f7] border border-[#e4e6e8] rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]"
-          />
-          <input
-            type="text" placeholder="Ville (optionnel)" value={city} onChange={(e) => setCity(e.target.value)}
-            className="w-full bg-[#f5f6f7] border border-[#e4e6e8] rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]"
-          />
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-[#73777d]">Quantité</span>
-            <input
-              type="number" min={1} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))}
-              className="w-20 bg-[#f5f6f7] border border-[#e4e6e8] rounded-xl px-3 py-2 text-sm text-[#07090c]"
-            />
-          </div>
-          {orderError && <p className="text-xs text-[#ed1c24]">{orderError}</p>}
-          <button type="submit" disabled={submitting}
-            className="w-full bg-[#ed1c24] hover:bg-[#b90f16] disabled:opacity-50 text-white text-sm font-bold py-3 rounded-xl cursor-pointer">
-            {submitting ? "Envoi..." : "Valider la commande"}
-          </button>
-          <p className="text-[10px] text-[#73777d] text-center">
-            Aucun paiement en ligne — notre équipe vous contacte pour confirmer prix, disponibilité et livraison.
-          </p>
-        </form>
-      )}
-    </div>
-  );
-}
-
-// --- Écran demande de pièce à l'étranger ---
-// --- Écran panier ---
-function ShopCart({ cart, onBack, onCheckout }: { cart: ReturnType<typeof useCart>; onBack: () => void; onCheckout: () => void }) {
-  return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-4 cursor-pointer" style={{ color: DIAG.gray }}>
-        <ArrowLeft className="w-4 h-4" /> Continuer mes achats
-      </button>
-      <h1 className="text-xl font-bold mb-4" style={{ color: DIAG.black }}>Mon panier</h1>
-
-      {cart.items.length === 0 ? (
-        <div className="text-center py-16 text-sm" style={{ color: DIAG.gray }}>Votre panier est vide.</div>
-      ) : (
-        <>
-          <div className="space-y-2.5 mb-5">
-            {cart.items.map((item) => (
-              <div key={item.product_id} style={{ borderColor: DIAG.border }} className="bg-white border rounded-xl p-3 flex items-center gap-3">
-                <div style={{ background: DIAG.light }} className="w-14 h-14 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
-                  {item.photo ? <img src={item.photo} className="w-full h-full object-cover" /> : <Package className="w-6 h-6" style={{ color: DIAG.gray }} />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate" style={{ color: DIAG.black }}>{item.name}</p>
-                  <p className="text-xs font-bold" style={{ color: DIAG.red }}>{formatFcfa(item.price_fcfa)}</p>
-                </div>
-                <input
-                  type="number" min={1} value={item.quantity}
-                  onChange={(e) => cart.setQuantity(item.product_id, Number(e.target.value))}
-                  className="w-14 border rounded-lg px-2 py-1.5 text-sm text-center"
-                  style={{ borderColor: DIAG.border, color: DIAG.black }}
-                />
-                <button onClick={() => cart.remove(item.product_id)} className="p-1.5 cursor-pointer" style={{ color: DIAG.gray }}>
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ borderColor: DIAG.border }} className="border-t pt-4 flex items-center justify-between mb-4">
-            <span className="text-sm font-semibold" style={{ color: DIAG.black }}>Total</span>
-            <span className="text-lg font-black" style={{ color: DIAG.red }}>{formatFcfa(cart.total)}</span>
-          </div>
-
-          <button
-            onClick={onCheckout}
-            className="w-full text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer"
-            style={{ background: DIAG.red }}
-          >
-            Passer commande
-          </button>
-        </>
-      )}
-    </div>
-  );
-}
-
-// --- Écran checkout (informations client + livraison) ---
-function ShopCheckout({ cart, onBack, onDone }: { cart: ReturnType<typeof useCart>; onBack: () => void; onDone: (ref: string) => void }) {
-  const [phone, setPhone] = useState("");
-  const [name, setName] = useState("");
-  const [city, setCity] = useState("");
-  const [address, setAddress] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/shop/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone, name, city, address,
-          items: cart.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
-        }),
-      });
-      const data = await res.json();
-      if (data.success) { cart.clear(); onDone(data.order_ref); }
-      else setError(data.message || "Échec de la commande.");
-    } catch {
-      setError("Erreur réseau. Vérifiez votre connexion et réessayez.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="max-w-lg mx-auto px-4 py-6">
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-4 cursor-pointer" style={{ color: DIAG.gray }}>
-        <ArrowLeft className="w-4 h-4" /> Retour au panier
-      </button>
-      <h1 className="text-xl font-bold mb-1" style={{ color: DIAG.black }}>Finaliser la commande</h1>
-      <p className="text-sm mb-5" style={{ color: DIAG.gray }}>{cart.count} article(s) · {formatFcfa(cart.total)}</p>
-
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <input required type="tel" placeholder="Numéro de téléphone" value={phone} onChange={(e) => setPhone(e.target.value)}
-          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
-        <input placeholder="Nom" value={name} onChange={(e) => setName(e.target.value)}
-          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
-        <input placeholder="Ville" value={city} onChange={(e) => setCity(e.target.value)}
-          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
-        <textarea rows={2} placeholder="Adresse / instructions de livraison (optionnel)" value={address} onChange={(e) => setAddress(e.target.value)}
-          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm resize-none" />
-
-        {error && <p className="text-xs" style={{ color: DIAG.red }}>{error}</p>}
-        <button type="submit" disabled={submitting}
-          className="w-full text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer disabled:opacity-50"
-          style={{ background: DIAG.red }}>
-          {submitting ? "Envoi..." : "Confirmer la commande"}
-        </button>
-        <p className="text-[10px] text-center" style={{ color: DIAG.gray }}>
-          Aucun paiement en ligne — notre équipe vous contacte pour confirmer prix, disponibilité et livraison.
-        </p>
-      </form>
-    </div>
-  );
-}
-
-// --- Écran confirmation de commande ---
-function ShopOrderConfirmation({ orderRef, onBackToCatalog, onTrack }: { orderRef: string; onBackToCatalog: () => void; onTrack: () => void }) {
-  return (
-    <div className="max-w-md mx-auto px-4 py-16 text-center">
-      <CheckCircle2 className="w-14 h-14 mx-auto mb-4" style={{ color: "#16a34a" }} />
-      <h2 className="text-xl font-bold mb-2" style={{ color: DIAG.black }}>Commande enregistrée</h2>
-      <p className="text-sm mb-1" style={{ color: DIAG.gray }}>Référence :</p>
-      <p className="text-lg font-black mb-6" style={{ color: DIAG.red }}>{orderRef}</p>
-      <p className="text-sm mb-6" style={{ color: DIAG.gray }}>Notre équipe vous contactera bientôt par téléphone ou WhatsApp pour confirmer votre commande.</p>
-      <div className="flex flex-col gap-2">
-        <button onClick={onTrack} style={{ background: DIAG.red }} className="text-white text-sm font-bold px-5 py-2.5 rounded-xl cursor-pointer">
-          Suivre ma commande
-        </button>
-        <button onClick={onBackToCatalog} style={{ background: DIAG.light, color: DIAG.black }} className="text-sm font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
-          Retour au catalogue
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// --- Écran suivi de commande public ---
-function ShopTracking({ onBack }: { onBack: () => void }) {
-  const [phone, setPhone] = useState("");
-  const [ref, setRef] = useState("");
-  const [orders, setOrders] = useState<any[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    setOrders(null);
-    try {
-      const params = new URLSearchParams({ phone });
-      if (ref) params.set("ref", ref);
-      const res = await fetch(`/api/shop/track?${params}`);
-      const data = await res.json();
-      if (data.success) setOrders(data.orders);
-      else setError(data.message || "Aucune commande trouvée.");
-    } catch {
-      setError("Erreur réseau. Vérifiez votre connexion et réessayez.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const STEPS = ["nouvelle", "confirmee", "en_traitement", "prete", "livree"];
-  const stepLabel: Record<string, string> = {
-    nouvelle: "Commande reçue", a_contacter: "Commande reçue", contactee: "Commande reçue",
-    confirmee: "Confirmée", en_traitement: "Préparation", prete: "Prête", livree: "Livrée",
-    annulee: "Annulée", client_injoignable: "Client injoignable",
-  };
-
-  return (
-    <div className="max-w-lg mx-auto px-4 py-6">
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-4 cursor-pointer" style={{ color: DIAG.gray }}>
-        <ArrowLeft className="w-4 h-4" /> Retour
-      </button>
-      <h1 className="text-xl font-bold mb-4" style={{ color: DIAG.black }}>Suivi de commande</h1>
-
-      <form onSubmit={handleSearch} className="space-y-3 mb-6">
-        <input required type="tel" placeholder="Votre numéro de téléphone" value={phone} onChange={(e) => setPhone(e.target.value)}
-          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
-        <input placeholder="Référence de commande (optionnel, ex: DA-2026-000001)" value={ref} onChange={(e) => setRef(e.target.value)}
-          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
-        <button type="submit" disabled={loading} style={{ background: DIAG.red }} className="w-full text-white text-sm font-bold py-3 rounded-xl cursor-pointer disabled:opacity-50">
-          {loading ? "Recherche..." : "Rechercher"}
-        </button>
-      </form>
-
-      {error && <p className="text-sm text-center" style={{ color: DIAG.red }}>{error}</p>}
-
-      {orders && orders.map((o, idx) => (
-        <div key={idx} style={{ borderColor: DIAG.border }} className="bg-white border rounded-xl p-4 mb-3">
-          {o.order_ref && <p className="text-xs font-bold mb-2" style={{ color: DIAG.gray }}>Réf. {o.order_ref}</p>}
-          <div className="flex items-center gap-1 mb-3">
-            {STEPS.map((s, i) => {
-              const currentIdx = STEPS.indexOf(o.status);
-              const reached = currentIdx >= 0 && i <= currentIdx;
-              return (
-                <React.Fragment key={s}>
-                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: reached ? DIAG.red : DIAG.border }} />
-                  {i < STEPS.length - 1 && <div className="flex-1 h-0.5" style={{ background: reached ? DIAG.red : DIAG.border }} />}
-                </React.Fragment>
-              );
-            })}
-          </div>
-          <p className="text-sm font-bold mb-2" style={{ color: DIAG.black }}>{stepLabel[o.status] || o.status}</p>
-          {o.items.map((it: any, i: number) => (
-            <p key={i} className="text-xs" style={{ color: DIAG.gray }}>{it.quantity}× {it.product_name}</p>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ShopPartRequest({ onBack }: { onBack: () => void }) {
-  const [phone, setPhone] = useState("");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [extraInfo, setExtraInfo] = useState("");
-  const [carteGrise, setCarteGrise] = useState<string | null>(null);
-  const [partPhoto, setPartPhoto] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const readAsBase64 = (file: File, cb: (b64: string) => void) => {
-    const reader = new FileReader();
-    reader.onload = () => cb(reader.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/shop/part-requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, name, part_description: description, extra_info: extraInfo, carte_grise_base64: carteGrise, part_photo_base64: partPhoto }),
-      });
-      const data = await res.json();
-      if (data.success) setDone(true);
-      else setError(data.message || "Échec de l'envoi.");
-    } catch {
-      setError("Erreur réseau. Vérifiez votre connexion et réessayez.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  if (done) {
-    return (
-      <div className="max-w-md mx-auto px-4 py-16 text-center">
-        <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto mb-4" />
-        <h2 className="text-xl font-bold text-[#07090c] mb-2">Demande envoyée</h2>
-        <p className="text-sm text-[#73777d] mb-6">Nous recherchons votre pièce et vous enverrons une cotation sous environ 15 jours.</p>
-        <button onClick={onBack} className="bg-[#f5f6f7] hover:bg-[#e4e6e8] text-[#07090c] text-sm font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
-          Retour au catalogue
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-lg mx-auto px-4 py-6">
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-[#73777d] mb-4 cursor-pointer">
-        <ArrowLeft className="w-4 h-4" /> Retour
-      </button>
-      <h1 className="text-xl font-bold text-[#07090c] mb-1">Commander une pièce depuis l'étranger</h1>
-      <p className="text-sm text-[#73777d] mb-5">Pièce introuvable localement ? Décrivez-la, nous la recherchons pour vous.</p>
-
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <input type="tel" required placeholder="Numéro de téléphone" value={phone} onChange={(e) => setPhone(e.target.value)}
-          className="w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]" />
-        <input type="text" placeholder="Nom (optionnel)" value={name} onChange={(e) => setName(e.target.value)}
-          className="w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]" />
-        <textarea required rows={3} placeholder="Décrivez la pièce recherchée" value={description} onChange={(e) => setDescription(e.target.value)}
-          className="w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d] resize-none" />
-
+    <main className="mx-auto max-w-7xl px-5 py-7 sm:px-8">
+      <button onClick={onBack} className="mb-7 flex items-center gap-2 text-xs font-bold text-[#73777d] hover:text-[#07090c]"><ArrowLeft className="h-4 w-4" /> Retour au catalogue</button>
+      <div className="grid gap-10 lg:grid-cols-2">
         <div>
-          <label className="text-xs text-[#73777d] mb-1 block">Carte grise du véhicule (photo)</label>
-          <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && readAsBase64(e.target.files[0], setCarteGrise)}
-            className="w-full text-xs text-[#73777d] file:bg-slate-800 file:text-[#07090c] file:border-0 file:rounded-lg file:px-3 file:py-1.5 file:mr-2 file:text-xs" />
+          <div className="overflow-hidden rounded-3xl border border-[#e4e6e8] bg-[#f5f6f7]">
+            <div className="aspect-square">
+              {product.photos?.[0] ? <img src={product.photos[0]} alt={product.name} className="h-full w-full object-contain p-8 sm:p-12" /> : <Package className="mx-auto mt-40 h-16 w-16 text-[#73777d]" />}
+            </div>
+          </div>
+          <div className="mt-4 flex gap-2 overflow-x-auto">{product.photos?.slice(0,5).map((src,i)=><img key={i} src={src} alt="" className="h-20 w-20 rounded-xl border border-[#e4e6e8] object-contain p-2" />)}</div>
         </div>
-        <div>
-          <label className="text-xs text-[#73777d] mb-1 block">Photo de la pièce (optionnel)</label>
-          <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && readAsBase64(e.target.files[0], setPartPhoto)}
-            className="w-full text-xs text-[#73777d] file:bg-slate-800 file:text-[#07090c] file:border-0 file:rounded-lg file:px-3 file:py-1.5 file:mr-2 file:text-xs" />
+        <div className="lg:pt-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">{product.category_name || "Diagnostic automobile"}</p>
+          <h1 className="mt-2 text-3xl font-black leading-tight text-[#07090c] sm:text-4xl">{product.name}</h1>
+          <div className="mt-5 flex items-center gap-3"><span className="rounded-full bg-[#f5f6f7] px-3 py-1 text-[10px] font-black uppercase text-[#73777d]">{product.availability || "Disponible"}</span><span className="flex items-center gap-1 text-xs text-[#73777d]"><Star className="h-4 w-4 fill-current text-[#ed1c24]" /> Équipement professionnel</span></div>
+          <p className="mt-7 text-3xl font-black text-[#ed1c24]">{formatFcfa(product.price_fcfa)}</p>
+          {product.description && <p className="mt-5 whitespace-pre-wrap text-sm leading-7 text-[#10141a]">{product.description}</p>}
+          <div className="mt-7 grid grid-cols-2 gap-3">
+            {[["Garantie", product.warranty || "Selon produit"], ["Livraison", "Côte d'Ivoire & Afrique"], ["Support", "Conseil technique"], ["Paiement", "À confirmer avec l'équipe"]].map(([a,b])=><div key={a} className="rounded-xl border border-[#e4e6e8] p-3"><p className="text-[9px] font-black uppercase text-[#73777d]">{a}</p><p className="mt-1 text-xs font-bold text-[#07090c]">{b}</p></div>)}
+          </div>
+          <div className="mt-7 flex items-center gap-3"><button onClick={()=>setQuantity(Math.max(1,quantity-1))} className="h-11 w-11 rounded-xl border font-bold">−</button><span className="w-8 text-center font-black">{quantity}</span><button onClick={()=>setQuantity(quantity+1)} className="h-11 w-11 rounded-xl border font-bold">+</button></div>
+          {!showOrderForm ? <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <button onClick={()=>{cart.add(product,quantity);onGoToCart();}} className="rounded-xl bg-[#07090c] py-4 text-sm font-black text-white"><ShoppingBag className="mr-2 inline h-4 w-4" /> Ajouter au panier</button>
+            <button onClick={()=>setShowOrderForm(true)} className="rounded-xl bg-[#ed1c24] py-4 text-sm font-black text-white hover:bg-[#b90f16]">Commander maintenant</button>
+          </div> :
+          <form onSubmit={handleOrder} className="mt-5 rounded-2xl border border-[#e4e6e8] bg-[#f5f6f7] p-5">
+            <p className="mb-4 text-sm font-black">Vos coordonnées</p>
+            <div className="grid gap-3"><input required type="tel" placeholder="Numéro de téléphone" value={phone} onChange={e=>setPhone(e.target.value)} className="rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-[#ed1c24]" /><input placeholder="Nom" value={name} onChange={e=>setName(e.target.value)} className="rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-[#ed1c24]" /><input placeholder="Ville" value={city} onChange={e=>setCity(e.target.value)} className="rounded-xl border bg-white px-4 py-3 text-sm outline-none focus:border-[#ed1c24]" /></div>
+            {error && <p className="mt-3 text-xs font-bold text-[#ed1c24]">{error}</p>}
+            <button disabled={submitting} className="mt-4 w-full rounded-xl bg-[#ed1c24] py-3.5 text-sm font-black text-white disabled:opacity-50">{submitting ? "Envoi..." : "Valider la commande"}</button>
+            <p className="mt-3 text-center text-[10px] text-[#73777d]">Notre équipe confirme prix, disponibilité et livraison avant paiement.</p>
+          </form>}
+          <a href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(`Bonjour DiagAssist, je suis intéressé par le ${product.name}. Pouvez-vous me renseigner ?`) }`} target="_blank" rel="noreferrer" className="mt-3 flex items-center justify-center gap-2 rounded-xl border border-[#e4e6e8] py-3.5 text-sm font-black text-[#07090c] hover:bg-[#f5f6f7]"><MessageCircle className="h-4 w-4 text-[#16a34a]" /> Demander conseil sur WhatsApp</a>
         </div>
-
-        <textarea rows={2} placeholder="Informations complémentaires (optionnel)" value={extraInfo} onChange={(e) => setExtraInfo(e.target.value)}
-          className="w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d] resize-none" />
-
-        {error && <p className="text-xs text-[#ed1c24]">{error}</p>}
-        <button type="submit" disabled={submitting}
-          className="w-full bg-[#ed1c24] hover:bg-[#b90f16] disabled:opacity-50 text-white text-sm font-bold py-3 rounded-xl cursor-pointer">
-          {submitting ? "Envoi..." : "Envoyer la demande"}
-        </button>
-      </form>
-    </div>
+      </div>
+      <div className="mt-14 grid gap-5 lg:grid-cols-3">
+        {[
+          ["Caractéristiques", product.specs],
+          ["Compatibilité", product.compatibility],
+          ["Contenu de la boîte", product.box_contents],
+        ].map(([title,body]) => <section key={title as string} className="rounded-2xl border border-[#e4e6e8] p-5"><h2 className="text-sm font-black uppercase text-[#07090c]">{title as string}</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#73777d]">{body || "Informations disponibles sur demande."}</p></section>)}
+      </div>
+      {product.videos?.[0] && <div className="mt-5 rounded-2xl border border-[#e4e6e8] p-5"><h2 className="mb-4 text-sm font-black uppercase">Démonstration</h2><div className="aspect-video overflow-hidden rounded-xl bg-black"><video src={product.videos[0]} controls className="h-full w-full" /></div></div>}
+    </main>
   );
 }
 
-// --- Routeur boutique (basé sur le chemin d'URL, sans dépendance externe) ---
+function ShopCart({cart,onBack,onCheckout}:{cart:ReturnType<typeof useCart>;onBack:()=>void;onCheckout:()=>void}) {
+  return <main className="mx-auto max-w-3xl px-5 py-8 sm:px-8"><button onClick={onBack} className="mb-6 flex items-center gap-2 text-xs font-bold text-[#73777d]"><ArrowLeft className="h-4 w-4"/>Continuer mes achats</button><h1 className="text-3xl font-black text-[#07090c]">Mon panier</h1>
+    {cart.items.length===0?<div className="py-20 text-center"><ShoppingBag className="mx-auto mb-3 h-12 w-12 text-[#73777d]"/><p className="font-bold">Votre panier est vide.</p></div>:<><div className="mt-7 space-y-3">{cart.items.map(i=><div key={i.product_id} className="flex items-center gap-4 rounded-2xl border border-[#e4e6e8] bg-white p-3"><div className="h-20 w-20 shrink-0 rounded-xl bg-[#f5f6f7] p-2">{i.photo?<img src={i.photo} alt="" className="h-full w-full object-contain"/>:<Package className="m-auto mt-4 h-8 w-8 text-[#73777d]"/>}</div><div className="min-w-0 flex-1"><p className="truncate text-sm font-black">{i.name}</p><p className="mt-1 text-sm font-black text-[#ed1c24]">{formatFcfa(i.price_fcfa)}</p></div><input type="number" min="1" value={i.quantity} onChange={e=>cart.setQuantity(i.product_id,Number(e.target.value))} className="w-16 rounded-lg border p-2 text-center text-sm"/><button onClick={()=>cart.remove(i.product_id)} className="p-2 text-[#73777d]"><X className="h-4 w-4"/></button></div>)}</div><div className="mt-7 rounded-2xl bg-[#07090c] p-5 text-white"><div className="flex justify-between text-sm text-slate-300"><span>{cart.count} article(s)</span><span>Total produits</span></div><div className="mt-2 flex justify-between text-xl font-black"><span>Total</span><span className="text-[#ed1c24]">{formatFcfa(cart.total)}</span></div><button onClick={onCheckout} className="mt-5 w-full rounded-xl bg-[#ed1c24] py-4 text-sm font-black">Passer commande</button></div></>}</main>;
+}
+
+function ShopCheckout({cart,onBack,onDone}:{cart:ReturnType<typeof useCart>;onBack:()=>void;onDone:(ref:string)=>void}) {
+  const [phone,setPhone]=useState("");const[name,setName]=useState("");const[city,setCity]=useState("");const[address,setAddress]=useState("");const[submitting,setSubmitting]=useState(false);const[error,setError]=useState<string|null>(null);
+  const submit=async(e:React.FormEvent)=>{e.preventDefault();setSubmitting(true);setError(null);try{const r=await fetch("/api/shop/checkout",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone,name,city,address,items:cart.items.map(i=>({product_id:i.product_id,quantity:i.quantity}))})});const d=await r.json();if(d.success){cart.clear();onDone(d.order_ref)}else setError(d.message||"Échec de la commande.")}catch{setError("Erreur réseau. Vérifiez votre connexion.")}finally{setSubmitting(false)}};
+  return <main className="mx-auto max-w-4xl px-5 py-8 sm:px-8"><button onClick={onBack} className="mb-6 flex items-center gap-2 text-xs font-bold text-[#73777d]"><ArrowLeft className="h-4 w-4"/>Retour au panier</button><div className="grid gap-8 lg:grid-cols-[1fr_360px]"><form onSubmit={submit} className="rounded-2xl border border-[#e4e6e8] p-5 sm:p-7"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">Commande</p><h1 className="mt-2 text-3xl font-black">Finaliser la commande</h1><div className="mt-7 grid gap-3"><input required type="tel" placeholder="Numéro de téléphone" value={phone} onChange={e=>setPhone(e.target.value)} className="rounded-xl border px-4 py-3 text-sm outline-none focus:border-[#ed1c24]"/><input placeholder="Nom complet" value={name} onChange={e=>setName(e.target.value)} className="rounded-xl border px-4 py-3 text-sm outline-none focus:border-[#ed1c24]"/><input placeholder="Ville / Commune" value={city} onChange={e=>setCity(e.target.value)} className="rounded-xl border px-4 py-3 text-sm outline-none focus:border-[#ed1c24]"/><textarea rows={4} placeholder="Adresse / instructions de livraison" value={address} onChange={e=>setAddress(e.target.value)} className="resize-none rounded-xl border px-4 py-3 text-sm outline-none focus:border-[#ed1c24]"/></div>{error&&<p className="mt-3 text-xs font-bold text-[#ed1c24]">{error}</p>}<button disabled={submitting} className="mt-5 w-full rounded-xl bg-[#ed1c24] py-4 text-sm font-black text-white disabled:opacity-50">{submitting?"Envoi...":"Confirmer la commande"}</button><p className="mt-3 text-center text-[10px] text-[#73777d]">Aucun paiement en ligne à cette étape. L'équipe DiagAssist vous contacte pour confirmer.</p></form><aside className="h-fit rounded-2xl bg-[#07090c] p-6 text-white"><p className="text-xs font-black uppercase tracking-wider text-slate-400">Résumé</p><div className="mt-5 space-y-3">{cart.items.map(i=><div key={i.product_id} className="flex justify-between gap-3 text-xs"><span className="truncate text-slate-300">{i.quantity}× {i.name}</span><span className="shrink-0 font-bold">{formatFcfa((i.price_fcfa||0)*i.quantity)}</span></div>)}</div><div className="mt-5 border-t border-white/10 pt-4 flex justify-between font-black"><span>Total</span><span className="text-[#ed1c24]">{formatFcfa(cart.total)}</span></div></aside></div></main>;
+}
+
+function ShopConfirmation({ref,onBack,onTrack}:{ref:string;onBack:()=>void;onTrack:()=>void}) {
+  return <main className="mx-auto max-w-md px-5 py-24 text-center"><CheckCircle2 className="mx-auto h-16 w-16 text-emerald-500"/><p className="mt-5 text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">Merci pour votre confiance</p><h1 className="mt-2 text-3xl font-black">Commande enregistrée</h1><p className="mt-4 text-sm text-[#73777d]">Référence : <strong className="text-[#ed1c24]">{ref}</strong></p><p className="mt-3 text-sm text-[#73777d]">Notre équipe vous contactera bientôt par téléphone ou WhatsApp.</p><div className="mt-7 grid gap-2"><button onClick={onTrack} className="rounded-xl bg-[#ed1c24] py-3.5 text-sm font-black text-white">Suivre ma commande</button><button onClick={onBack} className="rounded-xl bg-[#f5f6f7] py-3.5 text-sm font-black text-[#07090c]">Continuer mes achats</button></div></main>;
+}
+
+function ShopTracking({onBack}:{onBack:()=>void}) {
+  const[phone,setPhone]=useState("");const[ref,setRef]=useState("");const[orders,setOrders]=useState<any[]|null>(null);const[loading,setLoading]=useState(false);const[error,setError]=useState<string|null>(null);
+  const submit=async(e:React.FormEvent)=>{e.preventDefault();setLoading(true);setError(null);try{const p=new URLSearchParams({phone});if(ref)p.set("ref",ref);const r=await fetch("/api/shop/track?"+p);const d=await r.json();if(d.success)setOrders(d.orders);else setError(d.message||"Aucune commande trouvée.")}catch{setError("Erreur réseau.")}finally{setLoading(false)}};
+  const steps=["nouvelle","confirmee","en_traitement","prete","livree"];const labels:Record<string,string>={nouvelle:"Commande reçue",a_contacter:"Commande reçue",contactee:"Commande reçue",confirmee:"Confirmée",en_traitement:"Préparation",prete:"Prête",livree:"Livrée",annulee:"Annulée",client_injoignable:"Client injoignable"};
+  return <main className="mx-auto max-w-xl px-5 py-8 sm:px-8"><button onClick={onBack} className="mb-6 flex items-center gap-2 text-xs font-bold text-[#73777d]"><ArrowLeft className="h-4 w-4"/>Retour</button><div className="rounded-2xl border border-[#e4e6e8] p-6"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">Suivi</p><h1 className="mt-2 text-3xl font-black">Suivre ma commande</h1><form onSubmit={submit} className="mt-6 grid gap-3"><input required type="tel" placeholder="Votre numéro de téléphone" value={phone} onChange={e=>setPhone(e.target.value)} className="rounded-xl border px-4 py-3 text-sm"/><input placeholder="Référence (ex. DA-2026-000001)" value={ref} onChange={e=>setRef(e.target.value)} className="rounded-xl border px-4 py-3 text-sm"/><button disabled={loading} className="rounded-xl bg-[#07090c] py-3.5 text-sm font-black text-white">{loading?"Recherche...":"Rechercher"}</button></form>{error&&<p className="mt-4 text-xs font-bold text-[#ed1c24]">{error}</p>}</div>{orders?.map((o,idx)=>{const ci=steps.indexOf(o.status);return <div key={idx} className="mt-4 rounded-2xl border border-[#e4e6e8] p-5"><p className="text-xs font-black text-[#73777d]">{o.order_ref}</p><div className="mt-5 flex items-center">{steps.map((s,i)=><React.Fragment key={s}><span className={`h-3 w-3 rounded-full ${ci>=i?"bg-[#ed1c24]":"bg-[#e4e6e8]"}`}/>{i<steps.length-1&&<span className={`h-0.5 flex-1 ${ci>i?"bg-[#ed1c24]":"bg-[#e4e6e8]"}`}/>}</React.Fragment>)}</div><p className="mt-4 text-sm font-black">{labels[o.status]||o.status}</p><div className="mt-3">{o.items?.map((it:any,i:number)=><p key={i} className="text-xs text-[#73777d]">{it.quantity}× {it.product_name}</p>)}</div></div>})}</main>;
+}
+
+function ShopPartRequest({onBack}:{onBack:()=>void}) {
+  const[phone,setPhone]=useState("");const[name,setName]=useState("");const[description,setDescription]=useState("");const[extra,setExtra]=useState("");const[carte,setCarte]=useState<string|null>(null);const[photo,setPhoto]=useState<string|null>(null);const[done,setDone]=useState(false);const[loading,setLoading]=useState(false);const[error,setError]=useState<string|null>(null);
+  const read=(f:File,cb:(s:string)=>void)=>{const r=new FileReader();r.onload=()=>cb(r.result as string);r.readAsDataURL(f)};
+  const submit=async(e:React.FormEvent)=>{e.preventDefault();setLoading(true);try{const r=await fetch("/api/shop/part-requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone,name,part_description:description,extra_info:extra,carte_grise_base64:carte,part_photo_base64:photo})});const d=await r.json();if(d.success)setDone(true);else setError(d.message||"Échec de l'envoi.")}catch{setError("Erreur réseau.")}finally{setLoading(false)}};
+  if(done)return <main className="mx-auto max-w-md px-5 py-24 text-center"><CheckCircle2 className="mx-auto h-16 w-16 text-emerald-500"/><h1 className="mt-5 text-2xl font-black">Demande envoyée</h1><p className="mt-3 text-sm text-[#73777d]">Notre équipe va rechercher la pièce et revenir vers vous.</p><button onClick={onBack} className="mt-7 rounded-xl bg-[#07090c] px-6 py-3 text-sm font-black text-white">Retour</button></main>;
+  return <main className="mx-auto max-w-xl px-5 py-8 sm:px-8"><button onClick={onBack} className="mb-6 flex items-center gap-2 text-xs font-bold text-[#73777d]"><ArrowLeft className="h-4 w-4"/>Retour</button><div className="rounded-2xl border border-[#e4e6e8] p-6"><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">Service recherche</p><h1 className="mt-2 text-3xl font-black">Une pièce introuvable ?</h1><p className="mt-3 text-sm leading-6 text-[#73777d]">Envoyez les informations du véhicule et la pièce recherchée. DiagAssist vous accompagne.</p><form onSubmit={submit} className="mt-6 grid gap-3"><input required type="tel" placeholder="Numéro de téléphone" value={phone} onChange={e=>setPhone(e.target.value)} className="rounded-xl border px-4 py-3 text-sm"/><input placeholder="Nom" value={name} onChange={e=>setName(e.target.value)} className="rounded-xl border px-4 py-3 text-sm"/><textarea required rows={4} placeholder="Décrivez la pièce recherchée" value={description} onChange={e=>setDescription(e.target.value)} className="resize-none rounded-xl border px-4 py-3 text-sm"/><textarea rows={2} placeholder="Informations complémentaires" value={extra} onChange={e=>setExtra(e.target.value)} className="resize-none rounded-xl border px-4 py-3 text-sm"/><label className="rounded-xl border border-dashed p-4 text-xs font-bold text-[#73777d]">Carte grise (photo)<input type="file" accept="image/*" onChange={e=>e.target.files?.[0]&&read(e.target.files[0],setCarte)} className="mt-2 block w-full text-xs"/></label><label className="rounded-xl border border-dashed p-4 text-xs font-bold text-[#73777d]">Photo de la pièce<input type="file" accept="image/*" onChange={e=>e.target.files?.[0]&&read(e.target.files[0],setPhoto)} className="mt-2 block w-full text-xs"/></label>{error&&<p className="text-xs font-bold text-[#ed1c24]">{error}</p>}<button disabled={loading} className="rounded-xl bg-[#ed1c24] py-3.5 text-sm font-black text-white">{loading?"Envoi...":"Envoyer la demande"}</button></form></div></main>;
+}
+
 export default function ShopApp() {
-  const parsePath = () => {
-    const parts = window.location.pathname.split("/").filter(Boolean); // ["boutique", "produit", "slug"] ou ["boutique", "piece-etranger"]
-    if (parts[1] === "admin") return { screen: "admin" as const, slug: null };
-    if (parts[1] === "produit" && parts[2]) return { screen: "product" as const, slug: parts[2] };
-    if (parts[1] === "piece-etranger") return { screen: "part-request" as const, slug: null };
-    if (parts[1] === "panier") return { screen: "cart" as const, slug: null };
-    if (parts[1] === "commande") return { screen: "checkout" as const, slug: null };
-    if (parts[1] === "confirmation") return { screen: "confirmation" as const, slug: null };
-    if (parts[1] === "suivi") return { screen: "tracking" as const, slug: null };
-    return { screen: "catalog" as const, slug: null };
-  };
-
-  const [route, setRoute] = useState(parsePath());
-  const [lastOrderRef, setLastOrderRef] = useState<string | null>(null);
-  const cart = useCart();
-
-  useEffect(() => {
-    const onPop = () => setRoute(parsePath());
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
-
-  const navigate = (path: string) => {
-    window.history.pushState({}, "", path);
-    setRoute(parsePath());
-    window.scrollTo(0, 0);
-  };
-
-  if (route.screen === "admin") return <ShopAdmin />;
-
-  return (
-    <div className="min-h-screen bg-white">
-      <header style={{ background: DIAG.black }} className="px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
-        <button onClick={() => navigate("/boutique")} className="flex items-center gap-2 cursor-pointer shrink-0">
-          <div style={{ background: DIAG.red }} className="w-8 h-8 rounded-lg flex items-center justify-center">
-            <Wrench className="w-4.5 h-4.5 text-white" />
-          </div>
-          <span className="font-black text-white text-sm hidden sm:inline uppercase">DiagAssist</span>
-        </button>
-        <div className="flex-1 relative">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2" style={{ color: DIAG.gray }} />
-          <input
-            placeholder="Rechercher un produit..."
-            className="w-full bg-white rounded-lg pl-9 pr-3 py-2 text-sm"
-            style={{ color: DIAG.black }}
-            disabled
-          />
-        </div>
-        <button onClick={() => navigate("/boutique/suivi")} className="text-xs font-semibold text-white px-2 py-2 rounded-lg cursor-pointer hover:opacity-80 hidden sm:block">
-          Suivre ma commande
-        </button>
-        <button onClick={() => navigate("/boutique/panier")} className="relative p-2 cursor-pointer shrink-0">
-          <ShoppingBag className="w-5 h-5 text-white" />
-          {cart.count > 0 && (
-            <span style={{ background: DIAG.red }} className="absolute -top-0.5 -right-0.5 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
-              {cart.count}
-            </span>
-          )}
-        </button>
-      </header>
-
-      {route.screen === "catalog" && <ShopCatalog onSelectProduct={(slug) => navigate(`/boutique/produit/${slug}`)} />}
-      {route.screen === "product" && route.slug && (
-        <ShopProductPage slug={route.slug} onBack={() => navigate("/boutique")} cart={cart} onGoToCart={() => navigate("/boutique/panier")} />
-      )}
-      {route.screen === "part-request" && <ShopPartRequest onBack={() => navigate("/boutique")} />}
-      {route.screen === "cart" && <ShopCart cart={cart} onBack={() => navigate("/boutique")} onCheckout={() => navigate("/boutique/commande")} />}
-      {route.screen === "checkout" && (
-        <ShopCheckout
-          cart={cart}
-          onBack={() => navigate("/boutique/panier")}
-          onDone={(ref) => { setLastOrderRef(ref); navigate("/boutique/confirmation"); }}
-        />
-      )}
-      {route.screen === "confirmation" && lastOrderRef && (
-        <ShopOrderConfirmation orderRef={lastOrderRef} onBackToCatalog={() => navigate("/boutique")} onTrack={() => navigate("/boutique/suivi")} />
-      )}
-      {route.screen === "tracking" && <ShopTracking onBack={() => navigate("/boutique")} />}
-    </div>
-  );
+  const parsePath=()=>{const p=window.location.pathname.split("/").filter(Boolean);if(p[1]==="admin")return{screen:"admin" as const,slug:null};if(p[1]==="produit"&&p[2])return{screen:"product" as const,slug:p[2]};if(p[1]==="piece-etranger")return{screen:"part-request" as const,slug:null};if(p[1]==="panier")return{screen:"cart" as const,slug:null};if(p[1]==="commande")return{screen:"checkout" as const,slug:null};if(p[1]==="confirmation")return{screen:"confirmation" as const,slug:null};if(p[1]==="suivi")return{screen:"tracking" as const,slug:null};return{screen:"catalog" as const,slug:null}};
+  const[route,setRoute]=useState(parsePath());const[lastOrderRef,setLastOrderRef]=useState<string|null>(null);const[mobileMenu,setMobileMenu]=useState(false);const cart=useCart();
+  useEffect(()=>{const f=()=>setRoute(parsePath());window.addEventListener("popstate",f);return()=>window.removeEventListener("popstate",f)},[]);
+  const navigate=(path:string)=>{window.history.pushState({}, "", path);setRoute(parsePath());setMobileMenu(false);window.scrollTo(0,0)};
+  if(route.screen==="admin")return <ShopAdmin/>;
+  return <div className="min-h-screen bg-white text-[#07090c]">
+    <div className="bg-[#ed1c24] px-4 py-2 text-center text-[10px] font-black uppercase tracking-wider text-white">Livraison partout en Côte d'Ivoire • Support technique DiagAssist</div>
+    <header className="sticky top-0 z-40 border-b border-white/10 bg-[#07090c] text-white shadow-lg">
+      <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-8">
+        <button onClick={()=>navigate("/boutique")} className="flex shrink-0 items-center gap-2"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ed1c24]"><Wrench className="h-5 w-5"/></span><span className="hidden text-base font-black uppercase tracking-tight sm:block">DiagAssist</span></button>
+        <div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"/><input onFocus={()=>{if(route.screen!=="catalog")navigate("/boutique")}} placeholder="Rechercher un produit, une marque, une référence..." className="w-full rounded-xl bg-white px-10 py-2.5 text-sm text-[#07090c] outline-none placeholder:text-slate-400"/></div>
+        <button onClick={()=>navigate("/boutique/suivi")} className="hidden items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-bold md:flex"><Clock className="h-4 w-4"/> Suivi</button>
+        <button onClick={()=>navigate("/boutique/panier")} className="relative rounded-xl p-2 hover:bg-white/10"><ShoppingBag className="h-5 w-5"/>{cart.count>0&&<span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ed1c24] px-1 text-[9px] font-black">{cart.count}</span>}</button>
+        <button onClick={()=>setMobileMenu(!mobileMenu)} className="rounded-xl p-2 hover:bg-white/10 md:hidden">{mobileMenu?<X className="h-5 w-5"/>:<Menu className="h-5 w-5"/>}</button>
+      </div>
+      {mobileMenu&&<div className="border-t border-white/10 bg-[#10141a] p-4 md:hidden"><div className="grid gap-2"><button onClick={()=>navigate("/boutique")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Tous les produits</button><button onClick={()=>navigate("/boutique/suivi")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Suivre ma commande</button><button onClick={()=>navigate("/boutique/piece-etranger")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Rechercher une pièce</button></div></div>}
+    </header>
+    {route.screen==="catalog"&&<ShopCatalog onSelectProduct={slug=>navigate("/boutique/produit/"+slug)} onGoCart={()=>navigate("/boutique/panier")}/>}
+    {route.screen==="product"&&route.slug&&<ShopProductPage slug={route.slug} onBack={()=>navigate("/boutique")} cart={cart} onGoToCart={()=>navigate("/boutique/panier")}/>}
+    {route.screen==="part-request"&&<ShopPartRequest onBack={()=>navigate("/boutique")}/>}
+    {route.screen==="cart"&&<ShopCart cart={cart} onBack={()=>navigate("/boutique")} onCheckout={()=>navigate("/boutique/commande")}/>}
+    {route.screen==="checkout"&&<ShopCheckout cart={cart} onBack={()=>navigate("/boutique/panier")} onDone={ref=>{setLastOrderRef(ref);navigate("/boutique/confirmation")}}/>}
+    {route.screen==="confirmation"&&lastOrderRef&&<ShopConfirmation ref={lastOrderRef} onBack={()=>navigate("/boutique")} onTrack={()=>navigate("/boutique/suivi")}/>}
+    {route.screen==="tracking"&&<ShopTracking onBack={()=>navigate("/boutique")}/>}
+    <footer className="border-t border-[#e4e6e8] bg-[#07090c] px-5 py-12 text-white sm:px-8"><div className="mx-auto grid max-w-7xl gap-8 sm:grid-cols-2 lg:grid-cols-4"><div><div className="flex items-center gap-2"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ed1c24]"><Wrench className="h-5 w-5"/></span><span className="font-black">DiagAssist</span></div><p className="mt-4 max-w-xs text-xs leading-6 text-slate-400">Solutions professionnelles de diagnostic automobile, programmation, accessoires et formation.</p></div><div><p className="text-xs font-black uppercase">Boutique</p><div className="mt-3 grid gap-2 text-xs text-slate-400"><button onClick={()=>navigate("/boutique")} className="text-left hover:text-white">Tous les produits</button><button onClick={()=>navigate("/boutique/piece-etranger")} className="text-left hover:text-white">Recherche de pièces</button></div></div><div><p className="text-xs font-black uppercase">Service</p><div className="mt-3 grid gap-2 text-xs text-slate-400"><button onClick={()=>navigate("/boutique/suivi")} className="text-left hover:text-white">Suivre une commande</button><a href={`https://wa.me/${WHATSAPP}`} target="_blank" rel="noreferrer" className="hover:text-white">WhatsApp</a></div></div><div><p className="text-xs font-black uppercase">Contact</p><p className="mt-3 text-sm font-black">01 41 11 60 26</p><p className="mt-1 text-xs text-slate-400">Abidjan, Côte d'Ivoire</p></div></div><div className="mx-auto mt-10 max-w-7xl border-t border-white/10 pt-5 text-[10px] text-slate-500">© 2026 DiagAssist. Tous droits réservés.</div></footer>
+    <WhatsAppButton/>
+  </div>;
 }
