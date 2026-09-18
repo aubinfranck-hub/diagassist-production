@@ -30,6 +30,8 @@ interface ShopProduct {
   id: number;
   name: string;
   slug: string;
+  brand: string | null;
+  model: string | null;
   price_fcfa: number | null;
   description: string | null;
   specs: string | null;
@@ -118,10 +120,10 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return products.filter(p => {
-      const hay = [p.name,p.category_name,p.description,p.specs,p.compatibility].filter(Boolean).join(" ").toLowerCase();
+      const hay = [p.name,p.brand,p.model,p.category_name,p.description,p.specs,p.compatibility].filter(Boolean).join(" ").toLowerCase();
       const categoryOk = !activeCategory || p.category_slug === activeCategory;
       const searchOk = !q || hay.includes(q);
-      const brandOk = !brand || p.name.toLowerCase().includes(brand.toLowerCase());
+      const brandOk = !brand || (p.brand || "").toLowerCase() === brand.toLowerCase() || p.name.toLowerCase().includes(brand.toLowerCase());
       const priceOk = p.price_fcfa == null || p.price_fcfa <= maxPrice;
       const stockOk = !onlyAvailable || /stock|disponible/i.test(p.availability || "");
       return categoryOk && searchOk && brandOk && priceOk && stockOk;
