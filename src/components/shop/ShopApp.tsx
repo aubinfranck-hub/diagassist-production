@@ -98,6 +98,7 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
   const [brand, setBrand] = useState("");
   const [maxPrice, setMaxPrice] = useState(3000000);
   const [onlyAvailable, setOnlyAvailable] = useState(false);
+  const [mobileFilters, setMobileFilters] = useState(false);
   const [loading, setLoading] = useState(true);
   const brands = ["AUTEL","THINKCAR","LAUNCH","XTOOL","TOPDON","HUMZOR","OBDSTAR","BOSCH","TEXA","MUCAR","GODIAG"];
 
@@ -105,6 +106,14 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
     fetch("/api/shop/categories").then(r => r.json()).then(d => d.success && setCategories(d.categories || [])).catch(() => {});
     fetch("/api/shop/products").then(r => r.json()).then(d => d.success && setProducts(d.products || [])).finally(() => setLoading(false));
   }, []);
+
+  const resetFilters = () => {
+    setActiveCategory(null);
+    setBrand("");
+    setMaxPrice(3000000);
+    setOnlyAvailable(false);
+    setSearch("");
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -119,8 +128,23 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
     });
   }, [products, activeCategory, search, brand, maxPrice, onlyAvailable]);
 
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    products.forEach(p => { if (p.category_slug) counts[p.category_slug] = (counts[p.category_slug] || 0) + 1; });
+    return counts;
+  }, [products]);
+
   const popularCategories = categories.slice(0, 8);
   const featured = products.slice(0, 3);
+  const hasFilters = !!activeCategory || !!brand || maxPrice < 3000000 || onlyAvailable || !!search.trim();
+
+  const categoryIcon = (name: string) => {
+    const n = name.toLowerCase();
+    if (n.includes("programm") || n.includes("j2534")) return Zap;
+    if (n.includes("atelier") || n.includes("outil")) return Wrench;
+    if (n.includes("access")) return Package;
+    return SlidersHorizontal;
+  };
 
   return (
     <main>
@@ -132,9 +156,7 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
             <h1 className="mt-3 text-4xl font-black uppercase leading-[.9] tracking-[-.04em] sm:text-6xl">LA RÉFÉRENCE<br/><span className="text-[#ed1c24]">DU DIAGNOSTIC</span><br/>AUTOMOBILE</h1>
             <p className="mt-5 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">Scanners, outils de programmation, J2534, accessoires et formation pour les professionnels de l'automobile.</p>
             <button onClick={() => document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="mt-6 rounded-xl bg-[#ed1c24] px-6 py-3.5 text-sm font-black shadow-lg">Voir nos produits →</button>
-            <div className="mt-7 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {["Diagnostic multimarque","Programmation & Codage","Toutes marques","Formation & Support"].map(x=><div key={x} className="rounded-xl border border-white/10 bg-white/5 p-3 text-[10px] font-black">{x}</div>)}
-            </div>
+            <div className="mt-7 grid grid-cols-2 gap-2 sm:grid-cols-4">{["Diagnostic multimarque","Programmation & Codage","Toutes marques","Formation & Support"].map(x=><div key={x} className="rounded-xl border border-white/10 bg-white/5 p-3 text-[10px] font-black">{x}</div>)}</div>
           </div>
           <div className="relative hidden min-h-[320px] items-center justify-center lg:flex">
             {featured[0]?.photos?.[0] ? <img src={featured[0].photos[0]} alt={featured[0].name} className="max-h-[360px] w-full object-contain drop-shadow-2xl"/> : <Wrench className="h-48 w-48 text-[#ed1c24]"/>}
@@ -147,34 +169,69 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
         [ShieldCheck,"Produits 100% originaux","Garantie constructeur"],[Truck,"Livraison rapide","Côte d'Ivoire & Afrique"],[CreditCard,"Paiement sécurisé","Mobile Money prochainement"],[Headphones,"Support technique","Experts à votre écoute"]
       ].map(([Icon,title,text])=><div key={title as string} className="flex items-center gap-3 px-4 py-4"><React.createElement(Icon as any,{className:"h-5 w-5 shrink-0 text-[#ed1c24]"})}<div><p className="text-xs font-black">{title as string}</p><p className="hidden text-[10px] text-[#73777d] sm:block">{text as string}</p></div></div>)}</div></section>
 
-      <section className="border-b bg-[#10141a] text-white"><div className="mx-auto flex max-w-7xl overflow-x-auto"><button onClick={()=>setActiveCategory(null)} className="flex shrink-0 items-center gap-2 bg-[#ed1c24] px-5 py-4 text-xs font-black"><Menu className="h-4 w-4"/>Tous les produits</button>{popularCategories.slice(0,7).map(c=><button key={c.id} onClick={()=>setActiveCategory(c.slug)} className="shrink-0 px-4 py-4 text-xs font-bold text-slate-300">{c.name}</button>)}<span className="ml-auto hidden shrink-0 bg-[#ed1c24] px-5 py-4 text-xs font-black lg:block">Nos marques</span></div></section>
+      <section className="border-b bg-[#10141a] text-white"><div className="mx-auto flex max-w-7xl overflow-x-auto"><button onClick={()=>setActiveCategory(null)} className="flex shrink-0 items-center gap-2 bg-[#ed1c24] px-5 py-4 text-xs font-black"><Menu className="h-4 w-4"/>Tous les produits</button>{popularCategories.slice(0,7).map(c=><button key={c.id} onClick={()=>setActiveCategory(c.slug)} className={`shrink-0 px-4 py-4 text-xs font-bold ${activeCategory===c.slug?"bg-white/10 text-white":"text-slate-300"}`}>{c.name}</button>)}</div></section>
 
-      <section className="border-b bg-white"><div className="mx-auto flex max-w-7xl gap-3 overflow-x-auto px-5 py-4 sm:px-8">{brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={`shrink-0 rounded-lg border px-4 py-2 text-xs font-black tracking-wide ${brand===b?"border-[#ed1c24] bg-[#ed1c24] text-white":"border-[#e4e6e8] text-[#73777d]"}`}>{b}</button>)}</div></section>
+      <section className="border-b bg-white">
+        <div className="mx-auto flex max-w-7xl items-center gap-3 overflow-x-auto px-5 py-4 sm:px-8">
+          <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-[#73777d]">Nos marques</span>
+          {brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={`shrink-0 rounded-lg border px-4 py-2 text-xs font-black tracking-wide ${brand===b?"border-[#ed1c24] bg-[#ed1c24] text-white":"border-[#e4e6e8] text-[#73777d] hover:border-[#10141a] hover:text-[#10141a]"}`}>{b}</button>)}
+        </div>
+      </section>
 
-      <section className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
-        <div className="flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[.2em] text-[#ed1c24]">Catalogue</p><h2 className="mt-1 text-2xl font-black">Tous les produits</h2><p className="mt-1 text-xs text-[#73777d]">Découvrez notre gamme complète d'outils de diagnostic et d'équipements atelier.</p></div><button onClick={onGoCart} className="hidden items-center gap-2 rounded-xl border px-4 py-2 text-xs font-black sm:flex"><ShoppingBag className="h-4 w-4"/> Panier</button></div>
-        <div className="mt-6 grid gap-6 lg:grid-cols-[250px_1fr]">
+      <section id="shop-products" className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
+        <div className="flex items-end justify-between gap-4 border-b border-[#e4e6e8] pb-5">
+          <div>
+            <div className="mb-2 flex items-center gap-2 text-[10px] text-[#73777d]"><button onClick={resetFilters} className="hover:text-[#ed1c24]">Accueil</button><ChevronRight className="h-3 w-3"/><span className="font-bold text-[#10141a]">Tous les produits</span></div>
+            <p className="text-[10px] font-black uppercase tracking-[.2em] text-[#ed1c24]">Catalogue DiagAssist</p>
+            <h2 className="mt-1 text-3xl font-black tracking-tight">Tous les produits</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#73777d]">Découvrez les scanners, outils de programmation, accessoires et équipements atelier disponibles chez DiagAssist.</p>
+          </div>
+          <button onClick={onGoCart} className="hidden items-center gap-2 rounded-xl border border-[#e4e6e8] px-4 py-2.5 text-xs font-black hover:border-[#10141a] sm:flex"><ShoppingBag className="h-4 w-4"/> Panier</button>
+        </div>
+
+        {popularCategories.length > 0 && <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+          {popularCategories.map(c=>{const Icon=categoryIcon(c.name); return <button key={c.id} onClick={()=>setActiveCategory(activeCategory===c.slug?null:c.slug)} className={`group rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md ${activeCategory===c.slug?"border-[#ed1c24] bg-red-50":"border-[#e4e6e8] bg-white"}`}>
+            <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${activeCategory===c.slug?"bg-[#ed1c24] text-white":"bg-[#f5f6f7] text-[#10141a] group-hover:text-[#ed1c24]"}`}><Icon className="h-4 w-4"/></div>
+            <p className="mt-2 line-clamp-2 text-[10px] font-black leading-4">{c.name}</p>
+            <p className="mt-1 text-[9px] text-[#73777d]">{categoryCounts[c.slug] || 0} produit(s)</p>
+          </button>})}
+        </div>}
+
+        <div className="mt-7 flex items-center justify-between gap-3 lg:hidden">
+          <button onClick={()=>setMobileFilters(true)} className="flex items-center gap-2 rounded-xl border border-[#e4e6e8] px-4 py-3 text-xs font-black"><SlidersHorizontal className="h-4 w-4"/> Filtrer</button>
+          <span className="text-xs text-[#73777d]">{filtered.length} produit(s)</span>
+        </div>
+
+        <div className="mt-5 grid gap-6 lg:grid-cols-[250px_1fr]">
           <aside className="hidden h-fit rounded-2xl border border-[#e4e6e8] bg-white p-5 lg:block">
-            <div className="flex items-center justify-between"><h3 className="text-sm font-black">Filtrer les produits</h3><button onClick={()=>{setActiveCategory(null);setBrand("");setMaxPrice(3000000);setOnlyAvailable(false)}} className="text-[10px] font-bold text-[#ed1c24]">Réinitialiser</button></div>
-            <div className="mt-5"><p className="text-[10px] font-black uppercase text-[#73777d]">Catégories</p><div className="mt-3 space-y-2">{popularCategories.map(c=><button key={c.id} onClick={()=>setActiveCategory(activeCategory===c.slug?null:c.slug)} className={`flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs ${activeCategory===c.slug?"bg-red-50 font-black text-[#ed1c24]":"text-[#10141a]"}`}><span>{c.name}</span><ChevronRight className="h-3 w-3"/></button>)}</div></div>
-            <div className="mt-6 border-t pt-5"><p className="text-[10px] font-black uppercase text-[#73777d]">Marques</p><div className="mt-3 space-y-2">{brands.slice(0,7).map(b=><label key={b} className="flex cursor-pointer items-center gap-2 text-xs"><input type="radio" name="brand" checked={brand===b} onChange={()=>setBrand(b)} className="accent-[#ed1c24]"/>{b}</label>)}</div></div>
-            <div className="mt-6 border-t pt-5"><div className="flex justify-between text-[10px] font-black uppercase text-[#73777d]"><span>Prix</span><span>{maxPrice.toLocaleString("fr-FR")} FCFA</span></div><input type="range" min="0" max="3000000" step="10000" value={maxPrice} onChange={e=>setMaxPrice(Number(e.target.value))} className="mt-3 w-full accent-[#ed1c24]"/><div className="mt-1 flex justify-between text-[9px] text-[#73777d]"><span>0 FCFA</span><span>3 000 000 FCFA</span></div></div>
+            <div className="flex items-center justify-between"><h3 className="text-sm font-black">Filtrer les produits</h3>{hasFilters&&<button onClick={resetFilters} className="text-[10px] font-bold text-[#ed1c24]">Réinitialiser</button>}</div>
+            <div className="mt-5"><p className="text-[10px] font-black uppercase text-[#73777d]">Catégories</p><div className="mt-3 space-y-1">{popularCategories.map(c=><button key={c.id} onClick={()=>setActiveCategory(activeCategory===c.slug?null:c.slug)} className={`flex w-full items-center justify-between rounded-lg px-2 py-2.5 text-left text-xs ${activeCategory===c.slug?"bg-red-50 font-black text-[#ed1c24]":"text-[#10141a] hover:bg-[#f5f6f7]"}`}><span>{c.name}</span><span className="flex items-center gap-1 text-[9px] text-[#73777d]">{categoryCounts[c.slug] || 0}<ChevronRight className="h-3 w-3"/></span></button>)}</div></div>
+            <div className="mt-6 border-t pt-5"><p className="text-[10px] font-black uppercase text-[#73777d]">Marques</p><div className="mt-3 space-y-2">{brands.slice(0,8).map(b=><label key={b} className="flex cursor-pointer items-center gap-2 text-xs"><input type="radio" name="brand" checked={brand===b} onChange={()=>setBrand(b)} className="accent-[#ed1c24]"/>{b}</label>)}</div></div>
+            <div className="mt-6 border-t pt-5"><div className="flex justify-between text-[10px] font-black uppercase text-[#73777d]"><span>Prix maximum</span><span>{maxPrice.toLocaleString("fr-FR")} FCFA</span></div><input type="range" min="0" max="3000000" step="10000" value={maxPrice} onChange={e=>setMaxPrice(Number(e.target.value))} className="mt-3 w-full accent-[#ed1c24]"/><div className="mt-1 flex justify-between text-[9px] text-[#73777d]"><span>0 FCFA</span><span>3 000 000 FCFA</span></div></div>
             <label className="mt-6 flex cursor-pointer items-center gap-2 border-t pt-5 text-xs font-bold"><input type="checkbox" checked={onlyAvailable} onChange={e=>setOnlyAvailable(e.target.checked)} className="accent-[#ed1c24]"/> En stock uniquement</label>
           </aside>
 
           <div>
-            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#73777d]"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher une marque, un modèle, une référence ou une fonction..." className="w-full rounded-xl border border-[#e4e6e8] py-3 pl-10 pr-4 text-sm outline-none focus:border-[#ed1c24]"/></div><button onClick={onGoCart} className="rounded-xl bg-[#07090c] px-4 py-3 text-xs font-black text-white sm:hidden">Panier</button></div>
-            <div className="mb-4 flex items-center justify-between text-xs text-[#73777d]"><span>{filtered.length} produit(s)</span><span>Tri : Pertinence</span></div>
-            {loading?<div className="py-24 text-center text-sm text-[#73777d]">Chargement du catalogue...</div>:filtered.length===0?<div className="rounded-2xl border border-dashed py-24 text-center text-sm text-[#73777d]">Aucun produit ne correspond à vos critères.</div>:
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#73777d]"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher une marque, un modèle, une référence ou une fonction..." className="w-full rounded-xl border border-[#e4e6e8] py-3 pl-10 pr-4 text-sm outline-none focus:border-[#ed1c24]"/></div>
+              <div className="hidden text-xs text-[#73777d] sm:block">{filtered.length} résultat(s)</div>
+            </div>
+            {hasFilters&&<div className="mb-4 flex flex-wrap items-center gap-2">{activeCategory&&<button onClick={()=>setActiveCategory(null)} className="rounded-full bg-red-50 px-3 py-1.5 text-[10px] font-black text-[#ed1c24]">Catégorie : {popularCategories.find(c=>c.slug===activeCategory)?.name || activeCategory} ×</button>}{brand&&<button onClick={()=>setBrand("")} className="rounded-full bg-red-50 px-3 py-1.5 text-[10px] font-black text-[#ed1c24]">Marque : {brand} ×</button>}{onlyAvailable&&<button onClick={()=>setOnlyAvailable(false)} className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black text-emerald-700">En stock ×</button>}{maxPrice<3000000&&<button onClick={()=>setMaxPrice(3000000)} className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-black text-[#10141a]">≤ {maxPrice.toLocaleString("fr-FR")} FCFA ×</button>}{search.trim()&&<button onClick={()=>setSearch("")} className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-black text-[#10141a]">Recherche : {search.trim()} ×</button>}<button onClick={resetFilters} className="text-[10px] font-bold text-[#73777d] hover:text-[#ed1c24]">Tout effacer</button></div>}
+            {loading?<div className="rounded-2xl border border-[#e4e6e8] bg-[#f5f6f7] py-24 text-center text-sm text-[#73777d]">Chargement du catalogue...</div>:filtered.length===0?<div className="rounded-2xl border border-dashed border-[#e4e6e8] py-24 text-center"><Search className="mx-auto h-10 w-10 text-[#73777d]"/><p className="mt-3 text-sm font-black">Aucun produit trouvé</p><p className="mt-1 text-xs text-[#73777d]">Modifiez vos critères ou réinitialisez les filtres.</p><button onClick={resetFilters} className="mt-5 rounded-xl bg-[#07090c] px-5 py-3 text-xs font-black text-white">Réinitialiser</button></div>:
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
-              {filtered.map(p=><button key={p.id} onClick={()=>onSelectProduct(p.slug)} className="group overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-[#ed1c24]/40 hover:shadow-xl">
-                <div className="relative aspect-square bg-[#f5f6f7] sm:aspect-[4/3]">{p.photos?.[0]?<img src={p.photos[0]} alt={p.name} className="h-full w-full object-contain p-5 transition-transform duration-500 group-hover:scale-105"/>:<Package className="mx-auto mt-20 h-12 w-12 text-[#73777d]"/>}{p.availability&&<span className={`absolute left-3 top-3 rounded-full px-2 py-1 text-[9px] font-black uppercase ${/stock|disponible/i.test(p.availability)?"bg-emerald-500 text-white":"bg-white text-[#07090c]"}`}>{p.availability}</span>}</div>
-                <div className="p-4"><p className="text-[9px] font-black uppercase tracking-wider text-[#ed1c24]">{p.category_name||"Diagnostic automobile"}</p><p className="mt-1 min-h-[40px] text-sm font-black leading-5">{p.name}</p>{p.specs&&<p className="mt-2 line-clamp-2 text-[10px] leading-4 text-[#73777d]">{p.specs}</p>}<div className="mt-4 flex items-center justify-between gap-2"><p className="text-sm font-black text-[#ed1c24]">{formatFcfa(p.price_fcfa)}</p><span className="rounded-lg bg-[#ed1c24] p-2 text-white"><ShoppingBag className="h-4 w-4"/></span></div></div>
-              </button>)}
+              {filtered.map(p=><article key={p.id} className="group overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-[#ed1c24]/40 hover:shadow-xl">
+                <button onClick={()=>onSelectProduct(p.slug)} className="block w-full text-left">
+                  <div className="relative aspect-square bg-[#f5f6f7] sm:aspect-[4/3]">{p.photos?.[0]?<img src={p.photos[0]} alt={p.name} className="h-full w-full object-contain p-5 transition-transform duration-500 group-hover:scale-105"/>:<Package className="mx-auto mt-20 h-12 w-12 text-[#73777d]"/>}{p.availability&&<span className={`absolute left-3 top-3 rounded-full px-2 py-1 text-[9px] font-black uppercase ${/stock|disponible/i.test(p.availability)?"bg-emerald-500 text-white":"bg-white text-[#07090c]"}`}>{p.availability}</span>}</div>
+                  <div className="p-4 pb-2"><p className="text-[9px] font-black uppercase tracking-wider text-[#ed1c24]">{p.category_name||"Diagnostic automobile"}</p><p className="mt-1 min-h-[40px] text-sm font-black leading-5">{p.name}</p>{p.specs&&<p className="mt-2 line-clamp-2 text-[10px] leading-4 text-[#73777d]">{p.specs}</p>}</div>
+                </button>
+                <div className="flex items-center justify-between gap-2 px-4 pb-4 pt-2"><p className="text-sm font-black text-[#ed1c24]">{formatFcfa(p.price_fcfa)}</p><button onClick={()=>onSelectProduct(p.slug)} className="flex items-center gap-1.5 rounded-lg bg-[#ed1c24] px-3 py-2 text-[10px] font-black text-white hover:bg-[#b90f16]"><ShoppingBag className="h-4 w-4"/> Voir</button></div>
+              </article>)}
             </div>}
           </div>
         </div>
       </section>
+
+      {mobileFilters&&<div className="fixed inset-0 z-[70] lg:hidden"><button aria-label="Fermer les filtres" onClick={()=>setMobileFilters(false)} className="absolute inset-0 bg-black/50"/><aside className="absolute bottom-0 left-0 right-0 max-h-[85vh] overflow-y-auto rounded-t-3xl bg-white p-6 shadow-2xl"><div className="flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-wider text-[#ed1c24]">Catalogue</p><h3 className="text-xl font-black">Filtrer les produits</h3></div><button onClick={()=>setMobileFilters(false)} className="rounded-full bg-[#f5f6f7] p-2"><X className="h-5 w-5"/></button></div><div className="mt-6 grid gap-6"><div><p className="text-[10px] font-black uppercase text-[#73777d]">Catégories</p><div className="mt-3 grid grid-cols-2 gap-2">{popularCategories.map(c=><button key={c.id} onClick={()=>setActiveCategory(activeCategory===c.slug?null:c.slug)} className={`rounded-lg border p-3 text-left text-xs font-bold ${activeCategory===c.slug?"border-[#ed1c24] bg-red-50 text-[#ed1c24]":"border-[#e4e6e8]"}`}>{c.name}<span className="ml-1 text-[9px] text-[#73777d]">({categoryCounts[c.slug]||0})</span></button>)}</div></div><div><p className="text-[10px] font-black uppercase text-[#73777d]">Marques</p><div className="mt-3 flex flex-wrap gap-2">{brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={`rounded-lg border px-3 py-2 text-[10px] font-black ${brand===b?"border-[#ed1c24] bg-[#ed1c24] text-white":"border-[#e4e6e8]"}`}>{b}</button>)}</div></div><div><div className="flex justify-between text-[10px] font-black uppercase text-[#73777d]"><span>Prix maximum</span><span>{maxPrice.toLocaleString("fr-FR")} FCFA</span></div><input type="range" min="0" max="3000000" step="10000" value={maxPrice} onChange={e=>setMaxPrice(Number(e.target.value))} className="mt-3 w-full accent-[#ed1c24]"/></div><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={onlyAvailable} onChange={e=>setOnlyAvailable(e.target.checked)} className="accent-[#ed1c24]"/> En stock uniquement</label><div className="flex gap-2"><button onClick={resetFilters} className="flex-1 rounded-xl border border-[#e4e6e8] py-3 text-xs font-black">Réinitialiser</button><button onClick={()=>setMobileFilters(false)} className="flex-1 rounded-xl bg-[#ed1c24] py-3 text-xs font-black text-white">Voir {filtered.length} produit(s)</button></div></div></aside></div>}
     </main>
   );
 }
