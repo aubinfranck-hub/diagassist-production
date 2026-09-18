@@ -2229,7 +2229,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // --- Admin : tableau de bord (compteurs) ---
   app.get("/api/admin/shop/dashboard", requireAdminAuth, async (req, res) => {
-    if (!dbPool) return res.json({ success: true, stats: {} });
+    if (!dbPool) return res.json({ success: true, stats: { ordersByStatus: [], partRequestsByStatus: [], totalCustomers: 0, followupsDueSoon: 0 } });
     const [orders, parts, customers, followups] = await Promise.all([
       dbPool.query("SELECT status, COUNT(*) FROM shop_orders GROUP BY status"),
       dbPool.query("SELECT status, COUNT(*) FROM shop_part_requests GROUP BY status"),

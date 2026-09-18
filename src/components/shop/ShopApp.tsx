@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ShoppingBag, Phone, ArrowLeft, Loader2, CheckCircle2, Package, Wrench, Video as VideoIcon } from "lucide-react";
+import ShopAdmin from "./ShopAdmin";
 
 interface ShopProduct {
   id: number;
@@ -365,6 +366,7 @@ function ShopPartRequest({ onBack }: { onBack: () => void }) {
 export default function ShopApp() {
   const parsePath = () => {
     const parts = window.location.pathname.split("/").filter(Boolean); // ["boutique", "produit", "slug"] ou ["boutique", "piece-etranger"]
+    if (parts[1] === "admin") return { screen: "admin" as const, slug: null };
     if (parts[1] === "produit" && parts[2]) return { screen: "product" as const, slug: parts[2] };
     if (parts[1] === "piece-etranger") return { screen: "part-request" as const, slug: null };
     return { screen: "catalog" as const, slug: null };
@@ -383,6 +385,8 @@ export default function ShopApp() {
     setRoute(parsePath());
     window.scrollTo(0, 0);
   };
+
+  if (route.screen === "admin") return <ShopAdmin />;
 
   return (
     <div className="min-h-screen bg-slate-950">
