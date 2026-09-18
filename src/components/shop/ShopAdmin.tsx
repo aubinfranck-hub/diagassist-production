@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard, Package, ShoppingCart, Wrench, Users, Plus, X, Lock,
-  Trash2, Loader2, ChevronRight, Phone, Bell, RefreshCw, TrendingUp, ShoppingBag, Clock, Banknote,
+  Trash2, Loader2, ChevronRight, Phone, PhoneCall, MessageCircle, Bell, RefreshCw, TrendingUp, ShoppingBag, Clock, Banknote,
 } from "lucide-react";
 
 type Tab = "dashboard" | "products" | "orders" | "parts" | "customers" | "followups";
@@ -14,13 +14,9 @@ async function shopFetch(auth: { header: string; value: string }, url: string, o
   return res.json();
 }
 
-// Renvoie automatiquement le header d'authentification à utiliser : la session admin déjà
-// ouverte dans l'app principale DiagAssist (auth_session_token) si elle existe et est
-// reconnue admin, sinon un code admin saisi manuellement (x-admin-code / ADMIN_SECRET).
 function useShopAuth() {
   const [auth, setAuth] = useState<{ header: string; value: string } | null>(null);
   const [checking, setChecking] = useState(true);
-
   useEffect(() => {
     const existingToken = localStorage.getItem("auth_session_token");
     const manualCode = localStorage.getItem("shop_admin_code");
@@ -39,7 +35,6 @@ function useShopAuth() {
       setChecking(false);
     })();
   }, []);
-
   const saveCode = (code: string) => { localStorage.setItem("shop_admin_code", code); setAuth({ header: "x-admin-code", value: code }); };
   const clear = () => { localStorage.removeItem("shop_admin_code"); setAuth(null); };
   return { auth, checking, saveCode, clear };
@@ -49,509 +44,109 @@ function AdminGate({ onValidated }: { onValidated: (code: string) => void }) {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
-
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setChecking(true);
-    setError(null);
+    e.preventDefault(); setChecking(true); setError(null);
     const data = await shopFetch({ header: "x-admin-code", value: input }, "/api/admin/shop/dashboard");
     setChecking(false);
-    if (data.success) onValidated(input);
-    else setError("Code incorrect.");
+    if (data.success) onValidated(input); else setError("Code incorrect.");
   };
-
-  return (
-    <div className="max-w-sm mx-auto px-4 py-24 text-center">
-      <Lock className="w-10 h-10 text-slate-600 mx-auto mb-4" />
-      <h1 className="text-lg font-bold text-white mb-4">Admin Boutique</h1>
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <input
-          type="password" autoFocus placeholder="Code admin" value={input} onChange={(e) => setInput(e.target.value)}
-          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white text-center"
-        />
-        {error && <p className="text-xs text-red-400">{error}</p>}
-        <button type="submit" disabled={checking} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer">
-          {checking ? "Vérification..." : "Entrer"}
-        </button>
-      </form>
-    </div>
-  );
+  return <div className="max-w-sm mx-auto px-4 py-24 text-center">
+    <Lock className="w-10 h-10 text-slate-600 mx-auto mb-4" />
+    <h1 className="text-lg font-bold text-white mb-4">Admin Boutique</h1>
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <input type="password" autoFocus placeholder="Code admin" value={input} onChange={(e) => setInput(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white text-center" />
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      <button type="submit" disabled={checking} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer">{checking ? "Vérification..." : "Entrer"}</button>
+    </form>
+  </div>;
 }
 
 function Dashboard({ auth }: { auth: any }) {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const load = () => {
-    setLoading(true);
-    shopFetch(auth, "/api/admin/shop/dashboard").then((d) => d.success && setStats(d.stats)).finally(() => setLoading(false));
-  };
+  const load = () => { setLoading(true); shopFetch(auth, "/api/admin/shop/dashboard").then((d) => d.success && setStats(d.stats)).finally(() => setLoading(false)); };
   useEffect(load, [auth]);
   if (loading && !stats) return <Loader2 className="w-5 h-5 animate-spin text-slate-500 mx-auto mt-10" />;
   if (!stats) return <p className="text-sm text-slate-500 text-center py-10">Impossible de charger le tableau de bord.</p>;
   const money = (value: number) => Number(value || 0).toLocaleString("fr-FR") + " FCFA";
-  const label = (status: string) => ({
-    nouvelle: "Nouvelle", a_contacter: "À contacter", contactee: "Contactée", confirmee: "Confirmée",
-    en_traitement: "En traitement", prete: "Prête", livree: "Livrée", annulee: "Annulée",
-    client_injoignable: "Injoignable",
-  } as Record<string, string>)[status] || status;
-  const ordersByStatus = stats.ordersByStatus || [];
-  const partRequestsByStatus = stats.partRequestsByStatus || [];
-  const recentOrders = stats.recentOrders || [];
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div><p className="text-base font-bold text-white">Pilotage commercial</p><p className="text-xs text-slate-500">Vue rapide de l'activité boutique</p></div>
-        <button onClick={load} className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white cursor-pointer" title="Actualiser"><RefreshCw className="w-4 h-4" /></button>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-emerald-400 mb-2"><Banknote className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">CA confirmé</span></div><p className="text-xl font-bold text-white">{money(stats.confirmedRevenue)}</p></div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-sky-400 mb-2"><ShoppingBag className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">Aujourd'hui</span></div><p className="text-xl font-bold text-white">{stats.todayOrders || 0} <span className="text-xs font-normal text-slate-500">commande(s)</span></p><p className="text-[10px] text-slate-500 mt-1">{money(stats.todayRevenue)}</p></div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-amber-400 mb-2"><Clock className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">À traiter</span></div><p className="text-xl font-bold text-white">{stats.pendingOrders || 0}</p><p className="text-[10px] text-slate-500 mt-1">hors livrées / annulées</p></div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-violet-400 mb-2"><Users className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">Clients</span></div><p className="text-xl font-bold text-white">{stats.totalCustomers || 0}</p><p className="text-[10px] text-slate-500 mt-1">{stats.followupsDueSoon || 0} relance(s) sous 7j</p></div>
-      </div>
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3"><div><p className="text-xs uppercase text-slate-500 font-semibold">Conversion commerciale</p><p className="text-[10px] text-slate-600 mt-0.5">Commandes confirmées ou livrées / commandes totales</p></div><div className="flex items-center gap-1 text-emerald-400"><TrendingUp className="w-4 h-4" /><span className="text-lg font-bold">{stats.confirmationRate || 0}%</span></div></div>
-        <div className="h-2 rounded-full bg-slate-800 overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, Number(stats.confirmationRate || 0)))}%` }} /></div>
-        <p className="text-[10px] text-slate-500 mt-2">{stats.confirmedOrders || 0} confirmée(s) / {stats.totalOrders || 0} commande(s)</p>
-      </div>
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <p className="text-xs uppercase text-slate-500 font-semibold mb-3">Dernières commandes</p>
-        {recentOrders.length === 0 ? <p className="text-xs text-slate-600">Aucune commande.</p> : recentOrders.map((o: any) => (
-          <div key={o.id} className="flex items-center gap-3 py-2 border-b border-slate-800 last:border-0">
-            <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center shrink-0"><ShoppingBag className="w-3.5 h-3.5 text-slate-400" /></div>
-            <div className="flex-1 min-w-0"><p className="text-xs font-semibold text-white truncate">{o.product_name_snapshot || "Commande"}</p><p className="text-[10px] text-slate-500 truncate">{o.order_ref || `#${o.id}`} · {o.customer_name || "Client"} · Qté {o.quantity}</p></div>
-            <div className="text-right shrink-0"><p className="text-xs font-bold text-white">{money(Number(o.unit_price_snapshot || 0) * Number(o.quantity || 1))}</p><p className="text-[10px] text-slate-500">{label(o.status)}</p></div>
-          </div>
-        ))}
-      </div>
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><p className="text-xs uppercase text-slate-500 font-semibold mb-2">Commandes par statut</p>{ordersByStatus.length === 0 ? <p className="text-xs text-slate-600">Aucune commande.</p> : ordersByStatus.map((s: any) => <div key={s.status} className="flex justify-between text-sm py-1.5"><span className="text-slate-300">{label(s.status)}</span><span className="text-white font-bold">{s.count}</span></div>)}</div>
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><p className="text-xs uppercase text-slate-500 font-semibold mb-2">Demandes de pièces par statut</p>{partRequestsByStatus.length === 0 ? <p className="text-xs text-slate-600">Aucune demande.</p> : partRequestsByStatus.map((s: any) => <div key={s.status} className="flex justify-between text-sm py-1.5"><span className="text-slate-300">{s.status}</span><span className="text-white font-bold">{s.count}</span></div>)}</div>
+  const label = (status: string) => ({ nouvelle: "Nouvelle", a_contacter: "À contacter", contactee: "Contactée", confirmee: "Confirmée", en_traitement: "En traitement", prete: "Prête", livree: "Livrée", annulee: "Annulée", client_injoignable: "Injoignable" } as Record<string, string>)[status] || status;
+  const ordersByStatus = stats.ordersByStatus || [], partRequestsByStatus = stats.partRequestsByStatus || [], recentOrders = stats.recentOrders || [];
+  return <div className="space-y-4">
+    <div className="flex items-center justify-between"><div><p className="text-base font-bold text-white">Pilotage commercial</p><p className="text-xs text-slate-500">Vue rapide de l'activité boutique</p></div><button onClick={load} className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white cursor-pointer" title="Actualiser"><RefreshCw className="w-4 h-4" /></button></div>
+    <div className="grid grid-cols-2 gap-3">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-emerald-400 mb-2"><Banknote className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">CA confirmé</span></div><p className="text-xl font-bold text-white">{money(stats.confirmedRevenue)}</p></div>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-sky-400 mb-2"><ShoppingBag className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">Aujourd'hui</span></div><p className="text-xl font-bold text-white">{stats.todayOrders || 0} <span className="text-xs font-normal text-slate-500">commande(s)</span></p><p className="text-[10px] text-slate-500 mt-1">{money(stats.todayRevenue)}</p></div>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-amber-400 mb-2"><Clock className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">À traiter</span></div><p className="text-xl font-bold text-white">{stats.pendingOrders || 0}</p><p className="text-[10px] text-slate-500 mt-1">hors livrées / annulées</p></div>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-violet-400 mb-2"><Users className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">Clients</span></div><p className="text-xl font-bold text-white">{stats.totalCustomers || 0}</p><p className="text-[10px] text-slate-500 mt-1">{stats.followupsDueSoon || 0} relance(s) sous 7j</p></div>
     </div>
-  );
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center justify-between mb-3"><div><p className="text-xs uppercase text-slate-500 font-semibold">Conversion commerciale</p><p className="text-[10px] text-slate-600 mt-0.5">Commandes confirmées ou livrées / commandes totales</p></div><div className="flex items-center gap-1 text-emerald-400"><TrendingUp className="w-4 h-4" /><span className="text-lg font-bold">{stats.confirmationRate || 0}%</span></div></div><div className="h-2 rounded-full bg-slate-800 overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, Number(stats.confirmationRate || 0)))}%` }} /></div><p className="text-[10px] text-slate-500 mt-2">{stats.confirmedOrders || 0} confirmée(s) / {stats.totalOrders || 0} commande(s)</p></div>
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><p className="text-xs uppercase text-slate-500 font-semibold mb-3">Dernières commandes</p>{recentOrders.length === 0 ? <p className="text-xs text-slate-600">Aucune commande.</p> : recentOrders.map((o: any) => <div key={o.id} className="flex items-center gap-3 py-2 border-b border-slate-800 last:border-0"><div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center shrink-0"><ShoppingBag className="w-3.5 h-3.5 text-slate-400" /></div><div className="flex-1 min-w-0"><p className="text-xs font-semibold text-white truncate">{o.product_name_snapshot || "Commande"}</p><p className="text-[10px] text-slate-500 truncate">{o.order_ref || `#${o.id}`} · {o.customer_name || "Client"} · Qté {o.quantity}</p></div><div className="text-right shrink-0"><p className="text-xs font-bold text-white">{money(Number(o.unit_price_snapshot || 0) * Number(o.quantity || 1))}</p><p className="text-[10px] text-slate-500">{label(o.status)}</p></div></div>)}</div>
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><p className="text-xs uppercase text-slate-500 font-semibold mb-2">Commandes par statut</p>{ordersByStatus.length === 0 ? <p className="text-xs text-slate-600">Aucune commande.</p> : ordersByStatus.map((s: any) => <div key={s.status} className="flex justify-between text-sm py-1.5"><span className="text-slate-300">{label(s.status)}</span><span className="text-white font-bold">{s.count}</span></div>)}</div>
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><p className="text-xs uppercase text-slate-500 font-semibold mb-2">Demandes de pièces par statut</p>{partRequestsByStatus.length === 0 ? <p className="text-xs text-slate-600">Aucune demande.</p> : partRequestsByStatus.map((s: any) => <div key={s.status} className="flex justify-between text-sm py-1.5"><span className="text-slate-300">{s.status}</span><span className="text-white font-bold">{s.count}</span></div>)}</div>
+  </div>;
 }
+
 function ProductForm({ auth, categories, onDone, onCancel }: { auth: any; categories: any[]; onDone: () => void; onCancel: () => void }) {
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [price, setPrice] = useState("");
-  const [description, setDescription] = useState("");
-  const [specs, setSpecs] = useState("");
-  const [compatibility, setCompatibility] = useState("");
-  const [boxContents, setBoxContents] = useState("");
-  const [warranty, setWarranty] = useState("");
-  const [photos, setPhotos] = useState<string[]>([]);
-  const [videos, setVideos] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
-
-  const addFile = (file: File, setter: (fn: (arr: string[]) => string[]) => void) => {
-    const reader = new FileReader();
-    reader.onload = () => setter((arr) => [...arr, reader.result as string]);
-    reader.readAsDataURL(file);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    await shopFetch(auth, "/api/admin/shop/products", {
-      method: "POST",
-      body: JSON.stringify({
-        name, category_id: categoryId || null, price_fcfa: price ? Number(price) : null,
-        description, specs, compatibility, box_contents: boxContents, warranty, photos, videos,
-      }),
-    });
-    setSaving(false);
-    onDone();
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
-      <div className="flex justify-between items-center mb-1">
-        <p className="text-sm font-bold text-white">Nouveau produit</p>
-        <button type="button" onClick={onCancel} className="text-slate-500 cursor-pointer"><X className="w-4 h-4" /></button>
-      </div>
-      <input required placeholder="Nom du produit" value={name} onChange={(e) => setName(e.target.value)}
-        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-      <div className="flex gap-2">
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white">
-          <option value="">Catégorie...</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <input type="number" placeholder="Prix FCFA" value={price} onChange={(e) => setPrice(e.target.value)}
-          className="w-32 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-      </div>
-      <textarea placeholder="Description" rows={2} value={description} onChange={(e) => setDescription(e.target.value)}
-        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" />
-      <textarea placeholder="Caractéristiques" rows={2} value={specs} onChange={(e) => setSpecs(e.target.value)}
-        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" />
-      <textarea placeholder="Compatibilité" rows={2} value={compatibility} onChange={(e) => setCompatibility(e.target.value)}
-        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" />
-      <input placeholder="Contenu de la boîte" value={boxContents} onChange={(e) => setBoxContents(e.target.value)}
-        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-      <input placeholder="Garantie" value={warranty} onChange={(e) => setWarranty(e.target.value)}
-        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-
-      <div>
-        <label className="text-xs text-slate-400">Photos ({photos.length})</label>
-        <input type="file" accept="image/*" multiple onChange={(e) => (Array.from(e.target.files || []) as File[]).forEach((f) => addFile(f, setPhotos))}
-          className="block w-full text-xs text-slate-400 mt-1" />
-      </div>
-      <div>
-        <label className="text-xs text-slate-400">Vidéos ({videos.length})</label>
-        <input type="file" accept="video/*" multiple onChange={(e) => (Array.from(e.target.files || []) as File[]).forEach((f) => addFile(f, setVideos))}
-          className="block w-full text-xs text-slate-400 mt-1" />
-      </div>
-
-      <button type="submit" disabled={saving} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-lg cursor-pointer">
-        {saving ? "Enregistrement..." : "Créer le produit"}
-      </button>
-    </form>
-  );
+  const [name, setName] = useState(""), [categoryId, setCategoryId] = useState(""), [price, setPrice] = useState(""), [description, setDescription] = useState(""), [specs, setSpecs] = useState(""), [compatibility, setCompatibility] = useState(""), [boxContents, setBoxContents] = useState(""), [warranty, setWarranty] = useState("");
+  const [photos, setPhotos] = useState<string[]>([]), [videos, setVideos] = useState<string[]>([]), [saving, setSaving] = useState(false);
+  const addFile = (file: File, setter: (fn: (arr: string[]) => string[]) => void) => { const reader = new FileReader(); reader.onload = () => setter((arr) => [...arr, reader.result as string]); reader.readAsDataURL(file); };
+  const handleSubmit = async (e: React.FormEvent) => { e.preventDefault(); setSaving(true); await shopFetch(auth, "/api/admin/shop/products", { method: "POST", body: JSON.stringify({ name, category_id: categoryId || null, price_fcfa: price ? Number(price) : null, description, specs, compatibility, box_contents: boxContents, warranty, photos, videos }) }); setSaving(false); onDone(); };
+  return <form onSubmit={handleSubmit} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5"><div className="flex justify-between items-center mb-1"><p className="text-sm font-bold text-white">Nouveau produit</p><button type="button" onClick={onCancel} className="text-slate-500 cursor-pointer"><X className="w-4 h-4" /></button></div><input required placeholder="Nom du produit" value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /><div className="flex gap-2"><select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"><option value="">Catégorie...</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select><input type="number" placeholder="Prix FCFA" value={price} onChange={(e) => setPrice(e.target.value)} className="w-32 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /></div><textarea placeholder="Description" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" /><textarea placeholder="Caractéristiques" rows={2} value={specs} onChange={(e) => setSpecs(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" /><textarea placeholder="Compatibilité" rows={2} value={compatibility} onChange={(e) => setCompatibility(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" /><input placeholder="Contenu de la boîte" value={boxContents} onChange={(e) => setBoxContents(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /><input placeholder="Garantie" value={warranty} onChange={(e) => setWarranty(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /><div><label className="text-xs text-slate-400">Photos ({photos.length})</label><input type="file" accept="image/*" multiple onChange={(e) => (Array.from(e.target.files || []) as File[]).forEach((f) => addFile(f, setPhotos))} className="block w-full text-xs text-slate-400 mt-1" /></div><div><label className="text-xs text-slate-400">Vidéos ({videos.length})</label><input type="file" accept="video/*" multiple onChange={(e) => (Array.from(e.target.files || []) as File[]).forEach((f) => addFile(f, setVideos))} className="block w-full text-xs text-slate-400 mt-1" /></div><button type="submit" disabled={saving} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-lg cursor-pointer">{saving ? "Enregistrement..." : "Créer le produit"}</button></form>;
 }
 
 function ProductsTab({ auth }: { auth: any }) {
-  const [products, setProducts] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
-  const [showForm, setShowForm] = useState(false);
-
-  const load = () => {
-    shopFetch(auth, "/api/admin/shop/products").then((d) => d.success && setProducts(d.products));
-    shopFetch(auth, "/api/admin/shop/categories").then((d) => d.success && setCategories(d.categories));
-  };
+  const [products, setProducts] = useState<any[]>([]), [categories, setCategories] = useState<any[]>([]), [showForm, setShowForm] = useState(false), [newCatName, setNewCatName] = useState("");
+  const load = () => { shopFetch(auth, "/api/admin/shop/products").then((d) => d.success && setProducts(d.products)); shopFetch(auth, "/api/admin/shop/categories").then((d) => d.success && setCategories(d.categories)); };
   useEffect(load, [auth]);
-
-  const [newCatName, setNewCatName] = useState("");
-  const addCategory = async () => {
-    if (!newCatName.trim()) return;
-    await shopFetch(auth, "/api/admin/shop/categories", { method: "POST", body: JSON.stringify({ name: newCatName }) });
-    setNewCatName("");
-    load();
-  };
-
-  const deleteProduct = async (id: number) => {
-    if (!confirm("Désactiver ce produit ?")) return;
-    await shopFetch(auth, `/api/admin/shop/products/${id}`, { method: "DELETE" });
-    load();
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="flex gap-2">
-        <input placeholder="Nouvelle catégorie" value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
-          className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white" />
-        <button onClick={addCategory} className="bg-slate-800 text-white text-xs font-semibold px-3 rounded-lg cursor-pointer">Ajouter</button>
-      </div>
-
-      {!showForm ? (
-        <button onClick={() => setShowForm(true)} className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer">
-          <Plus className="w-4 h-4" /> Nouveau produit
-        </button>
-      ) : (
-        <ProductForm auth={auth} categories={categories} onDone={() => { setShowForm(false); load(); }} onCancel={() => setShowForm(false)} />
-      )}
-
-      {products.map((p) => (
-        <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
-          <div className="w-12 h-12 rounded-lg bg-slate-800 overflow-hidden shrink-0">
-            {p.photos?.[0] && <img src={p.photos[0]} className="w-full h-full object-cover" />}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-white truncate">{p.name}</p>
-            <p className="text-xs text-slate-500">{p.category_name || "—"} · {p.price_fcfa ? p.price_fcfa.toLocaleString("fr-FR") + " FCFA" : "Prix sur demande"}</p>
-          </div>
-          <button onClick={() => deleteProduct(p.id)} className="text-slate-500 hover:text-red-400 cursor-pointer p-1"><Trash2 className="w-4 h-4" /></button>
-        </div>
-      ))}
-    </div>
-  );
+  const addCategory = async () => { if (!newCatName.trim()) return; await shopFetch(auth, "/api/admin/shop/categories", { method: "POST", body: JSON.stringify({ name: newCatName }) }); setNewCatName(""); load(); };
+  const deleteProduct = async (id: number) => { if (!confirm("Désactiver ce produit ?")) return; await shopFetch(auth, `/api/admin/shop/products/${id}`, { method: "DELETE" }); load(); };
+  return <div className="space-y-3"><div className="flex gap-2"><input placeholder="Nouvelle catégorie" value={newCatName} onChange={(e) => setNewCatName(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white" /><button onClick={addCategory} className="bg-slate-800 text-white text-xs font-semibold px-3 rounded-lg cursor-pointer">Ajouter</button></div>{!showForm ? <button onClick={() => setShowForm(true)} className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer"><Plus className="w-4 h-4" /> Nouveau produit</button> : <ProductForm auth={auth} categories={categories} onDone={() => { setShowForm(false); load(); }} onCancel={() => setShowForm(false)} />}{products.map((p) => <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-slate-800 overflow-hidden shrink-0">{p.photos?.[0] && <img src={p.photos[0]} className="w-full h-full object-cover" />}</div><div className="flex-1 min-w-0"><p className="text-sm font-semibold text-white truncate">{p.name}</p><p className="text-xs text-slate-500">{p.category_name || "—"} · {p.price_fcfa ? p.price_fcfa.toLocaleString("fr-FR") + " FCFA" : "Prix sur demande"}</p></div><button onClick={() => deleteProduct(p.id)} className="text-slate-500 hover:text-red-400 cursor-pointer p-1"><Trash2 className="w-4 h-4" /></button></div>)}</div>;
 }
 
 function OrdersTab({ auth }: { auth: any }) {
   const [orders, setOrders] = useState<any[]>([]);
   useEffect(() => { shopFetch(auth, "/api/admin/shop/orders").then((d) => d.success && setOrders(d.orders)); }, [auth]);
-
-  const updateStatus = async (id: number, status: string) => {
-    await shopFetch(auth, `/api/admin/shop/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
-    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
-  };
-
+  const updateStatus = async (id: number, status: string) => { await shopFetch(auth, `/api/admin/shop/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o))); };
   if (orders.length === 0) return <p className="text-sm text-slate-500 text-center py-10">Aucune commande.</p>;
-
-  return (
-    <div className="space-y-2.5">
-      {orders.map((o) => (
-        <div key={o.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3">
-          <div className="flex justify-between items-start mb-1.5">
-            <div>
-              <p className="text-sm font-semibold text-white">{o.product_name_snapshot}</p>
-              <p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {o.customer_phone} {o.customer_name && `· ${o.customer_name}`}</p>
-            </div>
-            <span className="text-xs text-slate-500">Qté {o.quantity}</span>
-          </div>
-          <select value={o.status} onChange={(e) => updateStatus(o.id, e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white">
-            {ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-      ))}
-    </div>
-  );
+  return <div className="space-y-2.5">{orders.map((o) => <div key={o.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3"><div className="flex justify-between items-start mb-1.5"><div><p className="text-sm font-semibold text-white">{o.product_name_snapshot}</p><p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {o.customer_phone} {o.customer_name && `· ${o.customer_name}`}</p></div><span className="text-xs text-slate-500">Qté {o.quantity}</span></div><select value={o.status} onChange={(e) => updateStatus(o.id, e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white">{ORDER_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>)}</div>;
 }
 
 function PartsTab({ auth }: { auth: any }) {
   const [requests, setRequests] = useState<any[]>([]);
   useEffect(() => { shopFetch(auth, "/api/admin/shop/part-requests").then((d) => d.success && setRequests(d.requests)); }, [auth]);
-
-  const update = async (id: number, fields: any) => {
-    await shopFetch(auth, `/api/admin/shop/part-requests/${id}`, { method: "PATCH", body: JSON.stringify(fields) });
-    setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...fields } : r)));
-  };
-
+  const update = async (id: number, fields: any) => { await shopFetch(auth, `/api/admin/shop/part-requests/${id}`, { method: "PATCH", body: JSON.stringify(fields) }); setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...fields } : r))); };
   if (requests.length === 0) return <p className="text-sm text-slate-500 text-center py-10">Aucune demande.</p>;
-
-  return (
-    <div className="space-y-2.5">
-      {requests.map((r) => (
-        <div key={r.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-2">
-          <p className="text-sm font-semibold text-white">{r.part_description}</p>
-          <p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {r.customer_phone} {r.customer_name && `· ${r.customer_name}`}</p>
-          {r.carte_grise_base64 && <a href={r.carte_grise_base64} target="_blank" className="text-xs text-sky-400 underline">Voir carte grise</a>}
-          <select value={r.status} onChange={(e) => update(r.id, { status: e.target.value })}
-            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white">
-            {PART_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <input type="number" placeholder="Cotation FCFA" defaultValue={r.quote_fcfa || ""} onBlur={(e) => update(r.id, { quote_fcfa: e.target.value ? Number(e.target.value) : null })}
-            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" />
-        </div>
-      ))}
-    </div>
-  );
+  return <div className="space-y-2.5">{requests.map((r) => <div key={r.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-2"><p className="text-sm font-semibold text-white">{r.part_description}</p><p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {r.customer_phone} {r.customer_name && `· ${r.customer_name}`}</p>{r.carte_grise_base64 && <a href={r.carte_grise_base64} target="_blank" className="text-xs text-sky-400 underline">Voir carte grise</a>}<select value={r.status} onChange={(e) => update(r.id, { status: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white">{PART_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input type="number" placeholder="Cotation FCFA" defaultValue={r.quote_fcfa || ""} onBlur={(e) => update(r.id, { quote_fcfa: e.target.value ? Number(e.target.value) : null })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" /></div>)}</div>;
 }
 
 function FollowupsTab({ auth }: { auth: any }) {
-  const [followups, setFollowups] = useState<any[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [phone, setPhone] = useState("");
-  const [message, setMessage] = useState("");
-  const [channel, setChannel] = useState("whatsapp");
-  const [scheduledFor, setScheduledFor] = useState("");
-  const [saving, setSaving] = useState(false);
-
+  const [followups, setFollowups] = useState<any[]>([]), [showForm, setShowForm] = useState(false), [phone, setPhone] = useState(""), [message, setMessage] = useState(""), [channel, setChannel] = useState("whatsapp"), [scheduledFor, setScheduledFor] = useState(""), [saving, setSaving] = useState(false);
   const load = () => shopFetch(auth, "/api/admin/shop/followups").then((d) => d.success && setFollowups(d.followups));
   useEffect(load, [auth]);
-
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    await shopFetch(auth, "/api/admin/shop/followups", {
-      method: "POST",
-      body: JSON.stringify({ customer_phone: phone.replace(/[\s-]/g, ""), message, channel, scheduled_for: scheduledFor || null }),
-    });
-    setSaving(false);
-    setPhone(""); setMessage(""); setScheduledFor(""); setShowForm(false);
-    load();
-  };
-
-  const markDone = async (id: number, status: string) => {
-    await shopFetch(auth, `/api/admin/shop/followups/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
-    setFollowups((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f)));
-  };
-
-  return (
-    <div className="space-y-3">
-      {!showForm ? (
-        <button onClick={() => setShowForm(true)} className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer">
-          <Plus className="w-4 h-4" /> Programmer une relance
-        </button>
-      ) : (
-        <form onSubmit={create} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5">
-          <div className="flex justify-between items-center mb-1">
-            <p className="text-sm font-bold text-white">Nouvelle relance</p>
-            <button type="button" onClick={() => setShowForm(false)} className="text-slate-500 cursor-pointer"><X className="w-4 h-4" /></button>
-          </div>
-          <input required placeholder="Téléphone du client" value={phone} onChange={(e) => setPhone(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-          <textarea placeholder="Message" rows={2} value={message} onChange={(e) => setMessage(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" />
-          <div className="flex gap-2">
-            <select value={channel} onChange={(e) => setChannel(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white">
-              <option value="whatsapp">WhatsApp</option>
-              <option value="appel">Appel</option>
-              <option value="sms">SMS</option>
-            </select>
-            <input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)}
-              className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-          </div>
-          <button type="submit" disabled={saving} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-lg cursor-pointer">
-            {saving ? "Enregistrement..." : "Programmer"}
-          </button>
-        </form>
-      )}
-
-      {followups.length === 0 ? (
-        <p className="text-sm text-slate-500 text-center py-10">Aucune relance programmée.</p>
-      ) : followups.map((f) => (
-        <div key={f.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1.5">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-semibold text-white">{f.customer_name || f.customer_phone}</p>
-              <p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {f.customer_phone} · {f.channel}</p>
-            </div>
-            <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${
-              f.status === "programmee" ? "bg-amber-900/40 text-amber-400" :
-              f.status === "commande_confirmee" ? "bg-emerald-900/40 text-emerald-400" : "bg-slate-800 text-slate-400"
-            }`}>{f.status}</span>
-          </div>
-          {f.message && <p className="text-xs text-slate-300">{f.message}</p>}
-          {f.scheduled_for && <p className="text-[10px] text-slate-500">Prévu : {new Date(f.scheduled_for).toLocaleString("fr-FR")}</p>}
-          {f.status === "programmee" && (
-            <div className="flex gap-1.5 pt-1">
-              <button onClick={() => markDone(f.id, "envoyee")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Envoyée</button>
-              <button onClick={() => markDone(f.id, "client_joint")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Client joint</button>
-              <button onClick={() => markDone(f.id, "commande_confirmee")} className="text-[10px] font-semibold bg-emerald-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Commande confirmée</button>
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
+  const create = async (e: React.FormEvent) => { e.preventDefault(); setSaving(true); await shopFetch(auth, "/api/admin/shop/followups", { method: "POST", body: JSON.stringify({ customer_phone: phone.replace(/[\s-]/g, ""), message, channel, scheduled_for: scheduledFor || null }) }); setSaving(false); setPhone(""); setMessage(""); setScheduledFor(""); setShowForm(false); load(); };
+  const markDone = async (id: number, status: string) => { await shopFetch(auth, `/api/admin/shop/followups/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); setFollowups((prev) => prev.map((f) => (f.id === id ? { ...f, status } : f))); };
+  return <div className="space-y-3">{!showForm ? <button onClick={() => setShowForm(true)} className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer"><Plus className="w-4 h-4" /> Programmer une relance</button> : <form onSubmit={create} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2.5"><div className="flex justify-between items-center mb-1"><p className="text-sm font-bold text-white">Nouvelle relance</p><button type="button" onClick={() => setShowForm(false)} className="text-slate-500 cursor-pointer"><X className="w-4 h-4" /></button></div><input required placeholder="Téléphone du client" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /><textarea placeholder="Message" rows={2} value={message} onChange={(e) => setMessage(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white resize-none" /><div className="flex gap-2"><select value={channel} onChange={(e) => setChannel(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"><option value="whatsapp">WhatsApp</option><option value="appel">Appel</option><option value="sms">SMS</option></select><input type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /></div><button type="submit" disabled={saving} className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-2.5 rounded-lg cursor-pointer">{saving ? "Enregistrement..." : "Programmer"}</button></form>}{followups.length === 0 ? <p className="text-sm text-slate-500 text-center py-10">Aucune relance programmée.</p> : followups.map((f) => <div key={f.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-1.5"><div className="flex justify-between items-start"><div><p className="text-sm font-semibold text-white">{f.customer_name || f.customer_phone}</p><p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {f.customer_phone} · {f.channel}</p></div><span className={`text-[10px] font-bold px-2 py-1 rounded-full ${f.status === "programmee" ? "bg-amber-900/40 text-amber-400" : f.status === "commande_confirmee" ? "bg-emerald-900/40 text-emerald-400" : "bg-slate-800 text-slate-400"}`}>{f.status}</span></div>{f.message && <p className="text-xs text-slate-300">{f.message}</p>}{f.scheduled_for && <p className="text-[10px] text-slate-500">Prévu : {new Date(f.scheduled_for).toLocaleString("fr-FR")}</p>}{f.status === "programmee" && <div className="flex gap-1.5 pt-1"><button onClick={() => markDone(f.id, "envoyee")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Envoyée</button><button onClick={() => markDone(f.id, "client_joint")} className="text-[10px] font-semibold bg-slate-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Client joint</button><button onClick={() => markDone(f.id, "commande_confirmee")} className="text-[10px] font-semibold bg-emerald-800 text-white px-2.5 py-1 rounded-full cursor-pointer">Commande confirmée</button></div>}</div>)}</div>;
 }
 
 function CustomersTab({ auth }: { auth: any }) {
   const openWhatsApp = (phone: string, message = "") => {
-    const clean = phone.replace(/\D/g, "");
-    window.open(`https://wa.me/${clean}${message ? `?text=${encodeURIComponent(message)}` : ""}`, "_blank", "noopener,noreferrer");
-  };
-
-  const openWhatsApp = (phone: string, message = "") => {
-    const clean = phone.replace(/[^\\d+]/g, "").replace(/^00/, "+");
+    const clean = phone.replace(/[^\d+]/g, "").replace(/^00/, "+");
     window.open(`https://wa.me/${clean.replace("+", "")}${message ? `?text=${encodeURIComponent(message)}` : ""}`, "_blank", "noopener,noreferrer");
   };
   const callCustomer = (phone: string) => { window.location.href = `tel:${phone}`; };
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<any>(null);
-  const [editing, setEditing] = useState(false);
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-
+  const [customers, setCustomers] = useState<any[]>([]), [search, setSearch] = useState(""), [selected, setSelected] = useState<any>(null), [editing, setEditing] = useState(false), [notes, setNotes] = useState(""), [saving, setSaving] = useState(false);
   const load = (q?: string) => shopFetch(auth, `/api/admin/shop/customers${q ? `?search=${encodeURIComponent(q)}` : ""}`).then((d) => d.success && setCustomers(d.customers));
   useEffect(() => { load(); }, [auth]);
-
-  const openCustomer = async (phone: string) => {
-    const data = await shopFetch(auth, `/api/admin/shop/customers/${encodeURIComponent(phone)}`);
-    if (data.success) setSelected(data);
-  };
-
-  if (selected) {
-    return (
-      <div className="space-y-3">
-        <button onClick={() => setSelected(null)} className="text-xs text-slate-400 cursor-pointer">← Retour</button>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <p className="text-sm font-bold text-white">{selected.customer.name || selected.customer.phone}</p>
-              <p className="text-xs text-slate-500">{selected.customer.phone} {selected.customer.city && `· ${selected.customer.city}`}</p>
-            </div>
-            <button onClick={() => { setEditing(!editing); setNotes(selected.customer.notes || ""); }} className="text-[10px] text-sky-400 font-bold">{editing ? "Fermer" : "Modifier"}</button>
-          </div>
-          {editing && <div className="space-y-2">
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes CRM / préférences / informations commerciales" rows={3}
-              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white resize-none" />
-            <button disabled={saving} onClick={async () => {
-              setSaving(true);
-              await shopFetch(auth, `/api/admin/shop/customers/${encodeURIComponent(selected.customer.phone)}`, { method: "PATCH", body: JSON.stringify({ notes }) });
-              setSelected({ ...selected, customer: { ...selected.customer, notes } });
-              setSaving(false); setEditing(false);
-            }} className="w-full bg-sky-600 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">{saving ? "Enregistrement..." : "Enregistrer les notes"}</button>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => callCustomer(selected.customer.phone)} className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white"><PhoneCall className="w-3.5 h-3.5" /> Appeler</button>
-            <button onClick={() => openWhatsApp(selected.customer.phone, `Bonjour ${selected.customer.name || ""}, ici DiagAssist. Nous revenons vers vous concernant votre demande.`)} className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white"><MessageCircle className="w-3.5 h-3.5" /> WhatsApp</button>
-          </div>
-        </div>
-        <div className="flex items-center justify-between">
-          <p className="text-xs uppercase text-slate-500 font-semibold">Commandes ({selected.orders.length})</p>
-          <span className="text-xs text-slate-500">{selected.orders.reduce((n: number, o: any) => n + Number(o.unit_price_snapshot || 0) * Number(o.quantity || 0), 0).toLocaleString("fr-FR")} FCFA</span>
-        </div>
-        {selected.orders.map((o: any) => <div key={o.id} className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-1">
-          <div className="flex justify-between gap-2"><span className="text-xs font-semibold text-white">{o.product_name_snapshot}</span><span className="text-[10px] text-slate-500">{o.status}</span></div>
-          <p className="text-[10px] text-slate-500">{o.order_ref || `Commande #${o.id}`} · Qté {o.quantity}{o.unit_price_snapshot ? ` · ${Number(o.unit_price_snapshot).toLocaleString("fr-FR")} FCFA` : ""}</p>
-        </div> )}
-        <div className="flex items-center justify-between">
-          <p className="text-xs uppercase text-slate-500 font-semibold">Relances ({selected.followups.length})</p>
-          <button onClick={() => openWhatsApp(selected.customer.phone, `Bonjour ${selected.customer.name || ""}, ici DiagAssist. Nous revenons vers vous pour faire le point sur votre demande.`)} className="text-[10px] text-emerald-400 font-bold">WhatsApp maintenant</button>
-        </div>
-        {selected.followups.slice(0, 5).map((f: any) => <div key={f.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300">
-          <div className="flex justify-between"><span>{f.channel}</span><span className="text-slate-500">{f.status}</span></div>
-          {f.scheduled_for && <p className="text-[10px] text-slate-500 mt-1">{new Date(f.scheduled_for).toLocaleString("fr-FR")}</p>}
-        </div>)}
-        <div className="flex items-center justify-between">
-          <p className="text-xs uppercase text-slate-500 font-semibold">Demandes de pièces ({selected.partRequests.length})</p>
-          <button onClick={() => openWhatsApp(selected.customer.phone, "Bonjour, ici DiagAssist. Nous faisons le point sur votre demande de pièce.")} className="text-[10px] text-emerald-400 font-bold">Relancer</button>
-        </div>
-        {selected.partRequests.map((r: any) => <div key={r.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300">{r.part_description} — {r.status}</div>)}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-2.5">
-      <input placeholder="Rechercher (téléphone ou nom)" value={search}
-        onChange={(e) => { setSearch(e.target.value); load(e.target.value); }}
-        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white" />
-      {customers.map((c) => (
-        <button key={c.phone} onClick={() => openCustomer(c.phone)} className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between cursor-pointer text-left">
-          <div>
-            <p className="text-sm font-semibold text-white">{c.name || c.phone}</p>
-            <p className="text-xs text-slate-500">{c.phone}</p>
-          </div>
-          <ChevronRight className="w-4 h-4 text-slate-600" />
-        </button>
-      ))}
-    </div>
-  );
+  const openCustomer = async (phone: string) => { const data = await shopFetch(auth, `/api/admin/shop/customers/${encodeURIComponent(phone)}`); if (data.success) setSelected(data); };
+  if (selected) return <div className="space-y-3"><button onClick={() => setSelected(null)} className="text-xs text-slate-400 cursor-pointer">← Retour</button><div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3"><div className="flex items-start justify-between gap-2"><div><p className="text-sm font-bold text-white">{selected.customer.name || selected.customer.phone}</p><p className="text-xs text-slate-500">{selected.customer.phone} {selected.customer.city && `· ${selected.customer.city}`}</p></div><button onClick={() => { setEditing(!editing); setNotes(selected.customer.notes || ""); }} className="text-[10px] text-sky-400 font-bold">{editing ? "Fermer" : "Modifier"}</button></div>{editing && <div className="space-y-2"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes CRM / préférences / informations commerciales" rows={3} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white resize-none" /><button disabled={saving} onClick={async () => { setSaving(true); await shopFetch(auth, `/api/admin/shop/customers/${encodeURIComponent(selected.customer.phone)}`, { method: "PATCH", body: JSON.stringify({ notes }) }); setSelected({ ...selected, customer: { ...selected.customer, notes } }); setSaving(false); setEditing(false); }} className="w-full bg-sky-600 disabled:opacity-50 text-white text-xs font-bold py-2 rounded-lg">{saving ? "Enregistrement..." : "Enregistrer les notes"}</button></div>}<div className="grid grid-cols-2 gap-2"><button onClick={() => callCustomer(selected.customer.phone)} className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white"><PhoneCall className="w-3.5 h-3.5" /> Appeler</button><button onClick={() => openWhatsApp(selected.customer.phone, `Bonjour ${selected.customer.name || ""}, ici DiagAssist. Nous revenons vers vous concernant votre demande.`)} className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white"><MessageCircle className="w-3.5 h-3.5" /> WhatsApp</button></div></div><div className="flex items-center justify-between"><p className="text-xs uppercase text-slate-500 font-semibold">Commandes ({selected.orders.length})</p><span className="text-xs text-slate-500">{selected.orders.reduce((n: number, o: any) => n + Number(o.unit_price_snapshot || 0) * Number(o.quantity || 0), 0).toLocaleString("fr-FR")} FCFA</span></div>{selected.orders.map((o: any) => <div key={o.id} className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-1"><div className="flex justify-between gap-2"><span className="text-xs font-semibold text-white">{o.product_name_snapshot}</span><span className="text-[10px] text-slate-500">{o.status}</span></div><p className="text-[10px] text-slate-500">{o.order_ref || `Commande #${o.id}`} · Qté {o.quantity}{o.unit_price_snapshot ? ` · ${Number(o.unit_price_snapshot).toLocaleString("fr-FR")} FCFA` : ""}</p></div>)}<div className="flex items-center justify-between"><p className="text-xs uppercase text-slate-500 font-semibold">Relances ({selected.followups.length})</p><button onClick={() => openWhatsApp(selected.customer.phone, `Bonjour ${selected.customer.name || ""}, ici DiagAssist. Nous revenons vers vous pour faire le point sur votre demande.`)} className="text-[10px] text-emerald-400 font-bold">WhatsApp maintenant</button></div>{selected.followups.slice(0, 5).map((f: any) => <div key={f.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300"><div className="flex justify-between"><span>{f.channel}</span><span className="text-slate-500">{f.status}</span></div>{f.scheduled_for && <p className="text-[10px] text-slate-500 mt-1">{new Date(f.scheduled_for).toLocaleString("fr-FR")}</p>}</div>)}<div className="flex items-center justify-between"><p className="text-xs uppercase text-slate-500 font-semibold">Demandes de pièces ({selected.partRequests.length})</p><button onClick={() => openWhatsApp(selected.customer.phone, "Bonjour, ici DiagAssist. Nous faisons le point sur votre demande de pièce.")} className="text-[10px] text-emerald-400 font-bold">Relancer</button></div>{selected.partRequests.map((r: any) => <div key={r.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300">{r.part_description} — {r.status}</div>)}</div>;
+  return <div className="space-y-2.5"><input placeholder="Rechercher (téléphone ou nom)" value={search} onChange={(e) => { setSearch(e.target.value); load(e.target.value); }} className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white" />{customers.map((c) => <button key={c.phone} onClick={() => openCustomer(c.phone)} className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between cursor-pointer text-left"><div><p className="text-sm font-semibold text-white">{c.name || c.phone}</p><p className="text-xs text-slate-500">{c.phone}</p></div><ChevronRight className="w-4 h-4 text-slate-600" /></button>)}</div>;
 }
 
 export default function ShopAdmin() {
   const { auth, checking, saveCode, clear } = useShopAuth();
   const [tab, setTab] = useState<Tab>("dashboard");
-
   if (checking) return <div className="flex justify-center py-24"><Loader2 className="w-6 h-6 text-slate-500 animate-spin" /></div>;
   if (!auth) return <AdminGate onValidated={saveCode} />;
-
-  const tabs: { id: Tab; label: string; icon: any }[] = [
-    { id: "dashboard", label: "Accueil", icon: LayoutDashboard },
-    { id: "products", label: "Produits", icon: Package },
-    { id: "orders", label: "Commandes", icon: ShoppingCart },
-    { id: "parts", label: "Pièces", icon: Wrench },
-    { id: "customers", label: "Clients", icon: Users },
-    { id: "followups", label: "Relances", icon: Bell },
-  ];
-
-  return (
-    <div className="min-h-screen bg-slate-950 pb-20">
-      <header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur z-10">
-        <span className="font-bold text-white text-sm">Admin Boutique</span>
-        <button onClick={clear} className="text-xs text-slate-500 cursor-pointer">Déconnexion</button>
-      </header>
-
-      <div className="max-w-xl mx-auto px-4 py-4">
-        {tab === "dashboard" && <Dashboard auth={auth} />}
-        {tab === "products" && <ProductsTab auth={auth} />}
-        {tab === "orders" && <OrdersTab auth={auth} />}
-        {tab === "parts" && <PartsTab auth={auth} />}
-        {tab === "customers" && <CustomersTab auth={auth} />}
-        {tab === "followups" && <FollowupsTab auth={auth} />}
-      </div>
-
-      <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex">
-        {tabs.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 cursor-pointer ${tab === t.id ? "text-red-500" : "text-slate-500"}`}>
-            <t.icon className="w-4.5 h-4.5" />
-            <span className="text-[10px]">{t.label}</span>
-          </button>
-        ))}
-      </nav>
-    </div>
-  );
+  const tabs: { id: Tab; label: string; icon: any }[] = [{ id: "dashboard", label: "Accueil", icon: LayoutDashboard }, { id: "products", label: "Produits", icon: Package }, { id: "orders", label: "Commandes", icon: ShoppingCart }, { id: "parts", label: "Pièces", icon: Wrench }, { id: "customers", label: "Clients", icon: Users }, { id: "followups", label: "Relances", icon: Bell }];
+  return <div className="min-h-screen bg-slate-950 pb-20"><header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur z-10"><span className="font-bold text-white text-sm">Admin Boutique</span><button onClick={clear} className="text-xs text-slate-500 cursor-pointer">Déconnexion</button></header><div className="max-w-xl mx-auto px-4 py-4">{tab === "dashboard" && <Dashboard auth={auth} />}{tab === "products" && <ProductsTab auth={auth} />}{tab === "orders" && <OrdersTab auth={auth} />}{tab === "parts" && <PartsTab auth={auth} />}{tab === "customers" && <CustomersTab auth={auth} />}{tab === "followups" && <FollowupsTab auth={auth} />}</div><nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 cursor-pointer ${tab === t.id ? "text-red-500" : "text-slate-500"}`}><t.icon className="w-4.5 h-4.5" /><span className="text-[10px]">{t.label}</span></button>)}</nav></div>;
 }
