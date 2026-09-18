@@ -2393,22 +2393,63 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true });
   });
 
-  // --- Admin : tableau de bord (compteurs) ---
+  // --- Admin : tableau de bord commercial ---
   app.get("/api/admin/shop/dashboard", requireAdminAuth, async (req, res) => {
-    if (!dbPool) return res.json({ success: true, stats: { ordersByStatus: [], partRequestsByStatus: [], totalCustomers: 0, followupsDueSoon: 0 } });
-    const [orders, parts, customers, followups] = await Promise.all([
-      dbPool.query("SELECT status, COUNT(*) FROM shop_orders GROUP BY status"),
-      dbPool.query("SELECT status, COUNT(*) FROM shop_part_requests GROUP BY status"),
+    if (!dbPool) {
+      return res.json({
+        success: true,
+        stats: {
+          ordersByStatus: [], partRequestsByStatus: [], totalCustomers: 0, followupsDueSoon: 0,
+          todayOrders: 0, todayRevenue: 0, pendingOrders: 0, confirmedOrders: 0,
+          confirmedRevenue: 0, totalOrders: 0, confirmationRate: 0, recentOrders: [],
+        },
+      });
+    }
+
+    const [orders, parts, customers, followups, commercial, recent] = await Promise.all([
+      dbPool.query("SELECT status, COUNT(*) FROM shop_orders GROUP BY status ORDER BY COUNT(*) DESC"),
+      dbPool.query("SELECT status, COUNT(*) FROM shop_part_requests GROUP BY status ORDER BY COUNT(*) DESC"),
       dbPool.query("SELECT COUNT(*) FROM shop_customers"),
       dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'programmee' AND scheduled_for <= NOW() + INTERVAL '7 days'"),
+      dbPool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS today_orders,
+          COALESCE(SUM(COALESCE(unit_price_snapshot, 0) * COALESCE(quantity, 1)) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS today_revenue,
+          COUNT(*) FILTER (WHERE status NOT IN ('annulee', 'livree')) AS pending_orders,
+          COUNT(*) FILTER (WHERE status IN ('confirmee', 'livree')) AS confirmed_orders,
+          COALESCE(SUM(COALESCE(unit_price_snapshot, 0) * COALESCE(quantity, 1)) FILTER (WHERE status IN ('confirmee', 'livree')), 0) AS confirmed_revenue,
+          COUNT(*) AS total_orders
+        FROM shop_orders
+      `),
+      dbPool.query(`
+        SELECT o.id, o.order_ref, o.product_name_snapshot, o.quantity, o.unit_price_snapshot,
+               o.status, o.created_at, c.name AS customer_name
+        FROM shop_orders o
+        LEFT JOIN shop_customers c ON c.phone = o.customer_phone
+        ORDER BY o.created_at DESC
+        LIMIT 8
+      `),
     ]);
+
+    const row = commercial.rows[0] || {};
+    const totalOrders = Number(row.total_orders || 0);
+    const confirmedOrders = Number(row.confirmed_orders || 0);
+
     res.json({
       success: true,
       stats: {
         ordersByStatus: orders.rows,
         partRequestsByStatus: parts.rows,
-        totalCustomers: Number(customers.rows[0].count),
-        followupsDueSoon: Number(followups.rows[0].count),
+        totalCustomers: Number(customers.rows[0]?.count || 0),
+        followupsDueSoon: Number(followups.rows[0]?.count || 0),
+        todayOrders: Number(row.today_orders || 0),
+        todayRevenue: Number(row.today_revenue || 0),
+        pendingOrders: Number(row.pending_orders || 0),
+        confirmedOrders,
+        confirmedRevenue: Number(row.confirmed_revenue || 0),
+        totalOrders,
+        confirmationRate: totalOrders ? Math.round((confirmedOrders / totalOrders) * 100) : 0,
+        recentOrders: recent.rows,
       },
     });
   });
