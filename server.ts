@@ -2465,6 +2465,21 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true });
   });
 
+  // --- Admin : état WhatsApp / worker CRM ---
+  app.get("/api/admin/shop/whatsapp-status", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, configured: false, templateConfigured: false, due: 0, failed: 0, sentToday: 0 });
+    const configured = Boolean((process.env.TWILIO_ACCOUNT_SID || "").trim() && (process.env.TWILIO_AUTH_TOKEN || "").trim());
+    const templateConfigured = Boolean((process.env.TWILIO_WHATSAPP_CONTENT_SID || "").trim());
+    const sender = (process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886").trim();
+    const [due, failed, sentToday] = await Promise.all([
+      dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'programmee' AND channel = 'whatsapp' AND scheduled_for IS NOT NULL AND scheduled_for <= NOW()"),
+      dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'echec' AND channel = 'whatsapp'"),
+      dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'envoyee' AND channel = 'whatsapp' AND sent_at::date = CURRENT_DATE"),
+    ]);
+    const masked = sender.replace(/(whatsapp:\\+\\d{3})\\d+(\\d{2})$/, "$1••••$2");
+    res.json({ success: true, configured, templateConfigured, senderMasked: masked, due: Number(due.rows[0]?.count || 0), failed: Number(failed.rows[0]?.count || 0), sentToday: Number(sentToday.rows[0]?.count || 0), intervalMinutes: 5 });
+  });
+
   // --- Admin : relances ---
   app.get("/api/admin/shop/followups", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.json({ success: true, followups: [] });
