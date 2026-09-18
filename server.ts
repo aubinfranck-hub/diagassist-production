@@ -247,14 +247,24 @@ async function initDatabase(): Promise<void> {
       customer_phone TEXT NOT NULL REFERENCES shop_customers(phone),
       product_id INTEGER REFERENCES shop_products(id),
       product_name_snapshot TEXT,
+      unit_price_snapshot INTEGER,
       status TEXT NOT NULL DEFAULT 'nouvelle', -- nouvelle | a_contacter | contactee | confirmee | en_traitement | prete | livree | annulee | client_injoignable
       quantity INTEGER DEFAULT 1,
+      order_ref TEXT, -- regroupe les lignes d'une meme commande panier (ex: DA-2026-000001)
+      shipping_city TEXT,
+      shipping_address TEXT,
       notes TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_shop_orders_customer ON shop_orders (customer_phone);
     CREATE INDEX IF NOT EXISTS idx_shop_orders_status ON shop_orders (status);
+    CREATE INDEX IF NOT EXISTS idx_shop_orders_ref ON shop_orders (order_ref);
+    -- Compteur pour generer les references de commande DA-AAAA-NNNNNN sans collision
+    CREATE TABLE IF NOT EXISTS shop_order_counter (
+      year INTEGER PRIMARY KEY,
+      last_value INTEGER NOT NULL DEFAULT 0
+    );
     -- Demandes de pieces a l'etranger (avec carte grise)
     CREATE TABLE IF NOT EXISTS shop_part_requests (
       id SERIAL PRIMARY KEY,
@@ -285,6 +295,19 @@ async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_followups_scheduled ON shop_followups (scheduled_for);
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
+
+  // Élargit shop_orders pour les nouvelles colonnes (panier multi-produits, suivi) sur une
+  // table qui existait déjà avant leur ajout.
+  try {
+    await dbPool.query(`
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS unit_price_snapshot INTEGER;
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS order_ref TEXT;
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
+    `);
+  } catch (err: any) {
+    console.warn("[DB] Élargissement shop_orders échoué :", err.message);
+  }
 }
 
 async function loadPersistedData(): Promise<void> {
@@ -2043,6 +2066,81 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_id: orderRes.rows[0].id });
   });
 
+  // Génère une référence de commande sans collision : DA-AAAA-NNNNNN, compteur atomique par année.
+  async function nextOrderRef(): Promise<string> {
+    const year = new Date().getFullYear();
+    const result = await dbPool!.query(
+      `INSERT INTO shop_order_counter (year, last_value) VALUES ($1, 1)
+       ON CONFLICT (year) DO UPDATE SET last_value = shop_order_counter.last_value + 1
+       RETURNING last_value`,
+      [year]
+    );
+    const n = result.rows[0].last_value;
+    return `DA-${year}-${String(n).padStart(6, "0")}`;
+  }
+
+  // --- Public : panier multi-produits -> commande groupée (checkout) ---
+  app.post("/api/shop/checkout", shopPublicLimiter, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { phone, name, city, address, items } = req.body as {
+      phone: string; name?: string; city?: string; address?: string;
+      items: { product_id: number; quantity: number }[];
+    };
+    if (!phone || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, message: "Téléphone et au moins un article requis." });
+    }
+    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+
+    await upsertShopCustomer(cleanPhone, name, city, "produit");
+    const orderRef = await nextOrderRef();
+
+    const createdIds: number[] = [];
+    for (const item of items) {
+      const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [item.product_id]);
+      if (productRes.rows.length === 0) continue; // ignore un produit devenu introuvable plutôt que d'annuler toute la commande
+      const product = productRes.rows[0];
+      const orderRes = await dbPool.query(
+        `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null]
+      );
+      createdIds.push(orderRes.rows[0].id);
+    }
+
+    if (createdIds.length === 0) return res.status(400).json({ success: false, message: "Aucun des produits du panier n'est plus disponible." });
+    res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_ref: orderRef, order_ids: createdIds });
+  });
+
+  // --- Public : suivi de commande par référence + téléphone ---
+  app.get("/api/shop/track", async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const { ref, phone } = req.query as { ref?: string; phone?: string };
+    if (!phone) return res.status(400).json({ success: false, message: "Téléphone requis." });
+    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+
+    let query = "SELECT * FROM shop_orders WHERE customer_phone = $1";
+    const params: any[] = [cleanPhone];
+    if (ref) { params.push(ref); query += ` AND order_ref = $2`; }
+    query += " ORDER BY created_at DESC LIMIT 50";
+    const { rows } = await dbPool.query(query, params);
+    if (rows.length === 0) return res.status(404).json({ success: false, message: "Aucune commande trouvée pour ces informations." });
+
+    // Regroupe par order_ref (ou par commande individuelle si pas de ref, ex: anciennes commandes)
+    const groups = new Map<string, any[]>();
+    for (const row of rows) {
+      const key = row.order_ref || `single-${row.id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(row);
+    }
+    const orders = Array.from(groups.entries()).map(([key, items]) => ({
+      order_ref: items[0].order_ref || null,
+      status: items[0].status, // statut de la première ligne — simplification: toutes les lignes d'une même commande évoluent ensemble en pratique
+      created_at: items[0].created_at,
+      items: items.map((i) => ({ product_name: i.product_name_snapshot, quantity: i.quantity, status: i.status })),
+    }));
+    res.json({ success: true, orders });
+  });
+
   // --- Public : demande de pièce à l'étranger (avec carte grise) ---
   app.post("/api/shop/part-requests", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
@@ -2209,6 +2307,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // --- Admin : relances ---
+  app.get("/api/admin/shop/followups", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.json({ success: true, followups: [] });
+    const { rows } = await dbPool.query(
+      `SELECT f.*, c.name as customer_name FROM shop_followups f LEFT JOIN shop_customers c ON c.phone = f.customer_phone
+       ORDER BY (f.status = 'programmee') DESC, f.scheduled_for ASC NULLS LAST, f.created_at DESC LIMIT 200`
+    );
+    res.json({ success: true, followups: rows });
+  });
+
   app.post("/api/admin/shop/followups", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { customer_phone, message, channel, scheduled_for, status } = req.body;

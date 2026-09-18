@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ShoppingBag, Phone, ArrowLeft, Loader2, CheckCircle2, Package, Wrench, Video as VideoIcon, Search, ShieldCheck, Truck, Headphones } from "lucide-react";
+import { ShoppingBag, Phone, ArrowLeft, Loader2, CheckCircle2, Package, Wrench, Video as VideoIcon, Search, ShieldCheck, Truck, Headphones, X } from "lucide-react";
 import ShopAdmin from "./ShopAdmin";
 
 // Charte graphique DiagAssist (noir / rouge / blanc)
@@ -12,6 +12,40 @@ const DIAG = {
   gray: "#73777d",
   border: "#e4e6e8",
 };
+
+interface CartItem {
+  product_id: number;
+  name: string;
+  price_fcfa: number | null;
+  photo: string | null;
+  quantity: number;
+}
+
+// Panier persistant (localStorage) — partagé entre toutes les pages de la boutique sans
+// backend dédié tant que la commande n'est pas validée.
+function useCart() {
+  const [items, setItems] = useState<CartItem[]>(() => {
+    try { return JSON.parse(localStorage.getItem("shop_cart") || "[]"); } catch { return []; }
+  });
+
+  useEffect(() => { localStorage.setItem("shop_cart", JSON.stringify(items)); }, [items]);
+
+  const add = (p: ShopProduct, quantity = 1) => {
+    setItems((prev) => {
+      const existing = prev.find((i) => i.product_id === p.id);
+      if (existing) return prev.map((i) => (i.product_id === p.id ? { ...i, quantity: i.quantity + quantity } : i));
+      return [...prev, { product_id: p.id, name: p.name, price_fcfa: p.price_fcfa, photo: p.photos?.[0] || null, quantity }];
+    });
+  };
+  const remove = (productId: number) => setItems((prev) => prev.filter((i) => i.product_id !== productId));
+  const setQuantity = (productId: number, quantity: number) =>
+    setItems((prev) => prev.map((i) => (i.product_id === productId ? { ...i, quantity: Math.max(1, quantity) } : i)));
+  const clear = () => setItems([]);
+  const count = items.reduce((sum, i) => sum + i.quantity, 0);
+  const total = items.reduce((sum, i) => sum + (i.price_fcfa || 0) * i.quantity, 0);
+
+  return { items, add, remove, setQuantity, clear, count, total };
+}
 
 interface ShopProduct {
   id: number;
@@ -150,7 +184,7 @@ function ShopCatalog({ onSelectProduct }: { onSelectProduct: (slug: string) => v
 }
 
 // --- Écran fiche produit + commande ---
-function ShopProductPage({ slug, onBack }: { slug: string; onBack: () => void }) {
+function ShopProductPage({ slug, onBack, cart, onGoToCart }: { slug: string; onBack: () => void; cart: ReturnType<typeof useCart>; onGoToCart: () => void }) {
   const [product, setProduct] = useState<ShopProduct | null>(null);
   const [loading, setLoading] = useState(true);
   const [showOrderForm, setShowOrderForm] = useState(false);
@@ -262,12 +296,20 @@ function ShopProductPage({ slug, onBack }: { slug: string; onBack: () => void })
       )}
 
       {!showOrderForm ? (
-        <button
-          onClick={() => setShowOrderForm(true)}
-          className="w-full bg-[#ed1c24] hover:bg-[#b90f16] text-[#07090c] text-sm font-bold py-3.5 rounded-xl cursor-pointer flex items-center justify-center gap-2"
-        >
-          <ShoppingBag className="w-4 h-4" /> Commander
-        </button>
+        <div className="space-y-2.5">
+          <button
+            onClick={() => { cart.add(product); onGoToCart(); }}
+            className="w-full bg-[#07090c] hover:opacity-90 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer flex items-center justify-center gap-2"
+          >
+            <ShoppingBag className="w-4 h-4" /> Ajouter au panier
+          </button>
+          <button
+            onClick={() => setShowOrderForm(true)}
+            className="w-full bg-[#ed1c24] hover:bg-[#b90f16] text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer flex items-center justify-center gap-2"
+          >
+            Commander directement
+          </button>
+        </div>
       ) : (
         <form onSubmit={handleOrder} className="bg-white border rounded-2xl p-4 space-y-3">
           <p className="text-sm font-semibold text-[#07090c] flex items-center gap-1.5">
@@ -294,7 +336,7 @@ function ShopProductPage({ slug, onBack }: { slug: string; onBack: () => void })
           </div>
           {orderError && <p className="text-xs text-[#ed1c24]">{orderError}</p>}
           <button type="submit" disabled={submitting}
-            className="w-full bg-[#ed1c24] hover:bg-[#b90f16] disabled:opacity-50 text-[#07090c] text-sm font-bold py-3 rounded-xl cursor-pointer">
+            className="w-full bg-[#ed1c24] hover:bg-[#b90f16] disabled:opacity-50 text-white text-sm font-bold py-3 rounded-xl cursor-pointer">
             {submitting ? "Envoi..." : "Valider la commande"}
           </button>
           <p className="text-[10px] text-[#73777d] text-center">
@@ -307,6 +349,223 @@ function ShopProductPage({ slug, onBack }: { slug: string; onBack: () => void })
 }
 
 // --- Écran demande de pièce à l'étranger ---
+// --- Écran panier ---
+function ShopCart({ cart, onBack, onCheckout }: { cart: ReturnType<typeof useCart>; onBack: () => void; onCheckout: () => void }) {
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-6">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-4 cursor-pointer" style={{ color: DIAG.gray }}>
+        <ArrowLeft className="w-4 h-4" /> Continuer mes achats
+      </button>
+      <h1 className="text-xl font-bold mb-4" style={{ color: DIAG.black }}>Mon panier</h1>
+
+      {cart.items.length === 0 ? (
+        <div className="text-center py-16 text-sm" style={{ color: DIAG.gray }}>Votre panier est vide.</div>
+      ) : (
+        <>
+          <div className="space-y-2.5 mb-5">
+            {cart.items.map((item) => (
+              <div key={item.product_id} style={{ borderColor: DIAG.border }} className="bg-white border rounded-xl p-3 flex items-center gap-3">
+                <div style={{ background: DIAG.light }} className="w-14 h-14 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
+                  {item.photo ? <img src={item.photo} className="w-full h-full object-cover" /> : <Package className="w-6 h-6" style={{ color: DIAG.gray }} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: DIAG.black }}>{item.name}</p>
+                  <p className="text-xs font-bold" style={{ color: DIAG.red }}>{formatFcfa(item.price_fcfa)}</p>
+                </div>
+                <input
+                  type="number" min={1} value={item.quantity}
+                  onChange={(e) => cart.setQuantity(item.product_id, Number(e.target.value))}
+                  className="w-14 border rounded-lg px-2 py-1.5 text-sm text-center"
+                  style={{ borderColor: DIAG.border, color: DIAG.black }}
+                />
+                <button onClick={() => cart.remove(item.product_id)} className="p-1.5 cursor-pointer" style={{ color: DIAG.gray }}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ borderColor: DIAG.border }} className="border-t pt-4 flex items-center justify-between mb-4">
+            <span className="text-sm font-semibold" style={{ color: DIAG.black }}>Total</span>
+            <span className="text-lg font-black" style={{ color: DIAG.red }}>{formatFcfa(cart.total)}</span>
+          </div>
+
+          <button
+            onClick={onCheckout}
+            className="w-full text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer"
+            style={{ background: DIAG.red }}
+          >
+            Passer commande
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// --- Écran checkout (informations client + livraison) ---
+function ShopCheckout({ cart, onBack, onDone }: { cart: ReturnType<typeof useCart>; onBack: () => void; onDone: (ref: string) => void }) {
+  const [phone, setPhone] = useState("");
+  const [name, setName] = useState("");
+  const [city, setCity] = useState("");
+  const [address, setAddress] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/shop/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone, name, city, address,
+          items: cart.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) { cart.clear(); onDone(data.order_ref); }
+      else setError(data.message || "Échec de la commande.");
+    } catch {
+      setError("Erreur réseau. Vérifiez votre connexion et réessayez.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="max-w-lg mx-auto px-4 py-6">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-4 cursor-pointer" style={{ color: DIAG.gray }}>
+        <ArrowLeft className="w-4 h-4" /> Retour au panier
+      </button>
+      <h1 className="text-xl font-bold mb-1" style={{ color: DIAG.black }}>Finaliser la commande</h1>
+      <p className="text-sm mb-5" style={{ color: DIAG.gray }}>{cart.count} article(s) · {formatFcfa(cart.total)}</p>
+
+      <form onSubmit={handleSubmit} className="space-y-3">
+        <input required type="tel" placeholder="Numéro de téléphone" value={phone} onChange={(e) => setPhone(e.target.value)}
+          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
+        <input placeholder="Nom" value={name} onChange={(e) => setName(e.target.value)}
+          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
+        <input placeholder="Ville" value={city} onChange={(e) => setCity(e.target.value)}
+          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
+        <textarea rows={2} placeholder="Adresse / instructions de livraison (optionnel)" value={address} onChange={(e) => setAddress(e.target.value)}
+          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm resize-none" />
+
+        {error && <p className="text-xs" style={{ color: DIAG.red }}>{error}</p>}
+        <button type="submit" disabled={submitting}
+          className="w-full text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer disabled:opacity-50"
+          style={{ background: DIAG.red }}>
+          {submitting ? "Envoi..." : "Confirmer la commande"}
+        </button>
+        <p className="text-[10px] text-center" style={{ color: DIAG.gray }}>
+          Aucun paiement en ligne — notre équipe vous contacte pour confirmer prix, disponibilité et livraison.
+        </p>
+      </form>
+    </div>
+  );
+}
+
+// --- Écran confirmation de commande ---
+function ShopOrderConfirmation({ orderRef, onBackToCatalog, onTrack }: { orderRef: string; onBackToCatalog: () => void; onTrack: () => void }) {
+  return (
+    <div className="max-w-md mx-auto px-4 py-16 text-center">
+      <CheckCircle2 className="w-14 h-14 mx-auto mb-4" style={{ color: "#16a34a" }} />
+      <h2 className="text-xl font-bold mb-2" style={{ color: DIAG.black }}>Commande enregistrée</h2>
+      <p className="text-sm mb-1" style={{ color: DIAG.gray }}>Référence :</p>
+      <p className="text-lg font-black mb-6" style={{ color: DIAG.red }}>{orderRef}</p>
+      <p className="text-sm mb-6" style={{ color: DIAG.gray }}>Notre équipe vous contactera bientôt par téléphone ou WhatsApp pour confirmer votre commande.</p>
+      <div className="flex flex-col gap-2">
+        <button onClick={onTrack} style={{ background: DIAG.red }} className="text-white text-sm font-bold px-5 py-2.5 rounded-xl cursor-pointer">
+          Suivre ma commande
+        </button>
+        <button onClick={onBackToCatalog} style={{ background: DIAG.light, color: DIAG.black }} className="text-sm font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
+          Retour au catalogue
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- Écran suivi de commande public ---
+function ShopTracking({ onBack }: { onBack: () => void }) {
+  const [phone, setPhone] = useState("");
+  const [ref, setRef] = useState("");
+  const [orders, setOrders] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setOrders(null);
+    try {
+      const params = new URLSearchParams({ phone });
+      if (ref) params.set("ref", ref);
+      const res = await fetch(`/api/shop/track?${params}`);
+      const data = await res.json();
+      if (data.success) setOrders(data.orders);
+      else setError(data.message || "Aucune commande trouvée.");
+    } catch {
+      setError("Erreur réseau. Vérifiez votre connexion et réessayez.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const STEPS = ["nouvelle", "confirmee", "en_traitement", "prete", "livree"];
+  const stepLabel: Record<string, string> = {
+    nouvelle: "Commande reçue", a_contacter: "Commande reçue", contactee: "Commande reçue",
+    confirmee: "Confirmée", en_traitement: "Préparation", prete: "Prête", livree: "Livrée",
+    annulee: "Annulée", client_injoignable: "Client injoignable",
+  };
+
+  return (
+    <div className="max-w-lg mx-auto px-4 py-6">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm mb-4 cursor-pointer" style={{ color: DIAG.gray }}>
+        <ArrowLeft className="w-4 h-4" /> Retour
+      </button>
+      <h1 className="text-xl font-bold mb-4" style={{ color: DIAG.black }}>Suivi de commande</h1>
+
+      <form onSubmit={handleSearch} className="space-y-3 mb-6">
+        <input required type="tel" placeholder="Votre numéro de téléphone" value={phone} onChange={(e) => setPhone(e.target.value)}
+          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
+        <input placeholder="Référence de commande (optionnel, ex: DA-2026-000001)" value={ref} onChange={(e) => setRef(e.target.value)}
+          style={{ borderColor: DIAG.border, color: DIAG.black }} className="w-full border rounded-xl px-3 py-2.5 text-sm" />
+        <button type="submit" disabled={loading} style={{ background: DIAG.red }} className="w-full text-white text-sm font-bold py-3 rounded-xl cursor-pointer disabled:opacity-50">
+          {loading ? "Recherche..." : "Rechercher"}
+        </button>
+      </form>
+
+      {error && <p className="text-sm text-center" style={{ color: DIAG.red }}>{error}</p>}
+
+      {orders && orders.map((o, idx) => (
+        <div key={idx} style={{ borderColor: DIAG.border }} className="bg-white border rounded-xl p-4 mb-3">
+          {o.order_ref && <p className="text-xs font-bold mb-2" style={{ color: DIAG.gray }}>Réf. {o.order_ref}</p>}
+          <div className="flex items-center gap-1 mb-3">
+            {STEPS.map((s, i) => {
+              const currentIdx = STEPS.indexOf(o.status);
+              const reached = currentIdx >= 0 && i <= currentIdx;
+              return (
+                <React.Fragment key={s}>
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: reached ? DIAG.red : DIAG.border }} />
+                  {i < STEPS.length - 1 && <div className="flex-1 h-0.5" style={{ background: reached ? DIAG.red : DIAG.border }} />}
+                </React.Fragment>
+              );
+            })}
+          </div>
+          <p className="text-sm font-bold mb-2" style={{ color: DIAG.black }}>{stepLabel[o.status] || o.status}</p>
+          {o.items.map((it: any, i: number) => (
+            <p key={i} className="text-xs" style={{ color: DIAG.gray }}>{it.quantity}× {it.product_name}</p>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ShopPartRequest({ onBack }: { onBack: () => void }) {
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
@@ -389,7 +648,7 @@ function ShopPartRequest({ onBack }: { onBack: () => void }) {
 
         {error && <p className="text-xs text-[#ed1c24]">{error}</p>}
         <button type="submit" disabled={submitting}
-          className="w-full bg-[#ed1c24] hover:bg-[#b90f16] disabled:opacity-50 text-[#07090c] text-sm font-bold py-3 rounded-xl cursor-pointer">
+          className="w-full bg-[#ed1c24] hover:bg-[#b90f16] disabled:opacity-50 text-white text-sm font-bold py-3 rounded-xl cursor-pointer">
           {submitting ? "Envoi..." : "Envoyer la demande"}
         </button>
       </form>
@@ -404,10 +663,16 @@ export default function ShopApp() {
     if (parts[1] === "admin") return { screen: "admin" as const, slug: null };
     if (parts[1] === "produit" && parts[2]) return { screen: "product" as const, slug: parts[2] };
     if (parts[1] === "piece-etranger") return { screen: "part-request" as const, slug: null };
+    if (parts[1] === "panier") return { screen: "cart" as const, slug: null };
+    if (parts[1] === "commande") return { screen: "checkout" as const, slug: null };
+    if (parts[1] === "confirmation") return { screen: "confirmation" as const, slug: null };
+    if (parts[1] === "suivi") return { screen: "tracking" as const, slug: null };
     return { screen: "catalog" as const, slug: null };
   };
 
   const [route, setRoute] = useState(parsePath());
+  const [lastOrderRef, setLastOrderRef] = useState<string | null>(null);
+  const cart = useCart();
 
   useEffect(() => {
     const onPop = () => setRoute(parsePath());
@@ -441,18 +706,36 @@ export default function ShopApp() {
             disabled
           />
         </div>
-        <button
-          onClick={() => navigate("/boutique/piece-etranger")}
-          style={{ background: DIAG.red }}
-          className="text-xs font-bold text-white px-3 py-2 rounded-lg cursor-pointer shrink-0 hover:opacity-90"
-        >
-          Pièce introuvable ?
+        <button onClick={() => navigate("/boutique/suivi")} className="text-xs font-semibold text-white px-2 py-2 rounded-lg cursor-pointer hover:opacity-80 hidden sm:block">
+          Suivre ma commande
+        </button>
+        <button onClick={() => navigate("/boutique/panier")} className="relative p-2 cursor-pointer shrink-0">
+          <ShoppingBag className="w-5 h-5 text-white" />
+          {cart.count > 0 && (
+            <span style={{ background: DIAG.red }} className="absolute -top-0.5 -right-0.5 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+              {cart.count}
+            </span>
+          )}
         </button>
       </header>
 
       {route.screen === "catalog" && <ShopCatalog onSelectProduct={(slug) => navigate(`/boutique/produit/${slug}`)} />}
-      {route.screen === "product" && route.slug && <ShopProductPage slug={route.slug} onBack={() => navigate("/boutique")} />}
+      {route.screen === "product" && route.slug && (
+        <ShopProductPage slug={route.slug} onBack={() => navigate("/boutique")} cart={cart} onGoToCart={() => navigate("/boutique/panier")} />
+      )}
       {route.screen === "part-request" && <ShopPartRequest onBack={() => navigate("/boutique")} />}
+      {route.screen === "cart" && <ShopCart cart={cart} onBack={() => navigate("/boutique")} onCheckout={() => navigate("/boutique/commande")} />}
+      {route.screen === "checkout" && (
+        <ShopCheckout
+          cart={cart}
+          onBack={() => navigate("/boutique/panier")}
+          onDone={(ref) => { setLastOrderRef(ref); navigate("/boutique/confirmation"); }}
+        />
+      )}
+      {route.screen === "confirmation" && lastOrderRef && (
+        <ShopOrderConfirmation orderRef={lastOrderRef} onBackToCatalog={() => navigate("/boutique")} onTrack={() => navigate("/boutique/suivi")} />
+      )}
+      {route.screen === "tracking" && <ShopTracking onBack={() => navigate("/boutique")} />}
     </div>
   );
 }
