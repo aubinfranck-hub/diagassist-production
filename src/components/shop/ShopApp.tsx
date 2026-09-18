@@ -210,20 +210,20 @@ function ShopProductPage({ slug, onBack, cart, onGoToCart }: { slug: string; onB
   const [quantity, setQuantity] = useState(1);
   const [showOrderForm, setShowOrderForm] = useState(false);
   const [phone, setPhone] = useState(""); const [name, setName] = useState(""); const [city, setCity] = useState("");
-  const [submitting, setSubmitting] = useState(false); const [orderDone, setOrderDone] = useState(false); const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false); const [orderDone, setOrderDone] = useState(false); const [orderRef, setOrderRef] = useState<string | null>(null); const [error, setError] = useState<string | null>(null);
   useEffect(() => { setLoading(true); fetch(`/api/shop/products/${slug}`).then(r => r.json()).then(d => d.success && setProduct(d.product)).finally(() => setLoading(false)); }, [slug]);
 
   const handleOrder = async (e: React.FormEvent) => {
     e.preventDefault(); if (!product) return; setSubmitting(true); setError(null);
     try {
       const res = await fetch("/api/shop/orders", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({phone,name,city,product_id:product.id,quantity}) });
-      const data = await res.json(); if (data.success) setOrderDone(true); else setError(data.message || "Échec de la commande.");
+      const data = await res.json(); if (data.success) { setOrderRef(data.order_ref || null); setOrderDone(true); } else setError(data.message || "Échec de la commande.");
     } catch { setError("Erreur réseau. Vérifiez votre connexion et réessayez."); } finally { setSubmitting(false); }
   };
 
   if (loading) return <div className="py-24 text-center text-sm text-[#73777d]">Chargement du produit...</div>;
   if (!product) return <div className="py-24 text-center text-sm text-[#73777d]">Produit introuvable.</div>;
-  if (orderDone) return <div className="mx-auto max-w-md px-5 py-24 text-center"><CheckCircle2 className="mx-auto mb-4 h-16 w-16 text-emerald-500" /><h2 className="text-2xl font-black text-[#07090c]">Commande enregistrée</h2><p className="mt-3 text-sm text-[#73777d]">Notre équipe vous contactera par téléphone ou WhatsApp pour confirmer votre commande.</p><button onClick={onBack} className="mt-7 rounded-xl bg-[#07090c] px-6 py-3 text-sm font-bold text-white">Retour au catalogue</button></div>;
+  if (orderDone) return <div className="mx-auto max-w-md px-5 py-24 text-center"><CheckCircle2 className="mx-auto mb-4 h-16 w-16 text-emerald-500" /><h2 className="text-2xl font-black text-[#07090c]">Commande enregistrée</h2>{orderRef && <p className="mt-3 text-sm text-[#73777d]">Référence : <strong className="text-[#ed1c24]">{orderRef}</strong></p>}<p className="mt-3 text-sm text-[#73777d]">Notre équipe vous contactera par téléphone ou WhatsApp pour confirmer votre commande.</p><div className="mt-6 grid gap-2"><button onClick={()=>window.history.pushState({}, "", "/boutique/suivi")} className="rounded-xl bg-[#ed1c24] px-6 py-3 text-sm font-black text-white">Suivre ma commande</button><button onClick={onBack} className="rounded-xl bg-[#07090c] px-6 py-3 text-sm font-bold text-white">Retour au catalogue</button></div></div>;
 
   return (
     <main className="mx-auto max-w-7xl px-5 py-7 sm:px-8">
