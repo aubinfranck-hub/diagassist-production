@@ -237,29 +237,100 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
 }
 
 function ShopProductPage({ slug, onBack, cart, onGoToCart }: { slug: string; onBack: () => void; cart: ReturnType<typeof useCart>; onGoToCart: () => void }) {
-  const [product,setProduct]=useState<ShopProduct|null>(null); const [loading,setLoading]=useState(true); const [quantity,setQuantity]=useState(1);
-  const [activePhoto,setActivePhoto]=useState(0); const [showOrderForm,setShowOrderForm]=useState(false);
+  const [product,setProduct]=useState<ShopProduct|null>(null);
+  const [loading,setLoading]=useState(true);
+  const [quantity,setQuantity]=useState(1);
+  const [activePhoto,setActivePhoto]=useState(0);
+  const [showOrderForm,setShowOrderForm]=useState(false);
   const [phone,setPhone]=useState(""); const [name,setName]=useState(""); const [city,setCity]=useState("");
   const [submitting,setSubmitting]=useState(false); const [orderDone,setOrderDone]=useState(false); const [orderRef,setOrderRef]=useState<string|null>(null); const [error,setError]=useState<string|null>(null);
+
   useEffect(()=>{setLoading(true);setActivePhoto(0);fetch("/api/shop/products/"+slug).then(r=>r.json()).then(d=>d.success&&setProduct(d.product)).finally(()=>setLoading(false));},[slug]);
-  const handleOrder=async(e:React.FormEvent)=>{e.preventDefault();if(!product)return;setSubmitting(true);setError(null);try{const r=await fetch("/api/shop/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone,name,city,product_id:product.id,quantity})});const d=await r.json();if(d.success){setOrderRef(d.order_ref||null);setOrderDone(true)}else setError(d.message||"Échec de la commande.")}catch{setError("Erreur réseau. Vérifiez votre connexion.")}finally{setSubmitting(false)}};
+
+  const handleOrder=async(e:React.FormEvent)=>{
+    e.preventDefault(); if(!product)return; setSubmitting(true); setError(null);
+    try{const r=await fetch("/api/shop/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone,name,city,product_id:product.id,quantity})});
+      const d=await r.json(); if(d.success){setOrderRef(d.order_ref||null);setOrderDone(true)} else setError(d.message||"Échec de la commande.");
+    }catch{setError("Erreur réseau. Vérifiez votre connexion.")}finally{setSubmitting(false)}
+  };
+
   if(loading)return <div className="py-32 text-center text-sm text-[#73777d]">Chargement du produit...</div>;
   if(!product)return <div className="py-32 text-center text-sm text-[#73777d]">Produit introuvable.</div>;
   if(orderDone)return <div className="mx-auto max-w-md px-5 py-24 text-center"><CheckCircle2 className="mx-auto h-16 w-16 text-emerald-500"/><h2 className="mt-5 text-2xl font-black">Commande enregistrée</h2>{orderRef&&<p className="mt-3 text-sm text-[#73777d]">Référence : <strong className="text-[#ed1c24]">{orderRef}</strong></p>}<p className="mt-3 text-sm text-[#73777d]">Notre équipe vous contactera par téléphone ou WhatsApp.</p><button onClick={onBack} className="mt-7 rounded-xl bg-[#ed1c24] px-6 py-3 text-sm font-black text-white">Retour au catalogue</button></div>;
+
   const photos=product.photos||[]; const current=photos[activePhoto];
+  const whatsappHref=`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(`Bonjour DiagAssist, je souhaite commander le ${product.name}. Pouvez-vous me confirmer le prix et la disponibilité ?`)}`;
+
   return <main className="mx-auto max-w-7xl px-5 py-6 sm:px-8">
-    <div className="mb-5 flex items-center gap-2 text-[10px] text-[#73777d]"><button onClick={onBack} className="font-bold hover:text-[#ed1c24]">Accueil</button><ChevronRight className="h-3 w-3"/><span>{product.category_name||"Scanners Diagnostic"}</span><ChevronRight className="h-3 w-3"/><strong className="text-[#07090c]">{product.name}</strong></div>
-    <div className="grid gap-8 lg:grid-cols-[1.05fr_.95fr_320px]">
-      <div><div className="relative overflow-hidden rounded-2xl border border-[#e4e6e8] bg-[#f5f6f7]"><div className="absolute left-4 top-4 z-10 rounded-lg bg-[#ed1c24] px-3 py-1.5 text-[10px] font-black uppercase text-white">Best-seller</div><div className="aspect-square">{current?<img src={current} alt={product.name} className="h-full w-full object-contain p-8 sm:p-12"/>:<Package className="mx-auto mt-40 h-16 w-16 text-[#73777d]"/>}</div></div>
-      <div className="mt-3 flex gap-2 overflow-x-auto">{photos.slice(0,6).map((src,i)=><button key={i} onClick={()=>setActivePhoto(i)} className={`h-20 w-20 shrink-0 rounded-xl border-2 bg-white p-1 ${activePhoto===i?"border-[#ed1c24]":"border-[#e4e6e8]"}`}><img src={src} alt="" className="h-full w-full object-contain"/></button>)}{product.videos?.[0]&&<div className="flex h-20 w-24 shrink-0 items-center justify-center rounded-xl bg-[#07090c] text-[10px] font-black text-white">▶ Voir la vidéo</div>}</div></div>
-      <div className="lg:pt-2"><p className="text-xs font-black uppercase tracking-widest text-[#ed1c24]">{product.category_name||"AUTOMOTIVE DIAGNOSTIC"}</p><h1 className="mt-2 text-3xl font-black leading-tight sm:text-4xl">{product.name}</h1><div className="mt-3 flex flex-wrap items-center gap-3 text-xs"><span className="text-[#ed1c24]">★★★★★</span><span className="text-[#73777d]">Équipement professionnel</span></div><div className="mt-5 grid grid-cols-2 gap-2 text-[10px]"><div><span className="text-[#73777d]">Référence</span><p className="font-black">{product.slug}</p></div><div><span className="text-[#73777d]">Marque</span><p className="font-black">{product.name.split(" ")[0]}</p></div><div><span className="text-[#73777d]">Garantie</span><p className="font-black">{product.warranty||"Selon produit"}</p></div><div><span className="text-[#73777d]">Livraison</span><p className="font-black">24 à 72h Abidjan</p></div></div>{product.description&&<p className="mt-6 whitespace-pre-wrap text-sm leading-7 text-[#73777d]">{product.description}</p>}
-      <div className="mt-6 rounded-2xl border border-[#e4e6e8] p-4"><h2 className="text-xs font-black uppercase">Informations clés</h2><div className="mt-3 grid gap-2 text-xs">{[["Disponibilité",product.availability||"Sur commande"],["Garantie",product.warranty||"Selon produit"],["Livraison","Côte d'Ivoire & Afrique"],["Support","Conseil technique"]].map(([a,b])=><div key={a} className="flex justify-between gap-4 border-b border-[#f0f0f0] py-2 last:border-0"><span className="text-[#73777d]">{a}</span><strong>{b}</strong></div>)}</div></div></div>
-      <aside className="h-fit rounded-2xl border border-[#e4e6e8] bg-white p-5 shadow-sm lg:sticky lg:top-28"><div className="inline-flex rounded-lg bg-red-50 px-3 py-1 text-[10px] font-black text-[#ed1c24]">PRIX DIAGASSIST</div><p className="mt-3 text-3xl font-black text-[#ed1c24]">{formatFcfa(product.price_fcfa)}</p><div className="mt-3 flex items-center gap-2 text-xs text-emerald-600"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500"/>{product.availability||"Disponible"}</div><div className="mt-5 flex items-center justify-between rounded-xl border p-2"><span className="text-xs font-bold">Quantité</span><div className="flex items-center gap-4"><button onClick={()=>setQuantity(Math.max(1,quantity-1))} className="h-9 w-9 rounded-lg bg-[#f5f6f7] font-black">−</button><span className="font-black">{quantity}</span><button onClick={()=>setQuantity(quantity+1)} className="h-9 w-9 rounded-lg bg-[#f5f6f7] font-black">+</button></div></div><button onClick={()=>{cart.add(product,quantity);onGoToCart()}} className="mt-4 w-full rounded-xl bg-[#ed1c24] py-4 text-sm font-black text-white"><ShoppingBag className="mr-2 inline h-4 w-4"/>Ajouter au panier</button><button onClick={()=>setShowOrderForm(true)} className="mt-2 w-full rounded-xl border-2 border-[#ed1c24] py-3.5 text-sm font-black text-[#ed1c24]">Acheter maintenant</button><a href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent(`Bonjour DiagAssist, je suis intéressé par le ${product.name}.`)}`} target="_blank" rel="noreferrer" className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#16a34a] py-3.5 text-sm font-black text-white"><MessageCircle className="h-4 w-4"/>Commander sur WhatsApp</a>{showOrderForm&&<form onSubmit={handleOrder} className="mt-4 border-t pt-4"><input required type="tel" placeholder="Téléphone" value={phone} onChange={e=>setPhone(e.target.value)} className="mb-2 w-full rounded-xl border px-3 py-3 text-sm"/><input placeholder="Nom" value={name} onChange={e=>setName(e.target.value)} className="mb-2 w-full rounded-xl border px-3 py-3 text-sm"/><input placeholder="Ville" value={city} onChange={e=>setCity(e.target.value)} className="mb-2 w-full rounded-xl border px-3 py-3 text-sm"/>{error&&<p className="mb-2 text-[10px] font-bold text-[#ed1c24]">{error}</p>}<button disabled={submitting} className="w-full rounded-xl bg-[#07090c] py-3 text-xs font-black text-white">{submitting?"Envoi...":"Valider l'achat"}</button></form>}</aside>
+    <div className="mb-6 flex flex-wrap items-center gap-2 text-[10px] text-[#73777d]"><button onClick={onBack} className="font-bold hover:text-[#ed1c24]">Accueil</button><ChevronRight className="h-3 w-3"/><button onClick={onBack} className="hover:text-[#ed1c24]">{product.category_name||"Boutique"}</button><ChevronRight className="h-3 w-3"/><span className="font-bold text-[#07090c]">{product.name}</span></div>
+
+    <div className="grid gap-8 lg:grid-cols-[1.05fr_.95fr_330px]">
+      <section>
+        <div className="relative overflow-hidden rounded-2xl border border-[#e4e6e8] bg-[#f5f6f7] shadow-sm">
+          {product.availability&&<span className={`absolute left-4 top-4 z-10 rounded-full px-3 py-1.5 text-[10px] font-black uppercase ${/stock|disponible/i.test(product.availability)?"bg-emerald-500 text-white":"bg-white text-[#07090c]"}`}>{product.availability}</span>}
+          <div className="aspect-square sm:aspect-[4/3]">{current?<img src={current} alt={product.name} className="h-full w-full object-contain p-8 sm:p-12"/>:<Package className="mx-auto mt-40 h-16 w-16 text-[#73777d]"/>}</div>
+        </div>
+        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+          {photos.slice(0,8).map((src,i)=><button key={i} onClick={()=>setActivePhoto(i)} className={`h-20 w-20 shrink-0 rounded-xl border-2 bg-white p-1 ${activePhoto===i?"border-[#ed1c24]":"border-[#e4e6e8]"}`}><img src={src} alt="" className="h-full w-full rounded-lg object-contain"/></button>)}
+          {product.videos?.[0]&&<div className="flex h-20 w-24 shrink-0 items-center justify-center rounded-xl bg-[#07090c] text-[10px] font-black text-white">▶ VIDÉO</div>}
+        </div>
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {[["Garantie",product.warranty||"Selon produit",ShieldCheck],["Livraison","Côte d'Ivoire & Afrique",Truck],["Support","Conseil technique",Headphones]].map(([title,value,Icon])=><div key={title as string} className="rounded-xl border border-[#e4e6e8] bg-white p-4"><React.createElement(Icon as any,{className:"h-5 w-5 text-[#ed1c24]"})}<p className="mt-3 text-[10px] font-black uppercase">{title as string}</p><p className="mt-1 text-[10px] leading-4 text-[#73777d]">{value as string}</p></div>)}
+        </div>
+      </section>
+
+      <section className="lg:pt-1">
+        <p className="text-[10px] font-black uppercase tracking-[.2em] text-[#ed1c24]">{product.category_name||"Diagnostic automobile"}</p>
+        <h1 className="mt-2 text-3xl font-black leading-tight tracking-tight sm:text-4xl">{product.name}</h1>
+        <div className="mt-3 flex flex-wrap items-center gap-2"><span className="rounded-full bg-[#f5f6f7] px-3 py-1 text-[10px] font-black">Équipement professionnel</span>{product.availability&&<span className="text-[10px] font-bold text-[#73777d]">{product.availability}</span>}</div>
+
+        <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 border-y border-[#e4e6e8] py-5 text-xs">
+          <div><span className="text-[10px] text-[#73777d]">Référence</span><p className="mt-1 font-black">{product.slug}</p></div>
+          <div><span className="text-[10px] text-[#73777d]">Catégorie</span><p className="mt-1 font-black">{product.category_name||"—"}</p></div>
+          <div><span className="text-[10px] text-[#73777d]">Garantie</span><p className="mt-1 font-black">{product.warranty||"Selon produit"}</p></div>
+          <div><span className="text-[10px] text-[#73777d]">Livraison</span><p className="mt-1 font-black">Côte d'Ivoire & Afrique</p></div>
+        </div>
+
+        {product.description&&<div className="mt-6"><h2 className="text-xs font-black uppercase tracking-wider">Description</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-[#73777d]">{product.description}</p></div>}
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          {product.specs&&<div className="rounded-xl bg-[#f5f6f7] p-4"><h2 className="text-xs font-black uppercase">Caractéristiques</h2><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#73777d]">{product.specs}</p></div>}
+          {product.compatibility&&<div className="rounded-xl bg-[#f5f6f7] p-4"><h2 className="text-xs font-black uppercase">Compatibilité</h2><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#73777d]">{product.compatibility}</p></div>}
+        </div>
+        {product.box_contents&&<div className="mt-3 rounded-xl border border-[#e4e6e8] p-4"><h2 className="text-xs font-black uppercase">Contenu de la boîte</h2><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#73777d]">{product.box_contents}</p></div>}
+      </section>
+
+      <aside className="lg:sticky lg:top-24 lg:h-fit">
+        <div className="overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white shadow-lg">
+          <div className="bg-[#10141a] p-5 text-white"><p className="text-[10px] font-black uppercase tracking-[.18em] text-[#ed1c24]">PRIX DIAGASSIST</p><p className="mt-2 text-3xl font-black">{formatFcfa(product.price_fcfa)}</p><p className="mt-2 text-[10px] text-slate-400">Prix affiché hors frais de livraison.</p></div>
+          <div className="p-5">
+            <div className="flex items-center justify-between rounded-xl bg-[#f5f6f7] p-3"><span className="text-xs font-bold">Disponibilité</span><span className="text-[10px] font-black text-emerald-700">{product.availability||"À confirmer"}</span></div>
+            <div className="mt-4"><p className="text-[10px] font-black uppercase text-[#73777d]">Quantité</p><div className="mt-2 flex items-center justify-between rounded-xl border"><button onClick={()=>setQuantity(q=>Math.max(1,q-1))} className="px-4 py-3 text-lg font-black">−</button><span className="font-black">{quantity}</span><button onClick={()=>setQuantity(q=>q+1)} className="px-4 py-3 text-lg font-black">+</button></div></div>
+            <button onClick={()=>{cart.add(product,quantity);onGoToCart()}} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#ed1c24] py-3.5 text-sm font-black text-white hover:bg-[#b90f16]"><ShoppingBag className="h-5 w-5"/> Ajouter au panier</button>
+            <button onClick={()=>setShowOrderForm(true)} className="mt-2 w-full rounded-xl border-2 border-[#07090c] py-3 text-sm font-black">Acheter maintenant</button>
+            <a href={whatsappHref} target="_blank" rel="noreferrer" className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#16a34a] py-3 text-sm font-black text-white"><MessageCircle className="h-5 w-5"/> Commander sur WhatsApp</a>
+            <p className="mt-4 text-center text-[9px] leading-4 text-[#73777d]">Commande par téléphone, WhatsApp ou panier. Le paiement en ligne sera activé prochainement.</p>
+          </div>
+        </div>
+      </aside>
     </div>
-    <div className="mt-10 grid gap-5 lg:grid-cols-3">{[["Caractéristiques",product.specs],["Compatibilité",product.compatibility],["Contenu de la boîte",product.box_contents]].map(([title,body])=><section key={title as string} className="rounded-2xl border border-[#e4e6e8] bg-white p-5"><h2 className="border-b pb-3 text-sm font-black uppercase">{title as string}</h2><p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-[#73777d]">{body||"Informations disponibles sur demande."}</p></section>)}</div>
-    {product.videos?.[0]&&<div className="mt-5 rounded-2xl border p-5"><h2 className="mb-4 text-sm font-black uppercase">Démonstration produit</h2><div className="aspect-video overflow-hidden rounded-xl bg-black"><video src={product.videos[0]} controls className="h-full w-full"/></div></div>}
+
+    {showOrderForm&&<div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-5">
+      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-6 shadow-2xl sm:rounded-2xl">
+        <div className="flex items-start justify-between"><div><p className="text-[10px] font-black uppercase tracking-wider text-[#ed1c24]">Commande directe</p><h2 className="mt-1 text-2xl font-black">{product.name}</h2></div><button onClick={()=>setShowOrderForm(false)} className="rounded-full bg-[#f5f6f7] p-2"><X className="h-5 w-5"/></button></div>
+        <div className="mt-5 rounded-xl bg-[#f5f6f7] p-4"><div className="flex justify-between text-xs"><span>Quantité</span><strong>{quantity}</strong></div><div className="mt-2 flex justify-between text-sm"><span>Total produits</span><strong className="text-[#ed1c24]">{formatFcfa((product.price_fcfa||0)*quantity)}</strong></div></div>
+        <form onSubmit={handleOrder} className="mt-5 grid gap-3">
+          <input required type="tel" placeholder="Numéro de téléphone" value={phone} onChange={e=>setPhone(e.target.value)} className="rounded-xl border px-4 py-3 text-sm outline-none focus:border-[#ed1c24]"/>
+          <input required placeholder="Nom et prénom" value={name} onChange={e=>setName(e.target.value)} className="rounded-xl border px-4 py-3 text-sm outline-none focus:border-[#ed1c24]"/>
+          <input required placeholder="Ville" value={city} onChange={e=>setCity(e.target.value)} className="rounded-xl border px-4 py-3 text-sm outline-none focus:border-[#ed1c24]"/>
+          {error&&<p className="rounded-lg bg-red-50 p-3 text-xs font-bold text-[#ed1c24]">{error}</p>}
+          <button disabled={submitting} className="rounded-xl bg-[#ed1c24] py-3.5 text-sm font-black text-white disabled:opacity-50">{submitting?"Enregistrement...":"Confirmer la commande"}</button>
+          <p className="text-center text-[9px] leading-4 text-[#73777d]">Aucun paiement en ligne n'est demandé à cette étape. Notre équipe vous recontactera pour la suite.</p>
+        </form>
+      </div>
+    </div>}
   </main>;
 }
+
 function ShopCart({cart,onBack,onCheckout}:{cart:ReturnType<typeof useCart>;onBack:()=>void;onCheckout:()=>void}) {
   return <main className="mx-auto max-w-6xl px-5 py-8 sm:px-8">
     <div className="mb-5 flex items-center gap-2 text-[10px] text-[#73777d]"><button onClick={onBack} className="font-bold hover:text-[#ed1c24]">Accueil</button><ChevronRight className="h-3 w-3"/><span>Panier</span></div>
