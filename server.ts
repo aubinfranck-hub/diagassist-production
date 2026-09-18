@@ -259,7 +259,6 @@ async function initDatabase(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_shop_orders_customer ON shop_orders (customer_phone);
     CREATE INDEX IF NOT EXISTS idx_shop_orders_status ON shop_orders (status);
-    CREATE INDEX IF NOT EXISTS idx_shop_orders_ref ON shop_orders (order_ref);
     -- Compteur pour generer les references de commande DA-AAAA-NNNNNN sans collision
     CREATE TABLE IF NOT EXISTS shop_order_counter (
       year INTEGER PRIMARY KEY,
@@ -305,6 +304,9 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
     `);
+    // L'index sur order_ref ne peut être créé qu'une fois la colonne garantie présente —
+    // d'où sa place ici plutôt que dans le bloc de création de schéma principal.
+    await dbPool.query(`CREATE INDEX IF NOT EXISTS idx_shop_orders_ref ON shop_orders (order_ref)`);
   } catch (err: any) {
     console.warn("[DB] Élargissement shop_orders échoué :", err.message);
   }
