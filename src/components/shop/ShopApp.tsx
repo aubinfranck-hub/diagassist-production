@@ -95,7 +95,11 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
   const [categories, setCategories] = useState<ShopCategory[]>([]);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [brand, setBrand] = useState("");
+  const [maxPrice, setMaxPrice] = useState(3000000);
+  const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
+  const brands = ["AUTEL","THINKCAR","LAUNCH","XTOOL","TOPDON","HUMZOR","OBDSTAR","BOSCH","TEXA","MUCAR","GODIAG"];
 
   useEffect(() => {
     fetch("/api/shop/categories").then(r => r.json()).then(d => d.success && setCategories(d.categories || [])).catch(() => {});
@@ -105,108 +109,71 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return products.filter(p => {
+      const hay = [p.name,p.category_name,p.description,p.specs,p.compatibility].filter(Boolean).join(" ").toLowerCase();
       const categoryOk = !activeCategory || p.category_slug === activeCategory;
-      const searchOk = !q || [p.name, p.category_name, p.description, p.specs, p.compatibility].filter(Boolean).join(" ").toLowerCase().includes(q);
-      return categoryOk && searchOk;
+      const searchOk = !q || hay.includes(q);
+      const brandOk = !brand || p.name.toLowerCase().includes(brand.toLowerCase());
+      const priceOk = p.price_fcfa == null || p.price_fcfa <= maxPrice;
+      const stockOk = !onlyAvailable || /stock|disponible/i.test(p.availability || "");
+      return categoryOk && searchOk && brandOk && priceOk && stockOk;
     });
-  }, [products, activeCategory, search]);
+  }, [products, activeCategory, search, brand, maxPrice, onlyAvailable]);
 
   const popularCategories = categories.slice(0, 8);
+  const featured = products.slice(0, 3);
 
   return (
     <main>
-      <section className="relative overflow-hidden bg-[#07090c] text-white">
-        <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "radial-gradient(circle at 20% 20%, #ed1c24 0, transparent 28%), radial-gradient(circle at 85% 70%, #334155 0, transparent 30%)" }} />
-        <div className="relative mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20 lg:py-24">
-          <div className="max-w-3xl">
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">
-              <Zap className="w-3.5 h-3.5 text-[#ed1c24]" /> Solutions professionnelles
+      <section className="relative overflow-hidden bg-[#10141a] text-white">
+        <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "radial-gradient(circle at 18% 40%, #ed1c24 0, transparent 30%), radial-gradient(circle at 85% 60%, #475569 0, transparent 32%)" }} />
+        <div className="relative mx-auto grid max-w-7xl items-center gap-8 px-5 py-14 sm:px-8 lg:grid-cols-[1.05fr_.95fr] lg:py-16">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.25em] text-[#ed1c24]">DiagAssist • Équipement professionnel</p>
+            <h1 className="mt-3 text-4xl font-black uppercase leading-[.9] tracking-[-.04em] sm:text-6xl">LA RÉFÉRENCE<br/><span className="text-[#ed1c24]">DU DIAGNOSTIC</span><br/>AUTOMOBILE</h1>
+            <p className="mt-5 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">Scanners, outils de programmation, J2534, accessoires et formation pour les professionnels de l'automobile.</p>
+            <button onClick={() => document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="mt-6 rounded-xl bg-[#ed1c24] px-6 py-3.5 text-sm font-black shadow-lg">Voir nos produits →</button>
+            <div className="mt-7 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {["Diagnostic multimarque","Programmation & Codage","Toutes marques","Formation & Support"].map(x=><div key={x} className="rounded-xl border border-white/10 bg-white/5 p-3 text-[10px] font-black">{x}</div>)}
             </div>
-            <h1 className="max-w-4xl text-4xl font-black uppercase leading-[0.92] tracking-[-0.04em] sm:text-6xl lg:text-7xl">
-              La référence du <span className="text-[#ed1c24]">diagnostic automobile</span>
-            </h1>
-            <p className="mt-5 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
-              Scanners, programmation, J2534, outils atelier, accessoires et formation pour les professionnels de l'automobile.
-            </p>
-            <div className="mt-7 flex flex-wrap gap-3">
-              <button onClick={() => document.getElementById("shop-products")?.scrollIntoView({ behavior: "smooth" })} className="rounded-xl bg-[#ed1c24] px-6 py-3 text-sm font-black hover:bg-[#b90f16] transition-colors">
-                Voir les produits
-              </button>
-              <button onClick={() => document.getElementById("shop-categories")?.scrollIntoView({ behavior: "smooth" })} className="rounded-xl border border-white/15 bg-white/5 px-6 py-3 text-sm font-bold hover:bg-white/10 transition-colors">
-                Explorer les catégories
-              </button>
-            </div>
-            <div className="mt-10 grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-4">
-              {["Diagnostic multimarque", "Programmation & codage", "J2534 / Pass-Thru", "Support technique"].map((x, i) => (
-                <div key={x} className="rounded-xl border border-white/10 bg-white/[0.04] p-3 backdrop-blur-sm">
-                  <p className="text-xs font-bold text-slate-200">{x}</p>
-                </div>
-              ))}
-            </div>
+          </div>
+          <div className="relative hidden min-h-[320px] items-center justify-center lg:flex">
+            {featured[0]?.photos?.[0] ? <img src={featured[0].photos[0]} alt={featured[0].name} className="max-h-[360px] w-full object-contain drop-shadow-2xl"/> : <Wrench className="h-48 w-48 text-[#ed1c24]"/>}
+            <div className="absolute bottom-3 right-2 rounded-xl border border-white/10 bg-black/60 px-4 py-3 backdrop-blur"><p className="text-[10px] font-black text-[#ed1c24]">VOTRE PERFORMANCE</p><p className="text-xs font-black">NOTRE PRIORITÉ !</p></div>
           </div>
         </div>
       </section>
 
-      <section className="border-b bg-white">
-        <div className="mx-auto grid max-w-7xl grid-cols-2 divide-x px-5 py-5 sm:grid-cols-4">
-          {[
-            [ShieldCheck, "Garantie", "Produits sélectionnés"],
-            [Truck, "Livraison", "Côte d'Ivoire & Afrique"],
-            [Headphones, "Support", "Conseils techniques"],
-            [CreditCard, "Commande", "Processus sécurisé"],
-          ].map(([Icon, title, text]) => (
-            <div key={title as string} className="flex items-center gap-3 px-3 py-2 first:pl-0">
-              {React.createElement(Icon as any, { className: "w-5 h-5 text-[#ed1c24] shrink-0" })}
-              <div><p className="text-xs font-black text-[#07090c]">{title as string}</p><p className="hidden text-[10px] text-[#73777d] sm:block">{text as string}</p></div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <section className="border-b bg-white"><div className="mx-auto grid max-w-7xl grid-cols-2 divide-x sm:grid-cols-4">{[
+        [ShieldCheck,"Produits 100% originaux","Garantie constructeur"],[Truck,"Livraison rapide","Côte d'Ivoire & Afrique"],[CreditCard,"Paiement sécurisé","Mobile Money prochainement"],[Headphones,"Support technique","Experts à votre écoute"]
+      ].map(([Icon,title,text])=><div key={title as string} className="flex items-center gap-3 px-4 py-4"><React.createElement(Icon as any,{className:"h-5 w-5 shrink-0 text-[#ed1c24]"})}<div><p className="text-xs font-black">{title as string}</p><p className="hidden text-[10px] text-[#73777d] sm:block">{text as string}</p></div></div>)}</div></section>
 
-      <section className="border-b bg-white"><div className="mx-auto grid max-w-7xl grid-cols-2 gap-0 divide-x sm:grid-cols-4"><div className="flex items-center gap-3 px-4 py-4"><ShieldCheck className="h-5 w-5 shrink-0 text-[#ed1c24]"/><div><p className="text-xs font-black">Produits 100% originaux</p><p className="text-[10px] text-[#73777d]">Garantie constructeur</p></div></div><div className="flex items-center gap-3 px-4 py-4"><Truck className="h-5 w-5 shrink-0 text-[#ed1c24]"/><div><p className="text-xs font-black">Livraison rapide</p><p className="text-[10px] text-[#73777d]">Côte d'Ivoire & Afrique</p></div></div><div className="flex items-center gap-3 px-4 py-4"><CreditCard className="h-5 w-5 shrink-0 text-[#ed1c24]"/><div><p className="text-xs font-black">Paiement sécurisé</p><p className="text-[10px] text-[#73777d]">Mobile Money prochainement</p></div></div><div className="flex items-center gap-3 px-4 py-4"><Headphones className="h-5 w-5 shrink-0 text-[#ed1c24]"/><div><p className="text-xs font-black">Support technique</p><p className="text-[10px] text-[#73777d]">Experts à votre écoute</p></div></div></div></section>
+      <section className="border-b bg-[#10141a] text-white"><div className="mx-auto flex max-w-7xl overflow-x-auto"><button onClick={()=>setActiveCategory(null)} className="flex shrink-0 items-center gap-2 bg-[#ed1c24] px-5 py-4 text-xs font-black"><Menu className="h-4 w-4"/>Tous les produits</button>{popularCategories.slice(0,7).map(c=><button key={c.id} onClick={()=>setActiveCategory(c.slug)} className="shrink-0 px-4 py-4 text-xs font-bold text-slate-300">{c.name}</button>)}<span className="ml-auto hidden shrink-0 bg-[#ed1c24] px-5 py-4 text-xs font-black lg:block">Nos marques</span></div></section>
 
-      <section className="border-b bg-[#10141a] text-white"><div className="mx-auto flex max-w-7xl items-center overflow-x-auto"><button onClick={()=>setActiveCategory(null)} className="flex shrink-0 items-center gap-2 bg-[#ed1c24] px-5 py-4 text-xs font-black"><Menu className="h-4 w-4"/>Tous les produits</button>{popularCategories.slice(0,7).map(c=><button key={c.id} onClick={()=>setActiveCategory(c.slug)} className="shrink-0 px-4 py-4 text-xs font-bold text-slate-300 hover:bg-white/5 hover:text-white">{c.name}</button>)}<button className="ml-auto hidden shrink-0 bg-[#ed1c24] px-5 py-4 text-xs font-black lg:block">Nos marques</button></div></section>
+      <section className="border-b bg-white"><div className="mx-auto flex max-w-7xl gap-3 overflow-x-auto px-5 py-4 sm:px-8">{brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={`shrink-0 rounded-lg border px-4 py-2 text-xs font-black tracking-wide ${brand===b?"border-[#ed1c24] bg-[#ed1c24] text-white":"border-[#e4e6e8] text-[#73777d]"}`}>{b}</button>)}</div></section>
 
-      <section className="border-b bg-white"><div className="mx-auto flex max-w-7xl gap-3 overflow-x-auto px-5 py-4 sm:px-8">{["AUTEL","THINKCAR","LAUNCH","XTOOL","TOPDON","HUMZOR","OBDSTAR","BOSCH","TEXA","MUCAR","GODIAG"].map(b=><span key={b} className="shrink-0 rounded-lg border border-[#e4e6e8] px-4 py-2 text-xs font-black tracking-wide text-[#73777d]">{b}</span>)}</div></section>
+      <section className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
+        <div className="flex items-center justify-between"><div><p className="text-[10px] font-black uppercase tracking-[.2em] text-[#ed1c24]">Catalogue</p><h2 className="mt-1 text-2xl font-black">Tous les produits</h2><p className="mt-1 text-xs text-[#73777d]">Découvrez notre gamme complète d'outils de diagnostic et d'équipements atelier.</p></div><button onClick={onGoCart} className="hidden items-center gap-2 rounded-xl border px-4 py-2 text-xs font-black sm:flex"><ShoppingBag className="h-4 w-4"/> Panier</button></div>
+        <div className="mt-6 grid gap-6 lg:grid-cols-[250px_1fr]">
+          <aside className="hidden h-fit rounded-2xl border border-[#e4e6e8] bg-white p-5 lg:block">
+            <div className="flex items-center justify-between"><h3 className="text-sm font-black">Filtrer les produits</h3><button onClick={()=>{setActiveCategory(null);setBrand("");setMaxPrice(3000000);setOnlyAvailable(false)}} className="text-[10px] font-bold text-[#ed1c24]">Réinitialiser</button></div>
+            <div className="mt-5"><p className="text-[10px] font-black uppercase text-[#73777d]">Catégories</p><div className="mt-3 space-y-2">{popularCategories.map(c=><button key={c.id} onClick={()=>setActiveCategory(activeCategory===c.slug?null:c.slug)} className={`flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs ${activeCategory===c.slug?"bg-red-50 font-black text-[#ed1c24]":"text-[#10141a]"}`}><span>{c.name}</span><ChevronRight className="h-3 w-3"/></button>)}</div></div>
+            <div className="mt-6 border-t pt-5"><p className="text-[10px] font-black uppercase text-[#73777d]">Marques</p><div className="mt-3 space-y-2">{brands.slice(0,7).map(b=><label key={b} className="flex cursor-pointer items-center gap-2 text-xs"><input type="radio" name="brand" checked={brand===b} onChange={()=>setBrand(b)} className="accent-[#ed1c24]"/>{b}</label>)}</div></div>
+            <div className="mt-6 border-t pt-5"><div className="flex justify-between text-[10px] font-black uppercase text-[#73777d]"><span>Prix</span><span>{maxPrice.toLocaleString("fr-FR")} FCFA</span></div><input type="range" min="0" max="3000000" step="10000" value={maxPrice} onChange={e=>setMaxPrice(Number(e.target.value))} className="mt-3 w-full accent-[#ed1c24]"/><div className="mt-1 flex justify-between text-[9px] text-[#73777d]"><span>0 FCFA</span><span>3 000 000 FCFA</span></div></div>
+            <label className="mt-6 flex cursor-pointer items-center gap-2 border-t pt-5 text-xs font-bold"><input type="checkbox" checked={onlyAvailable} onChange={e=>setOnlyAvailable(e.target.checked)} className="accent-[#ed1c24]"/> En stock uniquement</label>
+          </aside>
 
-      <section id="shop-categories" className="mx-auto max-w-7xl px-5 py-12 sm:px-8 lg:py-16">
-        <div className="mb-5 flex items-end justify-between">
-          <div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">Catalogue</p><h2 className="mt-1 text-2xl font-black uppercase text-[#07090c]">Trouvez votre équipement</h2></div>
-          <button onClick={onGoCart} className="hidden items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold sm:flex"><ShoppingBag className="w-4 h-4" /> Panier</button>
-        </div>
-        <div className="flex gap-2 overflow-x-auto pb-3 [scrollbar-width:none]">
-          <button onClick={() => setActiveCategory(null)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${!activeCategory ? "bg-[#ed1c24] text-white" : "bg-[#f5f6f7] text-[#73777d]"}`}>Tous</button>
-          {popularCategories.map(c => <button key={c.id} onClick={() => setActiveCategory(c.slug)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${activeCategory === c.slug ? "bg-[#ed1c24] text-white" : "bg-[#f5f6f7] text-[#73777d]"}`}>{c.name}</button>)}
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-7xl px-5 py-8 sm:px-8"><div className="grid gap-4 lg:grid-cols-3"><div className="rounded-2xl bg-[#10141a] p-6 text-white"><p className="text-[10px] font-black uppercase text-[#ed1c24]">AUTEL</p><h3 className="mt-2 text-xl font-black">MaxiCOM MK808BT PRO</h3><p className="mt-2 text-xs text-slate-400">Performance. Fiabilité. Polyvalence.</p><button className="mt-5 rounded-lg bg-[#ed1c24] px-4 py-2 text-xs font-black">Découvrir</button></div><div className="rounded-2xl border border-[#e4e6e8] bg-white p-6"><p className="text-[10px] font-black uppercase text-[#ed1c24]">THINKCAR</p><h3 className="mt-2 text-xl font-black">THINKDIAG 2</h3><p className="mt-2 text-xs text-[#73777d]">Diagnostic professionnel sur smartphone.</p><button className="mt-5 rounded-lg bg-[#ed1c24] px-4 py-2 text-xs font-black text-white">Voir maintenant</button></div><div className="rounded-2xl bg-[#07090c] p-6 text-white"><p className="text-[10px] font-black uppercase">OUTILS J2534</p><h3 className="mt-2 text-xl font-black">Programmation OEM</h3><p className="mt-2 text-xs text-slate-400">Toutes marques.</p><button className="mt-5 rounded-lg bg-[#ed1c24] px-4 py-2 text-xs font-black">Explorer</button></div></div></section>
-
-      <section id="shop-products" className="mx-auto max-w-7xl px-5 pb-20 sm:px-8 lg:pb-24">
-        <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="text-xl font-black uppercase text-[#07090c]">Produits disponibles</h2><p className="mt-1 text-xs text-[#73777d]">{filtered.length} produit(s)</p></div>
-          <div className="relative w-full sm:max-w-md">
-            <Search className="absolute left-3 top-1/2 w-4 h-4 -translate-y-1/2 text-[#73777d]" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un scanner, une marque, une référence..." className="w-full rounded-xl border border-[#e4e6e8] bg-white py-3 pl-10 pr-4 text-sm outline-none focus:border-[#ed1c24]" />
+          <div>
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#73777d]"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher une marque, un modèle, une référence ou une fonction..." className="w-full rounded-xl border border-[#e4e6e8] py-3 pl-10 pr-4 text-sm outline-none focus:border-[#ed1c24]"/></div><button onClick={onGoCart} className="rounded-xl bg-[#07090c] px-4 py-3 text-xs font-black text-white sm:hidden">Panier ({0})</button></div>
+            <div className="mb-4 flex items-center justify-between text-xs text-[#73777d]"><span>{filtered.length} produit(s)</span><span>Tri : Pertinence</span></div>
+            {loading?<div className="py-24 text-center text-sm text-[#73777d]">Chargement du catalogue...</div>:filtered.length===0?<div className="rounded-2xl border border-dashed py-24 text-center text-sm text-[#73777d]">Aucun produit ne correspond à vos critères.</div>:
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
+              {filtered.map(p=><button key={p.id} onClick={()=>onSelectProduct(p.slug)} className="group overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-[#ed1c24]/40 hover:shadow-xl">
+                <div className="relative aspect-square bg-[#f5f6f7] sm:aspect-[4/3]">{p.photos?.[0]?<img src={p.photos[0]} alt={p.name} className="h-full w-full object-contain p-5 transition-transform duration-500 group-hover:scale-105"/>:<Package className="mx-auto mt-20 h-12 w-12 text-[#73777d]"/>}{p.availability&&<span className={`absolute left-3 top-3 rounded-full px-2 py-1 text-[9px] font-black uppercase ${/stock|disponible/i.test(p.availability)?"bg-emerald-500 text-white":"bg-white text-[#07090c]"}`}>{p.availability}</span>}</div>
+                <div className="p-4"><p className="text-[9px] font-black uppercase tracking-wider text-[#ed1c24]">{p.category_name||"Diagnostic automobile"}</p><p className="mt-1 min-h-[40px] text-sm font-black leading-5">{p.name}</p>{p.specs&&<p className="mt-2 line-clamp-2 text-[10px] leading-4 text-[#73777d]">{p.specs}</p>}<div className="mt-4 flex items-center justify-between gap-2"><p className="text-sm font-black text-[#ed1c24]">{formatFcfa(p.price_fcfa)}</p><span className="rounded-lg bg-[#ed1c24] p-2 text-white"><ShoppingBag className="h-4 w-4"/></span></div></div>
+              </button>)}
+            </div>}
           </div>
         </div>
-        {loading ? <div className="py-24 text-center text-sm text-[#73777d]">Chargement du catalogue...</div> :
-        filtered.length === 0 ? <div className="rounded-2xl border border-dashed border-[#e4e6e8] py-24 text-center"><Package className="mx-auto mb-3 h-10 w-10 text-[#73777d]" /><p className="text-sm font-bold text-[#07090c]">Aucun produit trouvé</p><p className="mt-1 text-xs text-[#73777d]">Essayez une autre recherche ou catégorie.</p></div> :
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4">
-          {filtered.map(p => (
-            <button key={p.id} onClick={() => onSelectProduct(p.slug)} className="group overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-[#ed1c24]/30 hover:shadow-2xl">
-              <div className="relative aspect-square overflow-hidden bg-[#f5f6f7] sm:aspect-[4/3]">
-                {p.photos?.[0] ? <img src={p.photos[0]} alt={p.name} className="h-full w-full object-contain p-5 transition-transform duration-500 group-hover:scale-110 sm:p-7" /> : <Package className="mx-auto h-12 w-12 text-[#73777d]" />}
-                {p.availability && <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2 py-1 text-[9px] font-black uppercase text-[#07090c] shadow">{p.availability}</span>}
-              </div>
-              <div className="p-4">
-                <p className="mb-1 text-[9px] font-black uppercase tracking-wider text-[#73777d]">{p.category_name || "Diagnostic automobile"}</p>
-                <p className="min-h-[40px] text-sm font-black leading-5 text-[#07090c]">{p.name}</p>
-                <div className="mt-3 flex items-end justify-between gap-2"><p className="text-sm font-black text-[#ed1c24]">{formatFcfa(p.price_fcfa)}</p><span className="rounded-lg bg-[#07090c] p-2 text-white"><ChevronRight className="h-4 w-4" /></span></div>
-              </div>
-            </button>
-          ))}
-        </div>}
       </section>
     </main>
   );
