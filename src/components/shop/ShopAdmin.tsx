@@ -9,16 +9,40 @@ type Tab = "dashboard" | "products" | "orders" | "parts" | "customers";
 const ORDER_STATUSES = ["nouvelle", "a_contacter", "contactee", "confirmee", "en_traitement", "prete", "livree", "annulee", "client_injoignable"];
 const PART_STATUSES = ["nouvelle", "recherche", "devis_envoye", "devis_accepte", "commandee", "en_transit", "recue", "livree", "annulee"];
 
-function useAdminCode() {
-  const [code, setCode] = useState<string | null>(() => localStorage.getItem("shop_admin_code"));
-  const save = (c: string) => { localStorage.setItem("shop_admin_code", c); setCode(c); };
-  const clear = () => { localStorage.removeItem("shop_admin_code"); setCode(null); };
-  return { code, save, clear };
+async function shopFetch(auth: { header: string; value: string }, url: string, options: RequestInit = {}) {
+  const res = await fetch(url, { ...options, headers: { ...options.headers, [auth.header]: auth.value, "Content-Type": "application/json" } });
+  return res.json();
 }
 
-async function shopFetch(code: string, url: string, options: RequestInit = {}) {
-  const res = await fetch(url, { ...options, headers: { ...options.headers, "x-admin-code": code, "Content-Type": "application/json" } });
-  return res.json();
+// Renvoie automatiquement le header d'authentification à utiliser : la session admin déjà
+// ouverte dans l'app principale DiagAssist (auth_session_token) si elle existe et est
+// reconnue admin, sinon un code admin saisi manuellement (x-admin-code / ADMIN_SECRET).
+function useShopAuth() {
+  const [auth, setAuth] = useState<{ header: string; value: string } | null>(null);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    const existingToken = localStorage.getItem("auth_session_token");
+    const manualCode = localStorage.getItem("shop_admin_code");
+    (async () => {
+      if (existingToken) {
+        const candidate = { header: "Authorization", value: `Bearer ${existingToken}` };
+        const test = await fetch("/api/admin/shop/dashboard", { headers: { Authorization: candidate.value } }).then((r) => r.json()).catch(() => ({ success: false }));
+        if (test.success) { setAuth(candidate); setChecking(false); return; }
+      }
+      if (manualCode) {
+        const candidate = { header: "x-admin-code", value: manualCode };
+        const test = await fetch("/api/admin/shop/dashboard", { headers: { "x-admin-code": manualCode } }).then((r) => r.json()).catch(() => ({ success: false }));
+        if (test.success) { setAuth(candidate); setChecking(false); return; }
+        localStorage.removeItem("shop_admin_code");
+      }
+      setChecking(false);
+    })();
+  }, []);
+
+  const saveCode = (code: string) => { localStorage.setItem("shop_admin_code", code); setAuth({ header: "x-admin-code", value: code }); };
+  const clear = () => { localStorage.removeItem("shop_admin_code"); setAuth(null); };
+  return { auth, checking, saveCode, clear };
 }
 
 function AdminGate({ onValidated }: { onValidated: (code: string) => void }) {
@@ -30,7 +54,7 @@ function AdminGate({ onValidated }: { onValidated: (code: string) => void }) {
     e.preventDefault();
     setChecking(true);
     setError(null);
-    const data = await shopFetch(input, "/api/admin/shop/dashboard");
+    const data = await shopFetch({ header: "x-admin-code", value: input }, "/api/admin/shop/dashboard");
     setChecking(false);
     if (data.success) onValidated(input);
     else setError("Code incorrect.");
@@ -54,9 +78,9 @@ function AdminGate({ onValidated }: { onValidated: (code: string) => void }) {
   );
 }
 
-function Dashboard({ code }: { code: string }) {
+function Dashboard({ auth }: { auth: any }) {
   const [stats, setStats] = useState<any>(null);
-  useEffect(() => { shopFetch(code, "/api/admin/shop/dashboard").then((d) => d.success && setStats(d.stats)); }, [code]);
+  useEffect(() => { shopFetch(auth, "/api/admin/shop/dashboard").then((d) => d.success && setStats(d.stats)); }, [auth]);
   if (!stats) return <Loader2 className="w-5 h-5 animate-spin text-slate-500 mx-auto mt-10" />;
   const ordersByStatus = stats.ordersByStatus || [];
   const partRequestsByStatus = stats.partRequestsByStatus || [];
@@ -90,7 +114,7 @@ function Dashboard({ code }: { code: string }) {
   );
 }
 
-function ProductForm({ code, categories, onDone, onCancel }: { code: string; categories: any[]; onDone: () => void; onCancel: () => void }) {
+function ProductForm({ auth, categories, onDone, onCancel }: { auth: any; categories: any[]; onDone: () => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [price, setPrice] = useState("");
@@ -112,7 +136,7 @@ function ProductForm({ code, categories, onDone, onCancel }: { code: string; cat
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    await shopFetch(code, "/api/admin/shop/products", {
+    await shopFetch(auth, "/api/admin/shop/products", {
       method: "POST",
       body: JSON.stringify({
         name, category_id: categoryId || null, price_fcfa: price ? Number(price) : null,
@@ -168,28 +192,28 @@ function ProductForm({ code, categories, onDone, onCancel }: { code: string; cat
   );
 }
 
-function ProductsTab({ code }: { code: string }) {
+function ProductsTab({ auth }: { auth: any }) {
   const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
 
   const load = () => {
-    shopFetch(code, "/api/admin/shop/products").then((d) => d.success && setProducts(d.products));
-    shopFetch(code, "/api/admin/shop/categories").then((d) => d.success && setCategories(d.categories));
+    shopFetch(auth, "/api/admin/shop/products").then((d) => d.success && setProducts(d.products));
+    shopFetch(auth, "/api/admin/shop/categories").then((d) => d.success && setCategories(d.categories));
   };
-  useEffect(load, [code]);
+  useEffect(load, [auth]);
 
   const [newCatName, setNewCatName] = useState("");
   const addCategory = async () => {
     if (!newCatName.trim()) return;
-    await shopFetch(code, "/api/admin/shop/categories", { method: "POST", body: JSON.stringify({ name: newCatName }) });
+    await shopFetch(auth, "/api/admin/shop/categories", { method: "POST", body: JSON.stringify({ name: newCatName }) });
     setNewCatName("");
     load();
   };
 
   const deleteProduct = async (id: number) => {
     if (!confirm("Désactiver ce produit ?")) return;
-    await shopFetch(code, `/api/admin/shop/products/${id}`, { method: "DELETE" });
+    await shopFetch(auth, `/api/admin/shop/products/${id}`, { method: "DELETE" });
     load();
   };
 
@@ -206,7 +230,7 @@ function ProductsTab({ code }: { code: string }) {
           <Plus className="w-4 h-4" /> Nouveau produit
         </button>
       ) : (
-        <ProductForm code={code} categories={categories} onDone={() => { setShowForm(false); load(); }} onCancel={() => setShowForm(false)} />
+        <ProductForm auth={auth} categories={categories} onDone={() => { setShowForm(false); load(); }} onCancel={() => setShowForm(false)} />
       )}
 
       {products.map((p) => (
@@ -225,12 +249,12 @@ function ProductsTab({ code }: { code: string }) {
   );
 }
 
-function OrdersTab({ code }: { code: string }) {
+function OrdersTab({ auth }: { auth: any }) {
   const [orders, setOrders] = useState<any[]>([]);
-  useEffect(() => { shopFetch(code, "/api/admin/shop/orders").then((d) => d.success && setOrders(d.orders)); }, [code]);
+  useEffect(() => { shopFetch(auth, "/api/admin/shop/orders").then((d) => d.success && setOrders(d.orders)); }, [auth]);
 
   const updateStatus = async (id: number, status: string) => {
-    await shopFetch(code, `/api/admin/shop/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    await shopFetch(auth, `/api/admin/shop/orders/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
   };
 
@@ -257,12 +281,12 @@ function OrdersTab({ code }: { code: string }) {
   );
 }
 
-function PartsTab({ code }: { code: string }) {
+function PartsTab({ auth }: { auth: any }) {
   const [requests, setRequests] = useState<any[]>([]);
-  useEffect(() => { shopFetch(code, "/api/admin/shop/part-requests").then((d) => d.success && setRequests(d.requests)); }, [code]);
+  useEffect(() => { shopFetch(auth, "/api/admin/shop/part-requests").then((d) => d.success && setRequests(d.requests)); }, [auth]);
 
   const update = async (id: number, fields: any) => {
-    await shopFetch(code, `/api/admin/shop/part-requests/${id}`, { method: "PATCH", body: JSON.stringify(fields) });
+    await shopFetch(auth, `/api/admin/shop/part-requests/${id}`, { method: "PATCH", body: JSON.stringify(fields) });
     setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...fields } : r)));
   };
 
@@ -287,16 +311,16 @@ function PartsTab({ code }: { code: string }) {
   );
 }
 
-function CustomersTab({ code }: { code: string }) {
+function CustomersTab({ auth }: { auth: any }) {
   const [customers, setCustomers] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<any>(null);
 
-  const load = (q?: string) => shopFetch(code, `/api/admin/shop/customers${q ? `?search=${encodeURIComponent(q)}` : ""}`).then((d) => d.success && setCustomers(d.customers));
-  useEffect(() => { load(); }, [code]);
+  const load = (q?: string) => shopFetch(auth, `/api/admin/shop/customers${q ? `?search=${encodeURIComponent(q)}` : ""}`).then((d) => d.success && setCustomers(d.customers));
+  useEffect(() => { load(); }, [auth]);
 
   const openCustomer = async (phone: string) => {
-    const data = await shopFetch(code, `/api/admin/shop/customers/${encodeURIComponent(phone)}`);
+    const data = await shopFetch(auth, `/api/admin/shop/customers/${encodeURIComponent(phone)}`);
     if (data.success) setSelected(data);
   };
 
@@ -335,10 +359,11 @@ function CustomersTab({ code }: { code: string }) {
 }
 
 export default function ShopAdmin() {
-  const { code, save, clear } = useAdminCode();
+  const { auth, checking, saveCode, clear } = useShopAuth();
   const [tab, setTab] = useState<Tab>("dashboard");
 
-  if (!code) return <AdminGate onValidated={save} />;
+  if (checking) return <div className="flex justify-center py-24"><Loader2 className="w-6 h-6 text-slate-500 animate-spin" /></div>;
+  if (!auth) return <AdminGate onValidated={saveCode} />;
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: "dashboard", label: "Accueil", icon: LayoutDashboard },
@@ -356,11 +381,11 @@ export default function ShopAdmin() {
       </header>
 
       <div className="max-w-xl mx-auto px-4 py-4">
-        {tab === "dashboard" && <Dashboard code={code} />}
-        {tab === "products" && <ProductsTab code={code} />}
-        {tab === "orders" && <OrdersTab code={code} />}
-        {tab === "parts" && <PartsTab code={code} />}
-        {tab === "customers" && <CustomersTab code={code} />}
+        {tab === "dashboard" && <Dashboard auth={auth} />}
+        {tab === "products" && <ProductsTab auth={auth} />}
+        {tab === "orders" && <OrdersTab auth={auth} />}
+        {tab === "parts" && <PartsTab auth={auth} />}
+        {tab === "customers" && <CustomersTab auth={auth} />}
       </div>
 
       <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex">
