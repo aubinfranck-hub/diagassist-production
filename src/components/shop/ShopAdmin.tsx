@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard, Package, ShoppingCart, Wrench, Users, Plus, X, Lock,
-  Trash2, Loader2, ChevronRight, Phone, Bell,
+  Trash2, Loader2, ChevronRight, Phone, Bell, RefreshCw, TrendingUp, ShoppingBag, Clock, Banknote,
 } from "lucide-react";
 
 type Tab = "dashboard" | "products" | "orders" | "parts" | "customers" | "followups";
@@ -80,40 +80,55 @@ function AdminGate({ onValidated }: { onValidated: (code: string) => void }) {
 
 function Dashboard({ auth }: { auth: any }) {
   const [stats, setStats] = useState<any>(null);
-  useEffect(() => { shopFetch(auth, "/api/admin/shop/dashboard").then((d) => d.success && setStats(d.stats)); }, [auth]);
-  if (!stats) return <Loader2 className="w-5 h-5 animate-spin text-slate-500 mx-auto mt-10" />;
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    shopFetch(auth, "/api/admin/shop/dashboard").then((d) => d.success && setStats(d.stats)).finally(() => setLoading(false));
+  };
+  useEffect(load, [auth]);
+  if (loading && !stats) return <Loader2 className="w-5 h-5 animate-spin text-slate-500 mx-auto mt-10" />;
+  if (!stats) return <p className="text-sm text-slate-500 text-center py-10">Impossible de charger le tableau de bord.</p>;
+  const money = (value: number) => Number(value || 0).toLocaleString("fr-FR") + " FCFA";
+  const label = (status: string) => ({
+    nouvelle: "Nouvelle", a_contacter: "À contacter", contactee: "Contactée", confirmee: "Confirmée",
+    en_traitement: "En traitement", prete: "Prête", livree: "Livrée", annulee: "Annulée",
+    client_injoignable: "Injoignable",
+  } as Record<string, string>)[status] || status;
   const ordersByStatus = stats.ordersByStatus || [];
   const partRequestsByStatus = stats.partRequestsByStatus || [];
+  const recentOrders = stats.recentOrders || [];
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div><p className="text-base font-bold text-white">Pilotage commercial</p><p className="text-xs text-slate-500">Vue rapide de l'activité boutique</p></div>
+        <button onClick={load} className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white cursor-pointer" title="Actualiser"><RefreshCw className="w-4 h-4" /></button>
+      </div>
       <div className="grid grid-cols-2 gap-3">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p className="text-2xl font-bold text-white">{stats.totalCustomers || 0}</p>
-          <p className="text-xs text-slate-500">Clients</p>
-        </div>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p className="text-2xl font-bold text-amber-500">{stats.followupsDueSoon || 0}</p>
-          <p className="text-xs text-slate-500">Relances sous 7j</p>
-        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-emerald-400 mb-2"><Banknote className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">CA confirmé</span></div><p className="text-xl font-bold text-white">{money(stats.confirmedRevenue)}</p></div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-sky-400 mb-2"><ShoppingBag className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">Aujourd'hui</span></div><p className="text-xl font-bold text-white">{stats.todayOrders || 0} <span className="text-xs font-normal text-slate-500">commande(s)</span></p><p className="text-[10px] text-slate-500 mt-1">{money(stats.todayRevenue)}</p></div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-amber-400 mb-2"><Clock className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">À traiter</span></div><p className="text-xl font-bold text-white">{stats.pendingOrders || 0}</p><p className="text-[10px] text-slate-500 mt-1">hors livrées / annulées</p></div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center gap-2 text-violet-400 mb-2"><Users className="w-4 h-4" /><span className="text-[10px] uppercase font-bold">Clients</span></div><p className="text-xl font-bold text-white">{stats.totalCustomers || 0}</p><p className="text-[10px] text-slate-500 mt-1">{stats.followupsDueSoon || 0} relance(s) sous 7j</p></div>
       </div>
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <p className="text-xs uppercase text-slate-500 font-semibold mb-2">Commandes par statut</p>
-        {ordersByStatus.length === 0 ? <p className="text-xs text-slate-600">Aucune commande.</p> :
-          ordersByStatus.map((s: any) => (
-            <div key={s.status} className="flex justify-between text-sm py-1"><span className="text-slate-300">{s.status}</span><span className="text-white font-bold">{s.count}</span></div>
-          ))}
+        <div className="flex items-center justify-between mb-3"><div><p className="text-xs uppercase text-slate-500 font-semibold">Conversion commerciale</p><p className="text-[10px] text-slate-600 mt-0.5">Commandes confirmées ou livrées / commandes totales</p></div><div className="flex items-center gap-1 text-emerald-400"><TrendingUp className="w-4 h-4" /><span className="text-lg font-bold">{stats.confirmationRate || 0}%</span></div></div>
+        <div className="h-2 rounded-full bg-slate-800 overflow-hidden"><div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, Number(stats.confirmationRate || 0)))}%` }} /></div>
+        <p className="text-[10px] text-slate-500 mt-2">{stats.confirmedOrders || 0} confirmée(s) / {stats.totalOrders || 0} commande(s)</p>
       </div>
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-        <p className="text-xs uppercase text-slate-500 font-semibold mb-2">Demandes de pièces par statut</p>
-        {partRequestsByStatus.length === 0 ? <p className="text-xs text-slate-600">Aucune demande.</p> :
-          partRequestsByStatus.map((s: any) => (
-            <div key={s.status} className="flex justify-between text-sm py-1"><span className="text-slate-300">{s.status}</span><span className="text-white font-bold">{s.count}</span></div>
-          ))}
+        <p className="text-xs uppercase text-slate-500 font-semibold mb-3">Dernières commandes</p>
+        {recentOrders.length === 0 ? <p className="text-xs text-slate-600">Aucune commande.</p> : recentOrders.map((o: any) => (
+          <div key={o.id} className="flex items-center gap-3 py-2 border-b border-slate-800 last:border-0">
+            <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center shrink-0"><ShoppingBag className="w-3.5 h-3.5 text-slate-400" /></div>
+            <div className="flex-1 min-w-0"><p className="text-xs font-semibold text-white truncate">{o.product_name_snapshot || "Commande"}</p><p className="text-[10px] text-slate-500 truncate">{o.order_ref || `#${o.id}`} · {o.customer_name || "Client"} · Qté {o.quantity}</p></div>
+            <div className="text-right shrink-0"><p className="text-xs font-bold text-white">{money(Number(o.unit_price_snapshot || 0) * Number(o.quantity || 1))}</p><p className="text-[10px] text-slate-500">{label(o.status)}</p></div>
+          </div>
+        ))}
       </div>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><p className="text-xs uppercase text-slate-500 font-semibold mb-2">Commandes par statut</p>{ordersByStatus.length === 0 ? <p className="text-xs text-slate-600">Aucune commande.</p> : ordersByStatus.map((s: any) => <div key={s.status} className="flex justify-between text-sm py-1.5"><span className="text-slate-300">{label(s.status)}</span><span className="text-white font-bold">{s.count}</span></div>)}</div>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4"><p className="text-xs uppercase text-slate-500 font-semibold mb-2">Demandes de pièces par statut</p>{partRequestsByStatus.length === 0 ? <p className="text-xs text-slate-600">Aucune demande.</p> : partRequestsByStatus.map((s: any) => <div key={s.status} className="flex justify-between text-sm py-1.5"><span className="text-slate-300">{s.status}</span><span className="text-white font-bold">{s.count}</span></div>)}</div>
     </div>
   );
 }
-
 function ProductForm({ auth, categories, onDone, onCancel }: { auth: any; categories: any[]; onDone: () => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState("");
