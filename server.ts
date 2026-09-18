@@ -288,6 +288,8 @@ async function initDatabase(): Promise<void> {
       channel TEXT DEFAULT 'whatsapp', -- whatsapp | appel | sms
       scheduled_for TIMESTAMP,
       status TEXT NOT NULL DEFAULT 'programmee', -- programmee | envoyee | client_joint | commande_confirmee | echec
+      related_order_ref TEXT,
+      kind TEXT DEFAULT 'manual', -- manual | order | part_request
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_followups_customer ON shop_followups (customer_phone);
@@ -303,6 +305,8 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS order_ref TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
+      ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS related_order_ref TEXT;
+      ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'manual';
     `);
     // L'index sur order_ref ne peut être créé qu'une fois la colonne garantie présente —
     // d'où sa place ici plutôt que dans le bloc de création de schéma principal.
@@ -2048,6 +2052,42 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
   }
 
+  // Programme automatiquement les relances CRM après une commande ou une demande de pièce.
+  // Les messages sont mis en file dans PostgreSQL : aucun message commercial n'est envoyé sans
+  // passer par le canal d'envoi configuré et les règles de consentement de l'entreprise.
+  async function scheduleShopFollowups(phone: string, options: {
+    orderRef?: string;
+    productName?: string;
+    kind?: "order" | "part_request";
+  }) {
+    if (!dbPool) return;
+    const kind = options.kind || "order";
+    const baseMessage = kind === "part_request"
+      ? "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande de pièce. Souhaitez-vous toujours que nous poursuivions la recherche ?"
+      : `Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre commande${options.orderRef ? ` ${options.orderRef}` : ""}${options.productName ? ` (${options.productName})` : ""}. Souhaitez-vous confirmer votre besoin ?`;
+
+    const delays = kind === "part_request"
+      ? [{ days: 2, suffix: "Relance demande de pièce J+2" }]
+      : [{ days: 1, suffix: "Relance commande J+1" }, { days: 3, suffix: "Relance commande J+3" }];
+
+    for (const delay of delays) {
+      const scheduled = new Date(Date.now() + delay.days * 24 * 60 * 60 * 1000);
+      const duplicate = await dbPool.query(
+        `SELECT 1 FROM shop_followups
+         WHERE customer_phone = $1 AND kind = $2 AND COALESCE(related_order_ref, '') = COALESCE($3, '')
+         AND scheduled_for::date = $4::date LIMIT 1`,
+        [phone, kind, options.orderRef || null, scheduled]
+      );
+      if (duplicate.rows.length > 0) continue;
+
+      await dbPool.query(
+        `INSERT INTO shop_followups (customer_phone, message, channel, scheduled_for, status, related_order_ref, kind)
+         VALUES ($1,$2,'whatsapp',$3,'programmee',$4,$5)`,
+        [phone, `${delay.suffix} — ${baseMessage}`, scheduled, options.orderRef || null, kind]
+      );
+    }
+  }
+
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   app.post("/api/shop/orders", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
@@ -2060,12 +2100,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const product = productRes.rows[0];
 
     await upsertShopCustomer(cleanPhone, name, city, "produit");
+    const orderRef = await nextOrderRef();
     const orderRes = await dbPool.query(
-      `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, quantity, notes)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [cleanPhone, product_id, product.name, quantity || 1, notes || null]
+      `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null]
     );
-    res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_id: orderRes.rows[0].id });
+    await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order" });
+    res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_id: orderRes.rows[0].id, order_ref: orderRef });
   });
 
   // Génère une référence de commande sans collision : DA-AAAA-NNNNNN, compteur atomique par année.
@@ -2110,6 +2152,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
 
     if (createdIds.length === 0) return res.status(400).json({ success: false, message: "Aucun des produits du panier n'est plus disponible." });
+    const firstProductName = await dbPool.query("SELECT product_name_snapshot FROM shop_orders WHERE id = $1", [createdIds[0]]);
+    await scheduleShopFollowups(cleanPhone, {
+      orderRef,
+      productName: firstProductName.rows[0]?.product_name_snapshot || undefined,
+      kind: "order",
+    });
     res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_ref: orderRef, order_ids: createdIds });
   });
 
@@ -2156,6 +2204,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
        VALUES ($1,$2,$3,$4,$5) RETURNING id`,
       [cleanPhone, part_description, part_photo_base64 || null, carte_grise_base64 || null, extra_info || null]
     );
+    await scheduleShopFollowups(cleanPhone, { kind: "part_request" });
     res.json({ success: true, message: "Demande envoyée. Nous préparons une cotation sous environ 15 jours.", request_id: result.rows[0].id });
   });
 
@@ -2246,7 +2295,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (status !== undefined) { sets.push(`status = $${i++}`); values.push(status); }
     if (notes !== undefined) { sets.push(`notes = $${i++}`); values.push(notes); }
     values.push(req.params.id);
-    await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = $${i}`, values);
+    await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = ${i}`, values);
+    if (status === "confirmee") {
+      await dbPool.query(
+        `UPDATE shop_followups SET status = 'commande_confirmee'
+         WHERE related_order_ref = (SELECT order_ref FROM shop_orders WHERE id = $1)
+         AND status = 'programmee'`,
+        [req.params.id]
+      );
+    }
     res.json({ success: true });
   });
 
