@@ -1,6 +1,17 @@
 import React, { useState, useEffect } from "react";
-import { ShoppingBag, Phone, ArrowLeft, Loader2, CheckCircle2, Package, Wrench, Video as VideoIcon } from "lucide-react";
+import { ShoppingBag, Phone, ArrowLeft, Loader2, CheckCircle2, Package, Wrench, Video as VideoIcon, Search, ShieldCheck, Truck, Headphones } from "lucide-react";
 import ShopAdmin from "./ShopAdmin";
+
+// Charte graphique DiagAssist (noir / rouge / blanc)
+const DIAG = {
+  black: "#07090c",
+  dark: "#10141a",
+  red: "#ed1c24",
+  redDark: "#b90f16",
+  light: "#f5f6f7",
+  gray: "#73777d",
+  border: "#e4e6e8",
+};
 
 interface ShopProduct {
   id: number;
@@ -52,64 +63,88 @@ function ShopCatalog({ onSelectProduct }: { onSelectProduct: (slug: string) => v
   }, [activeCategory]);
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6">
-      <div className="text-center mb-6">
-        <h1 className="text-2xl font-bold text-white mb-1">Boutique DiagAssist</h1>
-        <p className="text-sm text-slate-400">Scanners, mises à jour, pièces automobiles</p>
+    <div>
+      {/* Hero */}
+      <div style={{ background: `linear-gradient(135deg, ${DIAG.black}, ${DIAG.dark})` }} className="px-5 py-10 sm:py-14">
+        <div className="max-w-5xl mx-auto">
+          <h1 className="text-2xl sm:text-4xl font-black text-white uppercase leading-tight">
+            La référence du <span style={{ color: DIAG.red }}>diagnostic automobile</span>
+          </h1>
+          <p className="text-sm text-gray-300 mt-3 max-w-md">Scanners, outils de programmation, accessoires et formation.</p>
+          <button
+            onClick={() => document.getElementById("shop-products")?.scrollIntoView({ behavior: "smooth" })}
+            style={{ background: DIAG.red }}
+            className="mt-5 text-white text-sm font-bold px-5 py-2.5 rounded-lg cursor-pointer hover:opacity-90"
+          >
+            Voir nos produits
+          </button>
+        </div>
       </div>
 
-      {categories.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-2 mb-5 -mx-4 px-4">
-          <button
-            onClick={() => setActiveCategory(null)}
-            className={`shrink-0 text-xs font-semibold px-3.5 py-2 rounded-full cursor-pointer ${
-              !activeCategory ? "bg-red-600 text-white" : "bg-slate-800 text-slate-300"
-            }`}
-          >
-            Tout
-          </button>
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setActiveCategory(c.slug)}
-              className={`shrink-0 text-xs font-semibold px-3.5 py-2 rounded-full cursor-pointer ${
-                activeCategory === c.slug ? "bg-red-600 text-white" : "bg-slate-800 text-slate-300"
-              }`}
-            >
-              {c.name}
-            </button>
-          ))}
+      {/* Bandeau de confiance */}
+      <div style={{ borderColor: DIAG.border }} className="border-b bg-white">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex flex-wrap gap-4 justify-center sm:justify-between text-xs font-semibold" style={{ color: DIAG.gray }}>
+          <span className="flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" style={{ color: DIAG.red }} /> Paiement sécurisé</span>
+          <span className="flex items-center gap-1.5"><Truck className="w-3.5 h-3.5" style={{ color: DIAG.red }} /> Livraison Côte d'Ivoire & Afrique</span>
+          <span className="flex items-center gap-1.5"><Headphones className="w-3.5 h-3.5" style={{ color: DIAG.red }} /> Support technique</span>
         </div>
-      )}
+      </div>
 
-      {loading ? (
-        <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 text-slate-500 animate-spin" /></div>
-      ) : products.length === 0 ? (
-        <div className="text-center py-20 text-slate-500 text-sm">Aucun produit disponible pour le moment.</div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {products.map((p) => (
+      <div id="shop-products" className="max-w-5xl mx-auto px-4 py-8">
+        <h2 className="text-lg font-extrabold uppercase mb-4" style={{ color: DIAG.black }}>Produits</h2>
+
+        {categories.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-2 mb-5">
             <button
-              key={p.id}
-              onClick={() => onSelectProduct(p.slug)}
-              className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden text-left cursor-pointer hover:border-red-600/50"
+              onClick={() => setActiveCategory(null)}
+              style={!activeCategory ? { background: DIAG.red, color: "white" } : { background: DIAG.light, color: DIAG.gray }}
+              className="shrink-0 text-xs font-bold px-3.5 py-2 rounded-full cursor-pointer"
             >
-              <div className="aspect-square bg-slate-800 flex items-center justify-center overflow-hidden">
-                {p.photos?.[0] ? (
-                  <img src={p.photos[0]} alt={p.name} className="w-full h-full object-cover" />
-                ) : (
-                  <Package className="w-10 h-10 text-slate-600" />
-                )}
-              </div>
-              <div className="p-3">
-                <p className="text-xs text-slate-500 mb-0.5">{p.category_name || "Produit"}</p>
-                <p className="text-sm font-semibold text-white leading-tight line-clamp-2">{p.name}</p>
-                <p className="text-sm font-bold text-red-500 mt-1.5">{formatFcfa(p.price_fcfa)}</p>
-              </div>
+              Tous les produits
             </button>
-          ))}
-        </div>
-      )}
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setActiveCategory(c.slug)}
+                style={activeCategory === c.slug ? { background: DIAG.red, color: "white" } : { background: DIAG.light, color: DIAG.gray }}
+                className="shrink-0 text-xs font-bold px-3.5 py-2 rounded-full cursor-pointer"
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin" style={{ color: DIAG.gray }} /></div>
+        ) : products.length === 0 ? (
+          <div className="text-center py-20 text-sm" style={{ color: DIAG.gray }}>Aucun produit disponible pour le moment.</div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            {products.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => onSelectProduct(p.slug)}
+                style={{ borderColor: DIAG.border }}
+                className="bg-white border rounded-2xl overflow-hidden text-left cursor-pointer hover:shadow-lg transition-shadow"
+              >
+                <div style={{ background: DIAG.light }} className="aspect-square flex items-center justify-center overflow-hidden">
+                  {p.photos?.[0] ? (
+                    <img src={p.photos[0]} alt={p.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Package className="w-10 h-10" style={{ color: DIAG.gray }} />
+                  )}
+                </div>
+                <div className="p-3">
+                  <p className="text-[11px] uppercase font-bold mb-0.5" style={{ color: DIAG.gray }}>{p.category_name || "Produit"}</p>
+                  <p className="text-sm font-bold leading-tight line-clamp-2" style={{ color: DIAG.black }}>{p.name}</p>
+                  <p className="text-sm font-black mt-1.5" style={{ color: DIAG.red }}>{formatFcfa(p.price_fcfa)}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -156,16 +191,16 @@ function ShopProductPage({ slug, onBack }: { slug: string; onBack: () => void })
     }
   };
 
-  if (loading) return <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 text-slate-500 animate-spin" /></div>;
-  if (!product) return <div className="text-center py-20 text-slate-500 text-sm">Produit introuvable.</div>;
+  if (loading) return <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 text-[#73777d] animate-spin" /></div>;
+  if (!product) return <div className="text-center py-20 text-[#73777d] text-sm">Produit introuvable.</div>;
 
   if (orderDone) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 text-center">
         <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto mb-4" />
-        <h2 className="text-xl font-bold text-white mb-2">Commande enregistrée</h2>
-        <p className="text-sm text-slate-400 mb-6">Notre équipe vous contactera bientôt par téléphone ou WhatsApp pour confirmer votre commande.</p>
-        <button onClick={onBack} className="bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
+        <h2 className="text-xl font-bold text-[#07090c] mb-2">Commande enregistrée</h2>
+        <p className="text-sm text-[#73777d] mb-6">Notre équipe vous contactera bientôt par téléphone ou WhatsApp pour confirmer votre commande.</p>
+        <button onClick={onBack} className="bg-[#f5f6f7] hover:bg-[#e4e6e8] text-[#07090c] text-sm font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
           Retour au catalogue
         </button>
       </div>
@@ -174,7 +209,7 @@ function ShopProductPage({ slug, onBack }: { slug: string; onBack: () => void })
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-400 mb-4 cursor-pointer">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-[#73777d] mb-4 cursor-pointer">
         <ArrowLeft className="w-4 h-4" /> Retour
       </button>
 
@@ -184,15 +219,15 @@ function ShopProductPage({ slug, onBack }: { slug: string; onBack: () => void })
         </div>
       )}
 
-      <p className="text-xs text-red-500 font-semibold uppercase tracking-wide mb-1">{product.category_name}</p>
-      <h1 className="text-xl font-bold text-white mb-1">{product.name}</h1>
-      <p className="text-lg font-bold text-red-500 mb-4">{formatFcfa(product.price_fcfa)}</p>
+      <p className="text-xs text-[#ed1c24] font-semibold uppercase tracking-wide mb-1">{product.category_name}</p>
+      <h1 className="text-xl font-bold text-[#07090c] mb-1">{product.name}</h1>
+      <p className="text-lg font-bold text-[#ed1c24] mb-4">{formatFcfa(product.price_fcfa)}</p>
 
-      {product.description && <p className="text-sm text-slate-300 mb-4 whitespace-pre-wrap">{product.description}</p>}
+      {product.description && <p className="text-sm text-[#10141a] mb-4 whitespace-pre-wrap">{product.description}</p>}
 
       {product.videos?.length > 0 && (
         <div className="mb-5">
-          <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-2 flex items-center gap-1.5">
+          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-2 flex items-center gap-1.5">
             <VideoIcon className="w-3.5 h-3.5" /> Vidéo de démonstration
           </p>
           <div className="aspect-video bg-black rounded-xl overflow-hidden">
@@ -203,66 +238,66 @@ function ShopProductPage({ slug, onBack }: { slug: string; onBack: () => void })
 
       {product.specs && (
         <div className="mb-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1.5">Caractéristiques</p>
-          <p className="text-sm text-slate-300 whitespace-pre-wrap">{product.specs}</p>
+          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-1.5">Caractéristiques</p>
+          <p className="text-sm text-[#10141a] whitespace-pre-wrap">{product.specs}</p>
         </div>
       )}
       {product.compatibility && (
         <div className="mb-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1.5">Compatibilité</p>
-          <p className="text-sm text-slate-300 whitespace-pre-wrap">{product.compatibility}</p>
+          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-1.5">Compatibilité</p>
+          <p className="text-sm text-[#10141a] whitespace-pre-wrap">{product.compatibility}</p>
         </div>
       )}
       {product.box_contents && (
         <div className="mb-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1.5">Contenu de la boîte</p>
-          <p className="text-sm text-slate-300 whitespace-pre-wrap">{product.box_contents}</p>
+          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-1.5">Contenu de la boîte</p>
+          <p className="text-sm text-[#10141a] whitespace-pre-wrap">{product.box_contents}</p>
         </div>
       )}
       {product.warranty && (
         <div className="mb-6">
-          <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1.5">Garantie</p>
-          <p className="text-sm text-slate-300">{product.warranty}</p>
+          <p className="text-xs uppercase tracking-wide text-[#73777d] font-semibold mb-1.5">Garantie</p>
+          <p className="text-sm text-[#10141a]">{product.warranty}</p>
         </div>
       )}
 
       {!showOrderForm ? (
         <button
           onClick={() => setShowOrderForm(true)}
-          className="w-full bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer flex items-center justify-center gap-2"
+          className="w-full bg-[#ed1c24] hover:bg-[#b90f16] text-[#07090c] text-sm font-bold py-3.5 rounded-xl cursor-pointer flex items-center justify-center gap-2"
         >
           <ShoppingBag className="w-4 h-4" /> Commander
         </button>
       ) : (
-        <form onSubmit={handleOrder} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-          <p className="text-sm font-semibold text-white flex items-center gap-1.5">
+        <form onSubmit={handleOrder} className="bg-white border rounded-2xl p-4 space-y-3">
+          <p className="text-sm font-semibold text-[#07090c] flex items-center gap-1.5">
             <Phone className="w-4 h-4" /> Vos coordonnées
           </p>
           <input
             type="tel" required placeholder="Numéro de téléphone" value={phone} onChange={(e) => setPhone(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500"
+            className="w-full bg-[#f5f6f7] border border-[#e4e6e8] rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]"
           />
           <input
             type="text" placeholder="Nom (optionnel)" value={name} onChange={(e) => setName(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500"
+            className="w-full bg-[#f5f6f7] border border-[#e4e6e8] rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]"
           />
           <input
             type="text" placeholder="Ville (optionnel)" value={city} onChange={(e) => setCity(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500"
+            className="w-full bg-[#f5f6f7] border border-[#e4e6e8] rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]"
           />
           <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-400">Quantité</span>
+            <span className="text-xs text-[#73777d]">Quantité</span>
             <input
               type="number" min={1} value={quantity} onChange={(e) => setQuantity(Number(e.target.value))}
-              className="w-20 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white"
+              className="w-20 bg-[#f5f6f7] border border-[#e4e6e8] rounded-xl px-3 py-2 text-sm text-[#07090c]"
             />
           </div>
-          {orderError && <p className="text-xs text-red-400">{orderError}</p>}
+          {orderError && <p className="text-xs text-[#ed1c24]">{orderError}</p>}
           <button type="submit" disabled={submitting}
-            className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-3 rounded-xl cursor-pointer">
+            className="w-full bg-[#ed1c24] hover:bg-[#b90f16] disabled:opacity-50 text-[#07090c] text-sm font-bold py-3 rounded-xl cursor-pointer">
             {submitting ? "Envoi..." : "Valider la commande"}
           </button>
-          <p className="text-[10px] text-slate-500 text-center">
+          <p className="text-[10px] text-[#73777d] text-center">
             Aucun paiement en ligne — notre équipe vous contacte pour confirmer prix, disponibilité et livraison.
           </p>
         </form>
@@ -313,9 +348,9 @@ function ShopPartRequest({ onBack }: { onBack: () => void }) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 text-center">
         <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto mb-4" />
-        <h2 className="text-xl font-bold text-white mb-2">Demande envoyée</h2>
-        <p className="text-sm text-slate-400 mb-6">Nous recherchons votre pièce et vous enverrons une cotation sous environ 15 jours.</p>
-        <button onClick={onBack} className="bg-slate-800 hover:bg-slate-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
+        <h2 className="text-xl font-bold text-[#07090c] mb-2">Demande envoyée</h2>
+        <p className="text-sm text-[#73777d] mb-6">Nous recherchons votre pièce et vous enverrons une cotation sous environ 15 jours.</p>
+        <button onClick={onBack} className="bg-[#f5f6f7] hover:bg-[#e4e6e8] text-[#07090c] text-sm font-semibold px-5 py-2.5 rounded-xl cursor-pointer">
           Retour au catalogue
         </button>
       </div>
@@ -324,37 +359,37 @@ function ShopPartRequest({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="max-w-lg mx-auto px-4 py-6">
-      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-400 mb-4 cursor-pointer">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-[#73777d] mb-4 cursor-pointer">
         <ArrowLeft className="w-4 h-4" /> Retour
       </button>
-      <h1 className="text-xl font-bold text-white mb-1">Commander une pièce depuis l'étranger</h1>
-      <p className="text-sm text-slate-400 mb-5">Pièce introuvable localement ? Décrivez-la, nous la recherchons pour vous.</p>
+      <h1 className="text-xl font-bold text-[#07090c] mb-1">Commander une pièce depuis l'étranger</h1>
+      <p className="text-sm text-[#73777d] mb-5">Pièce introuvable localement ? Décrivez-la, nous la recherchons pour vous.</p>
 
       <form onSubmit={handleSubmit} className="space-y-3">
         <input type="tel" required placeholder="Numéro de téléphone" value={phone} onChange={(e) => setPhone(e.target.value)}
-          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500" />
+          className="w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]" />
         <input type="text" placeholder="Nom (optionnel)" value={name} onChange={(e) => setName(e.target.value)}
-          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500" />
+          className="w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d]" />
         <textarea required rows={3} placeholder="Décrivez la pièce recherchée" value={description} onChange={(e) => setDescription(e.target.value)}
-          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 resize-none" />
+          className="w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d] resize-none" />
 
         <div>
-          <label className="text-xs text-slate-400 mb-1 block">Carte grise du véhicule (photo)</label>
+          <label className="text-xs text-[#73777d] mb-1 block">Carte grise du véhicule (photo)</label>
           <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && readAsBase64(e.target.files[0], setCarteGrise)}
-            className="w-full text-xs text-slate-400 file:bg-slate-800 file:text-white file:border-0 file:rounded-lg file:px-3 file:py-1.5 file:mr-2 file:text-xs" />
+            className="w-full text-xs text-[#73777d] file:bg-slate-800 file:text-[#07090c] file:border-0 file:rounded-lg file:px-3 file:py-1.5 file:mr-2 file:text-xs" />
         </div>
         <div>
-          <label className="text-xs text-slate-400 mb-1 block">Photo de la pièce (optionnel)</label>
+          <label className="text-xs text-[#73777d] mb-1 block">Photo de la pièce (optionnel)</label>
           <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && readAsBase64(e.target.files[0], setPartPhoto)}
-            className="w-full text-xs text-slate-400 file:bg-slate-800 file:text-white file:border-0 file:rounded-lg file:px-3 file:py-1.5 file:mr-2 file:text-xs" />
+            className="w-full text-xs text-[#73777d] file:bg-slate-800 file:text-[#07090c] file:border-0 file:rounded-lg file:px-3 file:py-1.5 file:mr-2 file:text-xs" />
         </div>
 
         <textarea rows={2} placeholder="Informations complémentaires (optionnel)" value={extraInfo} onChange={(e) => setExtraInfo(e.target.value)}
-          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 resize-none" />
+          className="w-full bg-white border rounded-xl px-3 py-2.5 text-sm text-[#07090c] placeholder-[#73777d] resize-none" />
 
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="text-xs text-[#ed1c24]">{error}</p>}
         <button type="submit" disabled={submitting}
-          className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-bold py-3 rounded-xl cursor-pointer">
+          className="w-full bg-[#ed1c24] hover:bg-[#b90f16] disabled:opacity-50 text-[#07090c] text-sm font-bold py-3 rounded-xl cursor-pointer">
           {submitting ? "Envoi..." : "Envoyer la demande"}
         </button>
       </form>
@@ -389,17 +424,27 @@ export default function ShopApp() {
   if (route.screen === "admin") return <ShopAdmin />;
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      <header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur z-10">
-        <button onClick={() => navigate("/boutique")} className="flex items-center gap-2 cursor-pointer">
-          <div className="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center">
+    <div className="min-h-screen bg-white">
+      <header style={{ background: DIAG.black }} className="px-4 py-3 flex items-center gap-3 sticky top-0 z-10">
+        <button onClick={() => navigate("/boutique")} className="flex items-center gap-2 cursor-pointer shrink-0">
+          <div style={{ background: DIAG.red }} className="w-8 h-8 rounded-lg flex items-center justify-center">
             <Wrench className="w-4.5 h-4.5 text-white" />
           </div>
-          <span className="font-bold text-white text-sm">DiagAssist Boutique</span>
+          <span className="font-black text-white text-sm hidden sm:inline uppercase">DiagAssist</span>
         </button>
+        <div className="flex-1 relative">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2" style={{ color: DIAG.gray }} />
+          <input
+            placeholder="Rechercher un produit..."
+            className="w-full bg-white rounded-lg pl-9 pr-3 py-2 text-sm"
+            style={{ color: DIAG.black }}
+            disabled
+          />
+        </div>
         <button
           onClick={() => navigate("/boutique/piece-etranger")}
-          className="text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg cursor-pointer"
+          style={{ background: DIAG.red }}
+          className="text-xs font-bold text-white px-3 py-2 rounded-lg cursor-pointer shrink-0 hover:opacity-90"
         >
           Pièce introuvable ?
         </button>
