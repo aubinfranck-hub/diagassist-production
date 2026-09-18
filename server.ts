@@ -307,6 +307,9 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS related_order_ref TEXT;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'manual';
+      ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS last_error TEXT;
+      ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP;
     `);
     // L'index sur order_ref ne peut être créé qu'une fois la colonne garantie présente —
     // d'où sa place ici plutôt que dans le bloc de création de schéma principal.
@@ -2088,6 +2091,100 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
   }
 
+  // Envoi réel des relances WhatsApp programmées.
+  // Le worker utilise Twilio si les secrets sont configurés. Pour les messages
+  // hors fenêtre de service WhatsApp, configurez un Content SID de template approuvé.
+  async function sendShopWhatsApp(phone: string, message: string): Promise<void> {
+    const sid = (process.env.TWILIO_ACCOUNT_SID || "").trim();
+    const token = (process.env.TWILIO_AUTH_TOKEN || "").trim();
+    if (!sid || !token) throw new Error("TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN manquants");
+
+    const client = twilio(sid, token);
+    const sender = (process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886").trim();
+    const fromNumber = sender.startsWith("whatsapp:") ? sender : `whatsapp:${sender}`;
+    const toNumber = phone.startsWith("whatsapp:") ? phone : `whatsapp:${phone}`;
+    const contentSid = (process.env.TWILIO_WHATSAPP_CONTENT_SID || "").trim();
+
+    if (contentSid) {
+      await client.messages.create({
+        from: fromNumber,
+        to: toNumber,
+        contentSid,
+        contentVariables: JSON.stringify({ "1": message }),
+      });
+    } else {
+      await client.messages.create({ from: fromNumber, to: toNumber, body: message });
+    }
+  }
+
+  async function processDueShopFollowups(): Promise<void> {
+    if (!dbPool) return;
+    const { rows } = await dbPool.query(
+      `SELECT f.*
+       FROM shop_followups f
+       WHERE f.status = 'programmee'
+         AND f.channel = 'whatsapp'
+         AND f.scheduled_for IS NOT NULL
+         AND f.scheduled_for <= CURRENT_TIMESTAMP
+       ORDER BY f.scheduled_for ASC
+       LIMIT 25`
+    );
+
+    for (const followup of rows) {
+      try {
+        // Double sécurité : une commande confirmée/livrée annule toute relance encore en file.
+        if (followup.kind === "order" && followup.related_order_ref) {
+          const order = await dbPool.query(
+            `SELECT bool_or(status IN ('confirmee','en_traitement','prete','livree')) AS completed,
+                    bool_or(status = 'annulee') AS cancelled
+             FROM shop_orders WHERE order_ref = $1`,
+            [followup.related_order_ref]
+          );
+          if (order.rows[0]?.completed || order.rows[0]?.cancelled) {
+            await dbPool.query(
+              "UPDATE shop_followups SET status = 'commande_confirmee' WHERE id = $1 AND status = 'programmee'",
+              [followup.id]
+            );
+            continue;
+          }
+        }
+
+        if (followup.kind === "part_request") {
+          const request = await dbPool.query(
+            "SELECT bool_or(status IN ('annulee','livree')) AS completed FROM shop_part_requests WHERE customer_phone = $1 AND created_at >= $2::timestamp - INTERVAL '30 days'",
+            [followup.customer_phone, followup.created_at]
+          );
+          if (request.rows[0]?.completed) continue;
+        }
+
+        await dbPool.query(
+          "UPDATE shop_followups SET attempts = attempts + 1 WHERE id = $1",
+          [followup.id]
+        );
+        await sendShopWhatsApp(followup.customer_phone, followup.message || "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande.");
+        await dbPool.query(
+          "UPDATE shop_followups SET status = 'envoyee', sent_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = $1 AND status = 'programmee'",
+          [followup.id]
+        );
+        console.log(`[CRM WhatsApp] Relance #${followup.id} envoyée à ${followup.customer_phone}.`);
+      } catch (err: any) {
+        const attempts = Number(followup.attempts || 0) + 1;
+        const nextStatus = attempts >= 5 ? "echec" : "programmee";
+        await dbPool.query(
+          "UPDATE shop_followups SET status = $1, last_error = $2 WHERE id = $3 AND status = 'programmee'",
+          [nextStatus, String(err?.message || err).slice(0, 500), followup.id]
+        );
+        console.error(`[CRM WhatsApp] Échec relance #${followup.id} (tentative ${attempts}/5):`, err?.message || err);
+      }
+    }
+  }
+
+  // Exécute les relances automatiquement toutes les 5 minutes et une première fois
+  // peu après le démarrage du serveur.
+  const followupWorker = setInterval(() => { processDueShopFollowups().catch((err) => console.error("[CRM WhatsApp] Worker:", err)); }, 5 * 60 * 1000);
+  followupWorker.unref?.();
+  setTimeout(() => { processDueShopFollowups().catch((err) => console.error("[CRM WhatsApp] Initial worker:", err)); }, 5000);
+
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   app.post("/api/shop/orders", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
@@ -2296,12 +2393,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (notes !== undefined) { sets.push(`notes = $${i++}`); values.push(notes); }
     values.push(req.params.id);
     await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = ${i}`, values);
-    if (status === "confirmee") {
+    if (["confirmee", "en_traitement", "prete", "livree", "annulee"].includes(status)) {
       await dbPool.query(
-        `UPDATE shop_followups SET status = 'commande_confirmee'
+        `UPDATE shop_followups SET status = CASE
+            WHEN $2 = 'annulee' THEN 'commande_confirmee'
+            ELSE 'commande_confirmee'
+          END
          WHERE related_order_ref = (SELECT order_ref FROM shop_orders WHERE id = $1)
          AND status = 'programmee'`,
-        [req.params.id]
+        [req.params.id, status]
       );
     }
     res.json({ success: true });
