@@ -1,7 +1,13 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import ShopApp from './components/shop/ShopApp.tsx';
 import './index.css';
+
+// Section boutique/CRM : totalement indépendante de l'app de diagnostic, activée uniquement
+// sur les chemins /boutique* — permet un accès public direct (Google/Facebook/TikTok) sans
+// jamais charger l'app de diagnostic (auth, scanner, etc.).
+const isShopRoute = window.location.pathname.startsWith('/boutique');
 
 // Register PWA Service Worker for offline support and mobile install prompt
 if ('serviceWorker' in navigator) {
@@ -30,7 +36,7 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {isShopRoute ? <ShopApp /> : <App />}
   </StrictMode>,
 );
 
