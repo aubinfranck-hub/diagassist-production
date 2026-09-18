@@ -117,12 +117,12 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
     <main>
       <section className="relative overflow-hidden bg-[#07090c] text-white">
         <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "radial-gradient(circle at 20% 20%, #ed1c24 0, transparent 28%), radial-gradient(circle at 85% 70%, #334155 0, transparent 30%)" }} />
-        <div className="relative mx-auto max-w-7xl px-5 py-16 sm:px-8 sm:py-24">
+        <div className="relative mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20 lg:py-24">
           <div className="max-w-3xl">
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">
               <Zap className="w-3.5 h-3.5 text-[#ed1c24]" /> Solutions professionnelles
             </div>
-            <h1 className="text-4xl font-black uppercase leading-[0.95] tracking-tight sm:text-6xl">
+            <h1 className="max-w-4xl text-4xl font-black uppercase leading-[0.92] tracking-[-0.04em] sm:text-6xl lg:text-7xl">
               La référence du <span className="text-[#ed1c24]">diagnostic automobile</span>
             </h1>
             <p className="mt-5 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
@@ -138,7 +138,7 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
             </div>
             <div className="mt-10 grid max-w-2xl grid-cols-2 gap-4 sm:grid-cols-4">
               {["Diagnostic multimarque", "Programmation & codage", "J2534 / Pass-Thru", "Support technique"].map((x, i) => (
-                <div key={x} className="border-l border-[#ed1c24] pl-3">
+                <div key={x} className="rounded-xl border border-white/10 bg-white/[0.04] p-3 backdrop-blur-sm">
                   <p className="text-xs font-bold text-slate-200">{x}</p>
                 </div>
               ))}
@@ -163,18 +163,18 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
         </div>
       </section>
 
-      <section id="shop-categories" className="mx-auto max-w-7xl px-5 py-10 sm:px-8">
+      <section id="shop-categories" className="mx-auto max-w-7xl px-5 py-12 sm:px-8 lg:py-16">
         <div className="mb-5 flex items-end justify-between">
           <div><p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ed1c24]">Catalogue</p><h2 className="mt-1 text-2xl font-black uppercase text-[#07090c]">Trouvez votre équipement</h2></div>
           <button onClick={onGoCart} className="hidden items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold sm:flex"><ShoppingBag className="w-4 h-4" /> Panier</button>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-2">
+        <div className="flex gap-2 overflow-x-auto pb-3 [scrollbar-width:none]">
           <button onClick={() => setActiveCategory(null)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${!activeCategory ? "bg-[#ed1c24] text-white" : "bg-[#f5f6f7] text-[#73777d]"}`}>Tous</button>
           {popularCategories.map(c => <button key={c.id} onClick={() => setActiveCategory(c.slug)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${activeCategory === c.slug ? "bg-[#ed1c24] text-white" : "bg-[#f5f6f7] text-[#73777d]"}`}>{c.name}</button>)}
         </div>
       </section>
 
-      <section id="shop-products" className="mx-auto max-w-7xl px-5 pb-16 sm:px-8">
+      <section id="shop-products" className="mx-auto max-w-7xl px-5 pb-20 sm:px-8 lg:pb-24">
         <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="text-xl font-black uppercase text-[#07090c]">Produits disponibles</h2><p className="mt-1 text-xs text-[#73777d]">{filtered.length} produit(s)</p></div>
           <div className="relative w-full sm:max-w-md">
@@ -184,11 +184,11 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
         </div>
         {loading ? <div className="py-24 text-center text-sm text-[#73777d]">Chargement du catalogue...</div> :
         filtered.length === 0 ? <div className="rounded-2xl border border-dashed border-[#e4e6e8] py-24 text-center"><Package className="mx-auto mb-3 h-10 w-10 text-[#73777d]" /><p className="text-sm font-bold text-[#07090c]">Aucun produit trouvé</p><p className="mt-1 text-xs text-[#73777d]">Essayez une autre recherche ou catégorie.</p></div> :
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4">
           {filtered.map(p => (
-            <button key={p.id} onClick={() => onSelectProduct(p.slug)} className="group overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white text-left shadow-sm transition-all hover:-translate-y-1 hover:shadow-xl">
-              <div className="relative aspect-square overflow-hidden bg-[#f5f6f7]">
-                {p.photos?.[0] ? <img src={p.photos[0]} alt={p.name} className="h-full w-full object-contain p-4 transition-transform duration-500 group-hover:scale-105" /> : <Package className="mx-auto h-12 w-12 text-[#73777d]" />}
+            <button key={p.id} onClick={() => onSelectProduct(p.slug)} className="group overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-[#ed1c24]/30 hover:shadow-2xl">
+              <div className="relative aspect-square overflow-hidden bg-[#f5f6f7] sm:aspect-[4/3]">
+                {p.photos?.[0] ? <img src={p.photos[0]} alt={p.name} className="h-full w-full object-contain p-5 transition-transform duration-500 group-hover:scale-110 sm:p-7" /> : <Package className="mx-auto h-12 w-12 text-[#73777d]" />}
                 {p.availability && <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2 py-1 text-[9px] font-black uppercase text-[#07090c] shadow">{p.availability}</span>}
               </div>
               <div className="p-4">
@@ -312,8 +312,8 @@ export default function ShopApp() {
   return <div className="min-h-screen bg-white text-[#07090c]">
     <div className="bg-[#ed1c24] px-4 py-2 text-center text-[10px] font-black uppercase tracking-wider text-white">Livraison partout en Côte d'Ivoire • Support technique DiagAssist</div>
     <header className="sticky top-0 z-40 border-b border-white/10 bg-[#07090c] text-white shadow-lg">
-      <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-8">
-        <button onClick={()=>navigate("/boutique")} className="flex shrink-0 items-center gap-2"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ed1c24]"><Wrench className="h-5 w-5"/></span><span className="hidden text-base font-black uppercase tracking-tight sm:block">DiagAssist</span></button>
+      <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2.5 sm:px-8 lg:py-3">
+        <button onClick={()=>navigate("/boutique")} className="flex shrink-0 items-center gap-2"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ed1c24]"><Wrench className="h-5 w-5"/></span><span className="hidden text-base font-black uppercase tracking-tight sm:block">DIAG<span className="text-[#ed1c24]">ASSIST</span></span></button>
         <div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"/><input onFocus={()=>{if(route.screen!=="catalog")navigate("/boutique")}} placeholder="Rechercher un produit, une marque, une référence..." className="w-full rounded-xl bg-white px-10 py-2.5 text-sm text-[#07090c] outline-none placeholder:text-slate-400"/></div>
         <button onClick={()=>navigate("/boutique/suivi")} className="hidden items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-bold md:flex"><Clock className="h-4 w-4"/> Suivi</button>
         <button onClick={()=>navigate("/boutique/panier")} className="relative rounded-xl p-2 hover:bg-white/10"><ShoppingBag className="h-5 w-5"/>{cart.count>0&&<span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ed1c24] px-1 text-[9px] font-black">{cart.count}</span>}</button>
