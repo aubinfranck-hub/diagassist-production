@@ -401,6 +401,11 @@ function FollowupsTab({ auth }: { auth: any }) {
 }
 
 function CustomersTab({ auth }: { auth: any }) {
+  const openWhatsApp = (phone: string, message = "") => {
+    const clean = phone.replace(/[^\\d+]/g, "").replace(/^00/, "+");
+    window.open(`https://wa.me/${clean.replace("+", "")}${message ? `?text=${encodeURIComponent(message)}` : ""}`, "_blank", "noopener,noreferrer");
+  };
+  const callCustomer = (phone: string) => { window.location.href = `tel:${phone}`; };
   const [customers, setCustomers] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<any>(null);
@@ -417,13 +422,28 @@ function CustomersTab({ auth }: { auth: any }) {
     return (
       <div className="space-y-3">
         <button onClick={() => setSelected(null)} className="text-xs text-slate-400 cursor-pointer">← Retour</button>
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p className="text-sm font-bold text-white">{selected.customer.name || selected.customer.phone}</p>
-          <p className="text-xs text-slate-500">{selected.customer.phone} {selected.customer.city && `· ${selected.customer.city}`}</p>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+          <div>
+            <p className="text-sm font-bold text-white">{selected.customer.name || selected.customer.phone}</p>
+            <p className="text-xs text-slate-500">{selected.customer.phone} {selected.customer.city && `· ${selected.customer.city}`}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => callCustomer(selected.customer.phone)} className="flex items-center justify-center gap-1.5 rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white"><PhoneCall className="w-3.5 h-3.5" /> Appeler</button>
+            <button onClick={() => openWhatsApp(selected.customer.phone, `Bonjour ${selected.customer.name || ""}, ici DiagAssist. Nous revenons vers vous concernant votre demande.`)} className="flex items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white"><MessageCircle className="w-3.5 h-3.5" /> WhatsApp</button>
+          </div>
         </div>
-        <p className="text-xs uppercase text-slate-500 font-semibold">Commandes ({selected.orders.length})</p>
-        {selected.orders.map((o: any) => <div key={o.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300">{o.product_name_snapshot} — {o.status}</div>)}
-        <p className="text-xs uppercase text-slate-500 font-semibold">Demandes de pièces ({selected.partRequests.length})</p>
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase text-slate-500 font-semibold">Commandes ({selected.orders.length})</p>
+          <span className="text-xs text-slate-500">{selected.orders.reduce((n: number, o: any) => n + Number(o.unit_price_snapshot || 0) * Number(o.quantity || 0), 0).toLocaleString("fr-FR")} FCFA</span>
+        </div>
+        {selected.orders.map((o: any) => <div key={o.id} className="bg-slate-900 border border-slate-800 rounded-lg p-3 space-y-1">
+          <div className="flex justify-between gap-2"><span className="text-xs font-semibold text-white">{o.product_name_snapshot}</span><span className="text-[10px] text-slate-500">{o.status}</span></div>
+          <p className="text-[10px] text-slate-500">{o.order_ref || `Commande #${o.id}`} · Qté {o.quantity}{o.unit_price_snapshot ? ` · ${Number(o.unit_price_snapshot).toLocaleString("fr-FR")} FCFA` : ""}</p>
+        </div> )}
+        <div className="flex items-center justify-between">
+          <p className="text-xs uppercase text-slate-500 font-semibold">Demandes de pièces ({selected.partRequests.length})</p>
+          <button onClick={() => openWhatsApp(selected.customer.phone, "Bonjour, ici DiagAssist. Nous faisons le point sur votre demande de pièce.")} className="text-[10px] text-emerald-400 font-bold">Relancer</button>
+        </div>
         {selected.partRequests.map((r: any) => <div key={r.id} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-300">{r.part_description} — {r.status}</div>)}
       </div>
     );
