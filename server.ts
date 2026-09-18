@@ -2480,6 +2480,51 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, configured, templateConfigured, senderMasked: masked, due: Number(due.rows[0]?.count || 0), failed: Number(failed.rows[0]?.count || 0), sentToday: Number(sentToday.rows[0]?.count || 0), intervalMinutes: 5 });
   });
 
+  // --- Admin : outils de diagnostic WhatsApp ---
+  app.post("/api/admin/shop/whatsapp-test-connection", adminLimiter, requireAdminAuth, async (req, res) => {
+    const sid = (process.env.TWILIO_ACCOUNT_SID || "").trim();
+    const token = (process.env.TWILIO_AUTH_TOKEN || "").trim();
+    if (!sid || !token) return res.status(400).json({ success: false, message: "Twilio n'est pas configuré : TWILIO_ACCOUNT_SID et TWILIO_AUTH_TOKEN sont requis côté serveur." });
+    try {
+      const account = await twilio(sid, token).api.v2010.accounts(sid).fetch();
+      res.json({ success: true, message: `Connexion Twilio réussie — compte ${account.friendlyName || sid.slice(0, 6) + "•••"} accessible.` });
+    } catch (err: any) {
+      console.error("[WhatsApp] Test connexion Twilio:", err?.message || err);
+      res.status(502).json({ success: false, message: "Twilio a refusé la connexion. Vérifiez les identifiants et la configuration du compte." });
+    }
+  });
+
+  app.post("/api/admin/shop/whatsapp-test-message", adminLimiter, requireAdminAuth, async (req, res) => {
+    const phone = String(req.body?.phone || "").trim().replace(/[\\s-]/g, "");
+    const message = String(req.body?.message || "").trim();
+    if (!phone) return res.status(400).json({ success: false, message: "Le numéro destinataire est requis." });
+    if (!/^\\+\\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, message: "Utilisez un numéro international, par exemple +2250700000000." });
+    if (!message) return res.status(400).json({ success: false, message: "Le message test est requis." });
+    if (message.length > 1000) return res.status(400).json({ success: false, message: "Le message test est limité à 1 000 caractères." });
+    try {
+      await sendShopWhatsApp(phone, message);
+      res.json({ success: true, message: `Message test envoyé vers ${phone}.` });
+    } catch (err: any) {
+      console.error("[WhatsApp] Test message:", err?.message || err);
+      res.status(502).json({ success: false, message: "Échec de l'envoi du message test. Vérifiez l'expéditeur WhatsApp, le template et les règles Twilio." });
+    }
+  });
+
+  app.post("/api/admin/shop/whatsapp-test-template", adminLimiter, requireAdminAuth, async (req, res) => {
+    const sid = (process.env.TWILIO_ACCOUNT_SID || "").trim();
+    const token = (process.env.TWILIO_AUTH_TOKEN || "").trim();
+    const contentSid = (process.env.TWILIO_WHATSAPP_CONTENT_SID || "").trim();
+    if (!sid || !token) return res.status(400).json({ success: false, message: "Twilio n'est pas configuré côté serveur." });
+    if (!contentSid) return res.status(400).json({ success: false, message: "Aucun Content SID de template n'est configuré." });
+    try {
+      const content = await twilio(sid, token).content.v1.contents(contentSid).fetch();
+      res.json({ success: true, message: `Template accessible dans Twilio : ${content.friendlyName || contentSid}. Cela confirme son accessibilité, pas nécessairement son approbation WhatsApp.` });
+    } catch (err: any) {
+      console.error("[WhatsApp] Test template:", err?.message || err);
+      res.status(502).json({ success: false, message: "Le Content SID n'est pas accessible depuis Twilio. Vérifiez l'identifiant et son statut dans Twilio." });
+    }
+  });
+
   // --- Admin : relances ---
   app.get("/api/admin/shop/followups", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.json({ success: true, followups: [] });
