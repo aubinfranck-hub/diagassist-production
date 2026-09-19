@@ -137,7 +137,7 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
   }, [products]);
 
   const popularCategories = categories.slice(0, 8);
-  const featured = products.slice(0, 3);
+  const featured = products.filter(p => p.brand && p.model && p.photos?.[0]).slice(0, 3);
   const hasFilters = !!activeCategory || !!brand || maxPrice < 3000000 || onlyAvailable || !!search.trim();
 
   const categoryIcon = (name: string) => {
@@ -161,7 +161,7 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
               <button onClick={() => document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="rounded-xl bg-[#ed1c24] px-6 py-3.5 text-sm font-black shadow-lg hover:bg-[#b90f16]">Découvrir les produits</button>
               <button onClick={() => navigate("/boutique/piece-etranger")} className="rounded-xl border border-white/20 px-6 py-3.5 text-sm font-black text-white hover:bg-white/10">Besoin d'une pièce ?</button>
             </div>
-            <div className="mt-7 grid grid-cols-2 gap-2 sm:grid-cols-4">{["Diagnostic multimarque","Programmation & Codage","Toutes marques","Formation & Support"].map(x=><div key={x} className="rounded-xl border border-white/10 bg-white/5 p-3 text-[10px] font-black text-slate-200">{x}</div>)}</div>
+            <div className="mt-7 grid grid-cols-2 gap-2 sm:grid-cols-4">{[["Diagnostic multimarque",ShieldCheck],["Programmation & Codage",Zap],["Toutes marques",Wrench],["Formation & Support",Headphones]].map(([x,Icon])=><div key={x as string} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-[10px] font-black text-slate-200"><React.createElement(Icon as any,{className:"h-4 w-4 shrink-0 text-[#ed1c24]"})}{x as string}</div>)}</div>
           </div>
           <div className="relative flex min-h-[280px] items-center justify-center lg:min-h-[350px]">
             {featured[0]?.photos?.[0] ? <div className="relative w-full"><img src={featured[0].photos[0]} alt={featured[0].name} className="mx-auto max-h-[330px] w-full object-contain drop-shadow-2xl"/><div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-xl border border-white/10 bg-black/70 px-4 py-2.5 text-center backdrop-blur"><p className="text-[9px] font-black uppercase tracking-wider text-[#ed1c24]">{featured[0].brand || "DIAGASSIST"}</p><p className="text-xs font-black text-white">{featured[0].model || featured[0].name}</p></div></div> : <Wrench className="h-48 w-48 text-[#ed1c24]"/>}
@@ -171,7 +171,7 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
 
       <section className="border-b bg-[#10141a] text-white"><div className="mx-auto flex max-w-7xl overflow-x-auto"><button onClick={()=>setActiveCategory(null)} className="flex shrink-0 items-center gap-2 bg-[#ed1c24] px-5 py-4 text-xs font-black"><Menu className="h-4 w-4"/>Tous les produits</button>{popularCategories.slice(0,7).map(c=><button key={c.id} onClick={()=>setActiveCategory(c.slug)} className={`shrink-0 px-4 py-4 text-xs font-bold ${activeCategory===c.slug?"bg-white/10 text-white":"text-slate-300"}`}>{c.name}</button>)}</div></section>
 
-      <section className="border-b bg-[#f5f6f7] py-6">
+      <section className="border-b bg-[#f5f6f7] py-8">
         <div className="mx-auto grid max-w-7xl gap-4 px-5 sm:grid-cols-3 sm:px-8">
           <div className="overflow-hidden rounded-2xl bg-[#07090c] p-5 text-white sm:col-span-2">
             <div className="flex items-center justify-between gap-5">
