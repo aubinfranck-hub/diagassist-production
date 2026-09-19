@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft, CheckCircle2, ChevronRight, Headphones, Menu, Package,
+  ArrowLeft, BadgePercent, CheckCircle2, ChevronRight, Headphones, Menu, Package,
   Phone, Search, ShieldCheck, ShoppingBag, Truck, X, Wrench, Zap,
   Star, MessageCircle, SlidersHorizontal, MapPin, CreditCard, Clock
 } from "lucide-react";
@@ -188,16 +188,6 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
           <div className="relative min-h-[145px] overflow-hidden rounded-xl bg-[#0b1117] p-5 text-white"><div className="relative z-10 max-w-[62%]"><p className="text-xs font-black text-[#ed1c24]">AUTEL</p><h3 className="mt-1 text-lg font-black">MaxiCOM MK808BT PRO</h3><p className="mt-1 text-[10px] text-slate-300">Performance. Fiabilité. Polyvalence.</p><button onClick={()=>document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="mt-3 rounded-md bg-[#ed1c24] px-4 py-2 text-[9px] font-black">Découvrir</button></div><Wrench className="absolute right-5 top-1/2 h-24 w-24 -translate-y-1/2 text-white/10"/></div>
           <div className="relative min-h-[145px] overflow-hidden rounded-xl bg-[#20242a] p-5 text-white"><div className="relative z-10 max-w-[64%]"><p className="text-xs font-black text-[#ed1c24]">THINKCAR</p><h3 className="mt-1 text-lg font-black">ThinkDiag 2</h3><p className="mt-1 text-[10px] text-slate-300">Diagnostic professionnel sur smartphone.</p><button onClick={()=>{const p=products.find(x=>x.model?.toLowerCase()==="thinkdiag 2");if(p)onSelectProduct(p.slug);}} className="mt-3 rounded-md bg-[#ed1c24] px-4 py-2 text-[9px] font-black">Voir maintenant</button></div><Zap className="absolute right-5 top-1/2 h-24 w-24 -translate-y-1/2 text-white/10"/></div>
           <div className="relative min-h-[145px] overflow-hidden rounded-xl bg-[#0b1117] p-5 text-white"><div className="relative z-10 max-w-[68%]"><p className="text-xs font-black text-white">OUTILS J2534</p><h3 className="mt-1 text-lg font-black">Programmation OEM</h3><p className="mt-1 text-[10px] text-slate-300">Toutes marques.</p><button onClick={()=>{const p=products.find(x=>/j2534/i.test((x.name+" "+(x.category_name||""))));if(p)onSelectProduct(p.slug);else document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"});}} className="mt-3 rounded-md bg-[#ed1c24] px-4 py-2 text-[9px] font-black">Explorer</button></div><Zap className="absolute right-5 top-1/2 h-24 w-24 -translate-y-1/2 text-white/10"/></div>
-        </div>
-      </section>
-
-      <section className="border-b bg-white py-7">
-        <div className="mx-auto max-w-7xl px-5 sm:px-8">
-          <div className="flex items-end justify-between">
-            <div><p className="text-[9px] font-black uppercase tracking-[.22em] text-[#ed1c24]">Nos marques</p><h2 className="mt-1 text-xl font-black">Marques disponibles</h2></div>
-            <span className="text-[10px] text-[#73777d]">Diagnostic professionnel</span>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">{brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={`rounded-lg border px-4 py-2 text-xs font-black ${brand===b?"border-[#ed1c24] bg-[#ed1c24] text-white":"border-[#e4e6e8] bg-[#f5f6f7] text-[#10141a] hover:border-[#ed1c24]"}`}>{b}</button>)}</div>
         </div>
       </section>
 
@@ -445,11 +435,11 @@ export default function ShopApp() {
           <input onFocus={()=>{if(route.screen!=="catalog")navigate("/boutique")}} placeholder="Rechercher un produit, une marque, une référence..." className="w-full rounded-xl border border-[#e4e6e8] bg-[#f5f6f7] px-10 py-3 text-sm text-[#07090c] outline-none placeholder:text-slate-400 focus:border-[#ed1c24] focus:bg-white"/>
         </div>
         <button onClick={()=>navigate("/boutique/suivi")} className="hidden items-center gap-2 px-2 text-xs font-bold text-[#73777d] hover:text-[#ed1c24] lg:flex"><Clock className="h-4 w-4"/> Suivi</button>
-        <button onClick={()=>navigate("/boutique")} className="hidden items-center gap-2 px-2 text-xs font-bold text-slate-300 hover:text-white lg:flex"><span className="text-base">👤</span><span>Connexion / Mon compte</span></button>
+        <button onClick={()=>navigate("/boutique")} className="hidden items-center gap-2 px-2 text-xs font-bold text-[#73777d] hover:text-[#ed1c24] lg:flex"><span className="text-base">👤</span><span>Connexion / Mon compte</span></button>
         <button onClick={()=>navigate("/boutique/panier")} className="relative flex items-center gap-2 rounded-xl border border-[#e4e6e8] px-3 py-2.5 hover:border-[#ed1c24] hover:text-[#ed1c24]"><ShoppingBag className="h-5 w-5"/><span className="hidden text-xs font-bold lg:block">Panier</span>{cart.count>0&&<span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ed1c24] px-1 text-[9px] font-black">{cart.count}</span>}</button>
-        <button onClick={()=>setMobileMenu(!mobileMenu)} className="rounded-xl p-2 hover:bg-white/10 md:hidden">{mobileMenu?<X className="h-5 w-5"/>:<Menu className="h-5 w-5"/>}</button>
+        <button onClick={()=>setMobileMenu(!mobileMenu)} className="rounded-xl p-2 hover:bg-[#f5f6f7] md:hidden">{mobileMenu?<X className="h-5 w-5"/>:<Menu className="h-5 w-5"/>}</button>
       </div>
-      <nav className="hidden border-t border-white/10 md:block">
+      <nav className="hidden border-t border-[#e4e6e8] bg-[#10141a] md:block">
         <div className="mx-auto flex max-w-7xl overflow-x-auto px-5 sm:px-8">
           <button onClick={()=>navigate("/boutique")} className="shrink-0 bg-[#ed1c24] px-5 py-3 text-xs font-black uppercase">Tous les produits</button>
           <button onClick={()=>navigate("/boutique")} className="shrink-0 px-4 py-3 text-xs font-bold text-slate-300 hover:bg-white/5">Scanners Diagnostic</button>
