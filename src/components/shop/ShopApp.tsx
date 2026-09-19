@@ -171,25 +171,23 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
 
       <section className="border-b bg-[#10141a] text-white"><div className="mx-auto flex max-w-7xl overflow-x-auto"><button onClick={()=>setActiveCategory(null)} className="flex shrink-0 items-center gap-2 bg-[#ed1c24] px-5 py-4 text-xs font-black"><Menu className="h-4 w-4"/>Tous les produits</button>{popularCategories.slice(0,7).map(c=><button key={c.id} onClick={()=>setActiveCategory(c.slug)} className={`shrink-0 px-4 py-4 text-xs font-bold ${activeCategory===c.slug?"bg-white/10 text-white":"text-slate-300"}`}>{c.name}</button>)}</div></section>
 
-      <section className="border-b bg-[#f5f6f7] py-8">
-        <div className="mx-auto grid max-w-7xl gap-4 px-5 sm:grid-cols-3 sm:px-8">
-          <div className="overflow-hidden rounded-2xl bg-[#07090c] p-5 text-white sm:col-span-2">
-            <div className="flex items-center justify-between gap-5">
-              <div>
-                <p className="text-[9px] font-black uppercase tracking-[.22em] text-[#ed1c24]">Sélection DiagAssist</p>
-                <h2 className="mt-2 text-xl font-black sm:text-2xl">Les outils qui font gagner du temps</h2>
-                <p className="mt-2 max-w-xl text-xs leading-5 text-slate-400">Découvrez nos scanners multimarques, outils d'atelier et solutions de diagnostic.</p>
-                <button onClick={()=>document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="mt-4 rounded-lg bg-[#ed1c24] px-4 py-2.5 text-[10px] font-black">Voir le catalogue</button>
-              </div>
-              <Zap className="hidden h-20 w-20 text-[#ed1c24] sm:block"/>
-            </div>
-          </div>
-          <div className="rounded-2xl border border-[#e4e6e8] bg-white p-5">
-            <p className="text-[9px] font-black uppercase tracking-[.22em] text-[#ed1c24]">Commande rapide</p>
-            <h3 className="mt-2 text-lg font-black">Besoin d'un modèle précis ?</h3>
-            <p className="mt-2 text-xs leading-5 text-[#73777d]">Contactez-nous sur WhatsApp pour vérifier disponibilité et délai.</p>
-            <a href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent("Bonjour DiagAssist, je cherche un scanner automobile précis.")}`} target="_blank" rel="noreferrer" className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-[#16a34a] py-2.5 text-[10px] font-black text-white"><MessageCircle className="h-4 w-4"/> WhatsApp</a>
-          </div>
+      <section className="border-b bg-[#f4f5f6] py-5">
+        <div className="mx-auto flex max-w-[1480px] gap-2 overflow-x-auto px-5 pb-1 sm:px-8">
+          {popularCategories.slice(0,9).map((cat,index)=>{const Icon=index===8?BadgePercent:categoryIcon(cat.name);return <button key={cat.id} onClick={()=>setActiveCategory(cat.slug)} className="group min-w-[128px] flex-1 rounded-xl border border-[#e3e5e8] bg-white p-3 text-center transition hover:-translate-y-0.5 hover:border-[#ed1c24] hover:shadow-md"><div className="mx-auto flex h-11 w-11 items-center justify-center rounded-lg bg-[#f5f6f7] group-hover:bg-red-50"><Icon className="h-7 w-7 text-[#10141a] group-hover:text-[#ed1c24]"/></div><p className="mt-2 line-clamp-2 text-[10px] font-black">{cat.name}</p></button>})}
+        </div>
+      </section>
+
+      <section className="border-b bg-white py-3">
+        <div className="mx-auto flex max-w-[1480px] items-center gap-7 overflow-x-auto px-5 sm:px-8">
+          {brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={\`shrink-0 text-lg font-black tracking-tight transition hover:text-[#ed1c24] \${brand===b?"text-[#ed1c24]":"text-[#10141a]"}\`}>{b}</button>)}
+        </div>
+      </section>
+
+      <section className="border-b bg-[#f4f5f6] py-5">
+        <div className="mx-auto grid max-w-[1480px] gap-3 px-5 sm:grid-cols-3 sm:px-8">
+          <div className="relative min-h-[145px] overflow-hidden rounded-xl bg-[#0b1117] p-5 text-white"><div className="relative z-10 max-w-[62%]"><p className="text-xs font-black text-[#ed1c24]">AUTEL</p><h3 className="mt-1 text-lg font-black">MaxiCOM MK808BT PRO</h3><p className="mt-1 text-[10px] text-slate-300">Performance. Fiabilité. Polyvalence.</p><button onClick={()=>document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="mt-3 rounded-md bg-[#ed1c24] px-4 py-2 text-[9px] font-black">Découvrir</button></div><Wrench className="absolute right-5 top-1/2 h-24 w-24 -translate-y-1/2 text-white/10"/></div>
+          <div className="relative min-h-[145px] overflow-hidden rounded-xl bg-[#20242a] p-5 text-white"><div className="relative z-10 max-w-[64%]"><p className="text-xs font-black text-[#ed1c24]">THINKCAR</p><h3 className="mt-1 text-lg font-black">ThinkDiag 2</h3><p className="mt-1 text-[10px] text-slate-300">Diagnostic professionnel sur smartphone.</p><button onClick={()=>{const p=products.find(x=>x.model?.toLowerCase()==="thinkdiag 2");if(p)onSelectProduct(p.slug);}} className="mt-3 rounded-md bg-[#ed1c24] px-4 py-2 text-[9px] font-black">Voir maintenant</button></div><Zap className="absolute right-5 top-1/2 h-24 w-24 -translate-y-1/2 text-white/10"/></div>
+          <div className="relative min-h-[145px] overflow-hidden rounded-xl bg-[#0b1117] p-5 text-white"><div className="relative z-10 max-w-[68%]"><p className="text-xs font-black text-white">OUTILS J2534</p><h3 className="mt-1 text-lg font-black">Programmation OEM</h3><p className="mt-1 text-[10px] text-slate-300">Toutes marques.</p><button onClick={()=>{const p=products.find(x=>/j2534/i.test((x.name+" "+(x.category_name||""))));if(p)onSelectProduct(p.slug);else document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"});}} className="mt-3 rounded-md bg-[#ed1c24] px-4 py-2 text-[9px] font-black">Explorer</button></div><Zap className="absolute right-5 top-1/2 h-24 w-24 -translate-y-1/2 text-white/10"/></div>
         </div>
       </section>
 
