@@ -152,24 +152,22 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
     <main>
       <section className="relative overflow-hidden bg-[#10141a] text-white">
         <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "radial-gradient(circle at 18% 40%, #ed1c24 0, transparent 30%), radial-gradient(circle at 85% 60%, #475569 0, transparent 32%)" }} />
-        <div className="relative mx-auto grid max-w-7xl items-center gap-8 px-5 py-14 sm:px-8 lg:grid-cols-[1.05fr_.95fr] lg:py-16">
+        <div className="relative mx-auto grid max-w-7xl items-center gap-10 px-5 py-12 sm:px-8 lg:grid-cols-[1fr_.9fr] lg:py-14">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.25em] text-[#ed1c24]">DiagAssist • Équipement professionnel</p>
-            <h1 className="mt-3 text-4xl font-black uppercase leading-[.9] tracking-[-.04em] sm:text-6xl">LA RÉFÉRENCE<br/><span className="text-[#ed1c24]">DU DIAGNOSTIC</span><br/>AUTOMOBILE</h1>
-            <p className="mt-5 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">Scanners, outils de programmation, J2534, accessoires et formation pour les professionnels de l'automobile.</p>
-            <button onClick={() => document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="mt-6 rounded-xl bg-[#ed1c24] px-6 py-3.5 text-sm font-black shadow-lg">Voir nos produits →</button>
-            <div className="mt-7 grid grid-cols-2 gap-2 sm:grid-cols-4">{["Diagnostic multimarque","Programmation & Codage","Toutes marques","Formation & Support"].map(x=><div key={x} className="rounded-xl border border-white/10 bg-white/5 p-3 text-[10px] font-black">{x}</div>)}</div>
+            <p className="text-[10px] font-black uppercase tracking-[0.28em] text-[#ed1c24]">DiagAssist • Équipement professionnel</p>
+            <h1 className="mt-3 max-w-2xl text-4xl font-black uppercase leading-[.9] tracking-[-.045em] sm:text-6xl">LA RÉFÉRENCE<br/><span className="text-[#ed1c24]">DU DIAGNOSTIC</span><br/>AUTOMOBILE</h1>
+            <p className="mt-5 max-w-xl text-sm leading-6 text-slate-300 sm:text-base">Scanners diagnostic, programmation & J2534, outils atelier, accessoires et formations pour les professionnels de l'automobile.</p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button onClick={() => document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="rounded-xl bg-[#ed1c24] px-6 py-3.5 text-sm font-black shadow-lg hover:bg-[#b90f16]">Découvrir les produits</button>
+              <button onClick={() => navigate("/boutique/piece-etranger")} className="rounded-xl border border-white/20 px-6 py-3.5 text-sm font-black text-white hover:bg-white/10">Besoin d'une pièce ?</button>
+            </div>
+            <div className="mt-7 grid grid-cols-2 gap-2 sm:grid-cols-4">{["Diagnostic multimarque","Programmation & Codage","Toutes marques","Formation & Support"].map(x=><div key={x} className="rounded-xl border border-white/10 bg-white/5 p-3 text-[10px] font-black text-slate-200">{x}</div>)}</div>
           </div>
-          <div className="relative hidden min-h-[320px] items-center justify-center lg:flex">
-            {featured[0]?.photos?.[0] ? <img src={featured[0].photos[0]} alt={featured[0].name} className="max-h-[360px] w-full object-contain drop-shadow-2xl"/> : <Wrench className="h-48 w-48 text-[#ed1c24]"/>}
-            <div className="absolute bottom-3 right-2 rounded-xl border border-white/10 bg-black/60 px-4 py-3 backdrop-blur"><p className="text-[10px] font-black text-[#ed1c24]">VOTRE PERFORMANCE</p><p className="text-xs font-black">NOTRE PRIORITÉ !</p></div>
+          <div className="relative flex min-h-[280px] items-center justify-center lg:min-h-[350px]">
+            {featured[0]?.photos?.[0] ? <div className="relative w-full"><img src={featured[0].photos[0]} alt={featured[0].name} className="mx-auto max-h-[330px] w-full object-contain drop-shadow-2xl"/><div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-xl border border-white/10 bg-black/70 px-4 py-2.5 text-center backdrop-blur"><p className="text-[9px] font-black uppercase tracking-wider text-[#ed1c24]">{featured[0].brand || "DIAGASSIST"}</p><p className="text-xs font-black text-white">{featured[0].model || featured[0].name}</p></div></div> : <Wrench className="h-48 w-48 text-[#ed1c24]"/>}
           </div>
         </div>
       </section>
-
-      <section className="border-b bg-white"><div className="mx-auto grid max-w-7xl grid-cols-2 divide-x sm:grid-cols-4">{[
-        [ShieldCheck,"Produits 100% originaux","Garantie constructeur"],[Truck,"Livraison rapide","Côte d'Ivoire & Afrique"],[CreditCard,"Paiement sécurisé","Mobile Money prochainement"],[Headphones,"Support technique","Experts à votre écoute"]
-      ].map(([Icon,title,text])=><div key={title as string} className="flex items-center gap-3 px-4 py-4"><React.createElement(Icon as any,{className:"h-5 w-5 shrink-0 text-[#ed1c24]"})}<div><p className="text-xs font-black">{title as string}</p><p className="hidden text-[10px] text-[#73777d] sm:block">{text as string}</p></div></div>)}</div></section>
 
       <section className="border-b bg-[#10141a] text-white"><div className="mx-auto flex max-w-7xl overflow-x-auto"><button onClick={()=>setActiveCategory(null)} className="flex shrink-0 items-center gap-2 bg-[#ed1c24] px-5 py-4 text-xs font-black"><Menu className="h-4 w-4"/>Tous les produits</button>{popularCategories.slice(0,7).map(c=><button key={c.id} onClick={()=>setActiveCategory(c.slug)} className={`shrink-0 px-4 py-4 text-xs font-bold ${activeCategory===c.slug?"bg-white/10 text-white":"text-slate-300"}`}>{c.name}</button>)}</div></section>
 
@@ -413,6 +411,7 @@ export default function ShopApp() {
           <input onFocus={()=>{if(route.screen!=="catalog")navigate("/boutique")}} placeholder="Rechercher un produit, une marque, une référence..." className="w-full rounded-xl bg-white px-10 py-3 text-sm text-[#07090c] outline-none placeholder:text-slate-400"/>
         </div>
         <button onClick={()=>navigate("/boutique/suivi")} className="hidden items-center gap-2 px-2 text-xs font-bold text-slate-300 hover:text-white lg:flex"><Clock className="h-4 w-4"/> Suivi</button>
+        <button onClick={()=>navigate("/boutique")} className="hidden items-center gap-2 px-2 text-xs font-bold text-slate-300 hover:text-white lg:flex"><span className="text-base">👤</span><span>Connexion / Mon compte</span></button>
         <button onClick={()=>navigate("/boutique/panier")} className="relative flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2.5 hover:bg-white/10"><ShoppingBag className="h-5 w-5"/><span className="hidden text-xs font-bold lg:block">Panier</span>{cart.count>0&&<span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ed1c24] px-1 text-[9px] font-black">{cart.count}</span>}</button>
         <button onClick={()=>setMobileMenu(!mobileMenu)} className="rounded-xl p-2 hover:bg-white/10 md:hidden">{mobileMenu?<X className="h-5 w-5"/>:<Menu className="h-5 w-5"/>}</button>
       </div>
