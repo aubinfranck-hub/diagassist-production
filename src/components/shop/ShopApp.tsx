@@ -171,11 +171,47 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
 
       <section className="border-b bg-[#10141a] text-white"><div className="mx-auto flex max-w-7xl overflow-x-auto"><button onClick={()=>setActiveCategory(null)} className="flex shrink-0 items-center gap-2 bg-[#ed1c24] px-5 py-4 text-xs font-black"><Menu className="h-4 w-4"/>Tous les produits</button>{popularCategories.slice(0,7).map(c=><button key={c.id} onClick={()=>setActiveCategory(c.slug)} className={`shrink-0 px-4 py-4 text-xs font-bold ${activeCategory===c.slug?"bg-white/10 text-white":"text-slate-300"}`}>{c.name}</button>)}</div></section>
 
-      <section className="border-b bg-white">
-        <div className="mx-auto flex max-w-7xl items-center gap-3 overflow-x-auto px-5 py-4 sm:px-8">
-          <span className="shrink-0 text-[10px] font-black uppercase tracking-wider text-[#73777d]">Nos marques</span>
-          {brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={`shrink-0 rounded-lg border px-4 py-2 text-xs font-black tracking-wide ${brand===b?"border-[#ed1c24] bg-[#ed1c24] text-white":"border-[#e4e6e8] text-[#73777d] hover:border-[#10141a] hover:text-[#10141a]"}`}>{b}</button>)}
+      <section className="border-b bg-[#f5f6f7] py-6">
+        <div className="mx-auto grid max-w-7xl gap-4 px-5 sm:grid-cols-3 sm:px-8">
+          <div className="overflow-hidden rounded-2xl bg-[#07090c] p-5 text-white sm:col-span-2">
+            <div className="flex items-center justify-between gap-5">
+              <div>
+                <p className="text-[9px] font-black uppercase tracking-[.22em] text-[#ed1c24]">Sélection DiagAssist</p>
+                <h2 className="mt-2 text-xl font-black sm:text-2xl">Les outils qui font gagner du temps</h2>
+                <p className="mt-2 max-w-xl text-xs leading-5 text-slate-400">Découvrez nos scanners multimarques, outils d'atelier et solutions de diagnostic.</p>
+                <button onClick={()=>document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="mt-4 rounded-lg bg-[#ed1c24] px-4 py-2.5 text-[10px] font-black">Voir le catalogue</button>
+              </div>
+              <Zap className="hidden h-20 w-20 text-[#ed1c24] sm:block"/>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-[#e4e6e8] bg-white p-5">
+            <p className="text-[9px] font-black uppercase tracking-[.22em] text-[#ed1c24]">Commande rapide</p>
+            <h3 className="mt-2 text-lg font-black">Besoin d'un modèle précis ?</h3>
+            <p className="mt-2 text-xs leading-5 text-[#73777d]">Contactez-nous sur WhatsApp pour vérifier disponibilité et délai.</p>
+            <a href={`https://wa.me/${WHATSAPP}?text=${encodeURIComponent("Bonjour DiagAssist, je cherche un scanner automobile précis.")}`} target="_blank" rel="noreferrer" className="mt-4 flex items-center justify-center gap-2 rounded-lg bg-[#16a34a] py-2.5 text-[10px] font-black text-white"><MessageCircle className="h-4 w-4"/> WhatsApp</a>
+          </div>
         </div>
+      </section>
+
+      <section className="border-b bg-white py-7">
+        <div className="mx-auto max-w-7xl px-5 sm:px-8">
+          <div className="flex items-end justify-between">
+            <div><p className="text-[9px] font-black uppercase tracking-[.22em] text-[#ed1c24]">Nos marques</p><h2 className="mt-1 text-xl font-black">Marques disponibles</h2></div>
+            <span className="text-[10px] text-[#73777d]">Diagnostic professionnel</span>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">{brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={`rounded-lg border px-4 py-2 text-xs font-black ${brand===b?"border-[#ed1c24] bg-[#ed1c24] text-white":"border-[#e4e6e8] bg-[#f5f6f7] text-[#10141a] hover:border-[#ed1c24]"}`}>{b}</button>)}</div>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
+        <div className="flex items-end justify-between">
+          <div><p className="text-[9px] font-black uppercase tracking-[.22em] text-[#ed1c24]">Produits phares</p><h2 className="mt-1 text-2xl font-black">Nos scanners à découvrir</h2><p className="mt-1 text-xs text-[#73777d]">Des références sélectionnées pour le diagnostic automobile.</p></div>
+          <button onClick={()=>document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="hidden text-xs font-black text-[#ed1c24] sm:block">Voir tout →</button>
+        </div>
+        {featured.length>0 ? <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{featured.map(p=><article key={p.id} onClick={()=>onSelectProduct(p.slug)} className="group cursor-pointer overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white transition hover:-translate-y-1 hover:shadow-xl">
+          <div className="relative flex h-48 items-center justify-center bg-[#f5f6f7] p-5">{p.photos?.[0]?<img src={p.photos[0]} alt={p.name} className="h-full w-full object-contain transition group-hover:scale-105"/>:<Package className="h-14 w-14 text-[#73777d]"/>}<span className="absolute left-3 top-3 rounded-md bg-[#07090c] px-2 py-1 text-[8px] font-black text-white">{p.brand || "DIAGASSIST"}</span></div>
+          <div className="p-4"><p className="text-[9px] font-black uppercase tracking-wider text-[#ed1c24]">{p.model || p.category_name || "Scanner diagnostic"}</p><h3 className="mt-1 text-sm font-black">{p.name}</h3><p className="mt-2 text-xs text-[#73777d] line-clamp-2">{p.description || "Solution de diagnostic automobile professionnelle."}</p><div className="mt-4 flex items-center justify-between"><span className="text-base font-black text-[#ed1c24]">{formatFcfa(p.price_fcfa)}</span><span className="rounded-lg bg-[#07090c] px-3 py-2 text-[9px] font-black text-white">Voir le produit</span></div></div>
+        </article>)}</div> : <p className="mt-5 rounded-xl bg-[#f5f6f7] p-6 text-center text-xs text-[#73777d]">Les produits phares apparaîtront ici dès que le catalogue sera renseigné.</p>}
       </section>
 
       <section id="shop-products" className="mx-auto max-w-7xl px-5 py-8 sm:px-8">
