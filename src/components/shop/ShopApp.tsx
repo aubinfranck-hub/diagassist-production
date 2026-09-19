@@ -320,24 +320,24 @@ function ShopProductPage({ slug, onBack, cart, onGoToCart }: { slug: string; onB
         <h1 className="mt-2 text-3xl font-black leading-tight tracking-tight sm:text-4xl">{product.name}</h1>
         <div className="mt-3 flex flex-wrap items-center gap-2"><span className="rounded-full bg-[#f5f6f7] px-3 py-1 text-[10px] font-black">Équipement professionnel</span>{product.brand&&<span className="rounded-full bg-red-50 px-3 py-1 text-[10px] font-black text-[#ed1c24]">{product.brand}</span>}{product.model&&<span className="rounded-full border border-[#e4e6e8] px-3 py-1 text-[10px] font-black">{product.model}</span>}{product.availability&&<span className="text-[10px] font-bold text-[#73777d]">{product.availability}</span>}</div>
 
-        <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 border-y border-[#e4e6e8] py-5 text-xs">
+        <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 rounded-2xl border border-[#e4e6e8] bg-[#fafafa] p-5 text-xs">
           <div><span className="text-[10px] text-[#73777d]">Marque</span><p className="mt-1 font-black">{product.brand||"—"}</p></div><div><span className="text-[10px] text-[#73777d]">Modèle</span><p className="mt-1 font-black">{product.model||"À renseigner"}</p></div><div><span className="text-[10px] text-[#73777d]">Référence</span><p className="mt-1 font-black">{product.slug}</p></div>
           <div><span className="text-[10px] text-[#73777d]">Catégorie</span><p className="mt-1 font-black">{product.category_name||"—"}</p></div>
           <div><span className="text-[10px] text-[#73777d]">Garantie</span><p className="mt-1 font-black">{product.warranty||"Selon produit"}</p></div>
           <div><span className="text-[10px] text-[#73777d]">Livraison</span><p className="mt-1 font-black">Côte d'Ivoire & Afrique</p></div>
         </div>
 
-        {product.description&&<div className="mt-6"><h2 className="text-xs font-black uppercase tracking-wider">Description</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-[#73777d]">{product.description}</p></div>}
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        {product.description&&<div className="mt-7 border-t border-[#e4e6e8] pt-6"><h2 className="text-xs font-black uppercase tracking-wider">Description du produit</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-[#73777d]">{product.description}</p></div>}
+        <div className="mt-7 grid gap-3 sm:grid-cols-2">
           {product.specs&&<div className="rounded-xl bg-[#f5f6f7] p-4"><h2 className="text-xs font-black uppercase">Caractéristiques</h2><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#73777d]">{product.specs}</p></div>}
           {product.compatibility&&<div className="rounded-xl bg-[#f5f6f7] p-4"><h2 className="text-xs font-black uppercase">Compatibilité</h2><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#73777d]">{product.compatibility}</p></div>}
         </div>
-        {product.box_contents&&<div className="mt-3 rounded-xl border border-[#e4e6e8] p-4"><h2 className="text-xs font-black uppercase">Contenu de la boîte</h2><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#73777d]">{product.box_contents}</p></div>}
+        {product.box_contents&&<div className="mt-3 rounded-xl border border-[#e4e6e8] bg-white p-4"><h2 className="text-xs font-black uppercase">Contenu de la boîte</h2><p className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#73777d]">{product.box_contents}</p></div>}
       </section>
 
       <aside className="lg:sticky lg:top-24 lg:h-fit">
         <div className="overflow-hidden rounded-2xl border border-[#e4e6e8] bg-white shadow-lg">
-          <div className="bg-[#10141a] p-5 text-white"><p className="text-[10px] font-black uppercase tracking-[.18em] text-[#ed1c24]">PRIX DIAGASSIST</p><p className="mt-2 text-3xl font-black">{formatFcfa(product.price_fcfa)}</p><p className="mt-2 text-[10px] text-slate-400">Prix affiché hors frais de livraison.</p></div>
+          <div className="bg-[#10141a] p-5 text-white"><p className="text-[10px] font-black uppercase tracking-[.18em] text-[#ed1c24]">PRIX DIAGASSIST</p><p className="mt-2 text-3xl font-black">{formatFcfa(product.price_fcfa)}</p><div className="mt-3 flex items-center gap-2 text-[10px] text-slate-300"><ShieldCheck className="h-4 w-4 text-emerald-400"/> Prix catalogue • Garantie selon produit</div><p className="mt-2 text-[10px] text-slate-400">Prix affiché hors frais de livraison.</p></div>
           <div className="p-5">
             <div className="flex items-center justify-between rounded-xl bg-[#f5f6f7] p-3"><span className="text-xs font-bold">Disponibilité</span><span className="text-[10px] font-black text-emerald-700">{product.availability||"À confirmer"}</span></div>
             <div className="mt-4"><p className="text-[10px] font-black uppercase text-[#73777d]">Quantité</p><div className="mt-2 flex items-center justify-between rounded-xl border"><button onClick={()=>setQuantity(q=>Math.max(1,q-1))} className="px-4 py-3 text-lg font-black">−</button><span className="font-black">{quantity}</span><button onClick={()=>setQuantity(q=>q+1)} className="px-4 py-3 text-lg font-black">+</button></div></div>
