@@ -81,6 +81,11 @@ const PLAN_DURATIONS_MS: Record<string, number> = {
 };
 
 // Convertit une durée admin (valeur + unité) en millisecondes
+const EUR_TO_XOF = 655.957;
+function euroToRoundedFcfa(value: number): number {
+  return Math.ceil((Number(value) * EUR_TO_XOF) / 1000) * 1000;
+}
+
 function computeDurationMs(value: number, unit: string): number | undefined {
   const DAY_MS = 24 * 60 * 60 * 1000;
   if (!value || value <= 0) return undefined;
@@ -233,6 +238,7 @@ async function initDatabase(): Promise<void> {
     );
     ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS brand TEXT;
     ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS model TEXT;
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS price_eur NUMERIC(12,2);
     CREATE INDEX IF NOT EXISTS idx_shop_products_category ON shop_products (category_id);
     CREATE INDEX IF NOT EXISTS idx_shop_products_brand_model ON shop_products (brand, model);
     -- Clients CRM: identifies par numero de telephone
@@ -2317,13 +2323,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   app.post("/api/admin/shop/products", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { category_id, name, brand, model, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos } = req.body;
+    const { category_id, name, brand, model, price_eur, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos } = req.body;
+    const normalizedPriceEur = price_eur !== undefined && price_eur !== null && price_eur !== "" ? Number(price_eur) : null;
+    const convertedPriceFcfa = normalizedPriceEur !== null && Number.isFinite(normalizedPriceEur) ? euroToRoundedFcfa(normalizedPriceEur) : (price_fcfa !== undefined && price_fcfa !== null && price_fcfa !== "" ? Number(price_fcfa) : null);
     if (!name) return res.status(400).json({ success: false, message: "Nom requis." });
     const slug = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") + "-" + Date.now().toString(36);
     const result = await dbPool.query(
-      `INSERT INTO shop_products (category_id, name, slug, brand, model, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-      [category_id || null, name, slug, brand || null, model || null, price_fcfa || null, description || null, specs || null, compatibility || null,
+      `INSERT INTO shop_products (category_id, name, slug, brand, model, price_eur, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+      [category_id || null, name, slug, brand || null, model || null, normalizedPriceEur, convertedPriceFcfa, description || null, specs || null, compatibility || null,
        box_contents || null, warranty || null, availability || "disponible", JSON.stringify(photos || []), JSON.stringify(videos || [])]
     );
     res.json({ success: true, id: result.rows[0].id, slug });
@@ -2332,13 +2340,21 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.patch("/api/admin/shop/products/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const fields = req.body;
-    const allowed = ["category_id", "name", "brand", "model", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active"];
+    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active"];
     const jsonFields = ["photos", "videos"];
     const sets: string[] = [];
     const values: any[] = [];
     let i = 1;
     for (const key of allowed) {
-      if (fields[key] !== undefined) { sets.push(`${key} = $${i++}`); values.push(fields[key]); }
+      if (key === "price_fcfa" && fields.price_eur !== undefined) continue;
+      if (key === "price_eur" && fields[key] !== undefined && fields[key] !== null && fields[key] !== "") {
+        const eur = Number(fields[key]);
+        if (!Number.isFinite(eur) || eur < 0) return res.status(400).json({ success: false, message: "Prix EUR invalide." });
+        sets.push(key + " = $" + (i++)); values.push(eur);
+        sets.push("price_fcfa = $" + (i++)); values.push(euroToRoundedFcfa(eur));
+        continue;
+      }
+      if (fields[key] !== undefined) { sets.push(key + " = $" + (i++)); values.push(fields[key]); }
     }
     for (const key of jsonFields) {
       if (fields[key] !== undefined) { sets.push(`${key} = $${i++}`); values.push(JSON.stringify(fields[key])); }
