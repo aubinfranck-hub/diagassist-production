@@ -311,7 +311,7 @@ function ShopProductPage({ slug, onBack, cart, onGoToCart }: { slug: string; onB
           {product.videos?.[0]&&<div className="flex h-20 w-24 shrink-0 items-center justify-center rounded-xl bg-[#07090c] text-[10px] font-black text-white">▶ VIDÉO</div>}
         </div>
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {[["Garantie",product.warranty||"Selon produit",ShieldCheck],["Livraison","Côte d'Ivoire & Afrique",Truck],["Support","Conseil technique",Headphones]].map(([title,value,Icon])=><div key={title as string} className="rounded-xl border border-[#e4e6e8] bg-white p-4"><React.createElement(Icon as any,{className:"h-5 w-5 text-[#ed1c24]"})}<p className="mt-3 text-[10px] font-black uppercase">{title as string}</p><p className="mt-1 text-[10px] leading-4 text-[#73777d]">{value as string}</p></div>)}
+          {[{title:"Garantie",value:product.warranty||"Selon produit",Icon:ShieldCheck},{title:"Livraison",value:"Côte d'Ivoire & Afrique",Icon:Truck},{title:"Support",value:"Conseil technique",Icon:Headphones}].map(({title:cardTitle,value:cardValue,Icon:CardIcon})=><div key={cardTitle} className="rounded-xl border border-[#e4e6e8] bg-white p-4"><CardIcon className="h-5 w-5 text-[#ed1c24]"/><p className="mt-3 text-[10px] font-black uppercase">{cardTitle}</p><p className="mt-1 text-[10px] leading-4 text-[#73777d]">{cardValue}</p></div>)}
         </div>
       </section>
 
