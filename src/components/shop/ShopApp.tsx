@@ -436,19 +436,19 @@ export default function ShopApp() {
         <div className="flex items-center gap-5 text-slate-400"><button onClick={()=>navigate("/boutique/suivi")} className="hover:text-white">Suivi de commande</button><button onClick={()=>navigate("/boutique/piece-etranger")} className="hover:text-white">Aide</button><a href={`https://wa.me/${WHATSAPP}`} target="_blank" rel="noreferrer" className="hover:text-white">Contact</a></div>
       </div>
     </div>
-    <header className="sticky top-0 z-40 bg-[#07090c] text-white shadow-lg">
+    <header className="sticky top-0 z-40 bg-white text-[#07090c] shadow-md">
       <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-8 lg:py-4">
         <button onClick={()=>navigate("/boutique")} className="flex shrink-0 items-center gap-2.5 text-left">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#ed1c24] shadow-lg"><Wrench className="h-5 w-5"/></span>
-          <span className="hidden sm:block"><span className="block text-lg font-black uppercase leading-none tracking-tight">DIAG<span className="text-[#ed1c24]">ASSIST</span></span><span className="text-[7px] font-bold tracking-[.18em] text-slate-500">ÉQUIPEZ. DIAGNOSTIQUEZ. AVANCEZ.</span></span>
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#ed1c24] text-white shadow-lg"><Wrench className="h-5 w-5"/></span>
+          <span className="hidden sm:block"><span className="block text-lg font-black uppercase leading-none tracking-tight">DIAG<span className="text-[#ed1c24]">ASSIST</span></span><span className="text-[7px] font-bold tracking-[.18em] text-[#73777d]">ÉQUIPEZ. DIAGNOSTIQUEZ. AVANCEZ.</span></span>
         </button>
         <div className="relative flex-1 md:max-w-2xl">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"/>
-          <input onFocus={()=>{if(route.screen!=="catalog")navigate("/boutique")}} placeholder="Rechercher un produit, une marque, une référence..." className="w-full rounded-xl bg-white px-10 py-3 text-sm text-[#07090c] outline-none placeholder:text-slate-400"/>
+          <input onFocus={()=>{if(route.screen!=="catalog")navigate("/boutique")}} placeholder="Rechercher un produit, une marque, une référence..." className="w-full rounded-xl border border-[#e4e6e8] bg-[#f5f6f7] px-10 py-3 text-sm text-[#07090c] outline-none placeholder:text-slate-400 focus:border-[#ed1c24] focus:bg-white"/>
         </div>
-        <button onClick={()=>navigate("/boutique/suivi")} className="hidden items-center gap-2 px-2 text-xs font-bold text-slate-300 hover:text-white lg:flex"><Clock className="h-4 w-4"/> Suivi</button>
+        <button onClick={()=>navigate("/boutique/suivi")} className="hidden items-center gap-2 px-2 text-xs font-bold text-[#73777d] hover:text-[#ed1c24] lg:flex"><Clock className="h-4 w-4"/> Suivi</button>
         <button onClick={()=>navigate("/boutique")} className="hidden items-center gap-2 px-2 text-xs font-bold text-slate-300 hover:text-white lg:flex"><span className="text-base">👤</span><span>Connexion / Mon compte</span></button>
-        <button onClick={()=>navigate("/boutique/panier")} className="relative flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2.5 hover:bg-white/10"><ShoppingBag className="h-5 w-5"/><span className="hidden text-xs font-bold lg:block">Panier</span>{cart.count>0&&<span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ed1c24] px-1 text-[9px] font-black">{cart.count}</span>}</button>
+        <button onClick={()=>navigate("/boutique/panier")} className="relative flex items-center gap-2 rounded-xl border border-[#e4e6e8] px-3 py-2.5 hover:border-[#ed1c24] hover:text-[#ed1c24]"><ShoppingBag className="h-5 w-5"/><span className="hidden text-xs font-bold lg:block">Panier</span>{cart.count>0&&<span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#ed1c24] px-1 text-[9px] font-black">{cart.count}</span>}</button>
         <button onClick={()=>setMobileMenu(!mobileMenu)} className="rounded-xl p-2 hover:bg-white/10 md:hidden">{mobileMenu?<X className="h-5 w-5"/>:<Menu className="h-5 w-5"/>}</button>
       </div>
       <nav className="hidden border-t border-white/10 md:block">
@@ -463,7 +463,7 @@ export default function ShopApp() {
           <button onClick={()=>navigate("/boutique")} className="shrink-0 px-4 py-3 text-xs font-black text-[#ed1c24]">Promotions</button>
         </div>
       </nav>
-      {mobileMenu&&<div className="border-t border-white/10 bg-[#10141a] p-4 md:hidden"><div className="grid gap-2"><button onClick={()=>navigate("/boutique")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Tous les produits</button><button onClick={()=>navigate("/boutique/suivi")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Scanners Diagnostic</button><button onClick={()=>navigate("/boutique/suivi")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Suivre ma commande</button><button onClick={()=>navigate("/boutique/piece-etranger")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Rechercher une pièce</button></div></div>}
+      {mobileMenu&&<div className="border-t border-[#e4e6e8] bg-white p-4 md:hidden"><div className="grid gap-2"><button onClick={()=>navigate("/boutique")} className="rounded-lg bg-[#f5f6f7] px-4 py-3 text-left text-xs font-bold">Tous les produits</button><button onClick={()=>navigate("/boutique/suivi")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Scanners Diagnostic</button><button onClick={()=>navigate("/boutique/suivi")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Suivre ma commande</button><button onClick={()=>navigate("/boutique/piece-etranger")} className="rounded-lg bg-white/5 px-4 py-3 text-left text-xs font-bold">Rechercher une pièce</button></div></div>}
     </header>
     <section className="hidden border-b bg-white md:block"><div className="mx-auto grid max-w-7xl grid-cols-4 divide-x">{[[ShieldCheck,"Produits 100% originaux","Garantie constructeur"],[Truck,"Livraison rapide","Côte d'Ivoire & Afrique"],[CreditCard,"Paiement sécurisé","Mobile Money prochainement"],[Headphones,"Support technique","Experts à votre écoute"]].map(([Icon,title,text])=><div key={title as string} className="flex items-center gap-3 px-5 py-3.5"><React.createElement(Icon as any,{className:"h-5 w-5 shrink-0 text-[#ed1c24]"})}<div><p className="text-xs font-black">{title as string}</p><p className="text-[10px] text-[#73777d]">{text as string}</p></div></div>)}</div></section>
     {route.screen==="catalog"&&<ShopCatalog onSelectProduct={slug=>navigate("/boutique/produit/"+slug)} onGoCart={()=>navigate("/boutique/panier")}/>}
