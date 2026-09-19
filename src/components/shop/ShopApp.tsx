@@ -179,7 +179,7 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
 
       <section className="border-b bg-white py-3">
         <div className="mx-auto flex max-w-[1480px] items-center gap-7 overflow-x-auto px-5 sm:px-8">
-          {brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={\`shrink-0 text-lg font-black tracking-tight transition hover:text-[#ed1c24] \${brand===b?"text-[#ed1c24]":"text-[#10141a]"}\`}>{b}</button>)}
+          {brands.map(b=><button key={b} onClick={()=>setBrand(brand===b?"":b)} className={"shrink-0 text-lg font-black tracking-tight transition hover:text-[#ed1c24] " + (brand===b ? "text-[#ed1c24]" : "text-[#10141a]")}>{b}</button>)}
         </div>
       </section>
 
