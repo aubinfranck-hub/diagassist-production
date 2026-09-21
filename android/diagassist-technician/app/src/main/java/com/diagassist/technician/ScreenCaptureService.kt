@@ -65,7 +65,28 @@ class ScreenCaptureService:Service(){
   }catch(_:Exception){}finally{image.close()}
  }
  private var currentSession:String=""
- private fun handleCommand(text:String){try{val m=JSONObject(text); if(m.optString("type")=="pairing") currentSession=m.optString("sessionId")}catch(_:Exception){}}
+ private fun handleCommand(text:String){
+  try{
+    val m=JSONObject(text)
+    when(m.optString("type")){
+      "pairing" -> currentSession=m.optString("sessionId")
+      "command" -> {
+        val payload=m.optJSONObject("payload") ?: return
+        val action=payload.optString("action")
+        when(action){
+          "request_screen" -> executor.execute { captureCurrentFrame() }
+          "click","scroll","input","back" -> RemoteCommandBus.dispatch(action,payload.toString())
+        }
+      }
+    }
+  }catch(_:Exception){}
+}
+private fun captureCurrentFrame(){
+  reader?.acquireLatestImage()?.let { image ->
+    val metrics=resources.displayMetrics
+    process(image,metrics.widthPixels,metrics.heightPixels)
+  }
+}
  override fun onDestroy(){socket?.close(1000,"stop"); display?.release(); reader?.close(); projection?.stop(); executor.shutdownNow(); super.onDestroy()}
  override fun onBind(i:Intent?):IBinder?=null
 }
