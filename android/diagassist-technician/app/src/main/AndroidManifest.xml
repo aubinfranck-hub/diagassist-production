@@ -9,5 +9,16 @@
    <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="diagassist" android:host="technician"/></intent-filter>
   </activity>
   <service android:name=".ScreenCaptureService" android:foregroundServiceType="mediaProjection" android:exported="false"/>
+  <service android:name=".RemoteAccessibilityService"
+      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+      android:exported="false"
+      android:label="DiagAssist Remote Control">
+   <intent-filter>
+    <action android:name="android.accessibilityservice.AccessibilityService"/>
+   </intent-filter>
+   <meta-data
+      android:name="android.accessibilityservice"
+      android:resource="@xml/accessibility_service_config"/>
+  </service>
  </application>
 </manifest>
