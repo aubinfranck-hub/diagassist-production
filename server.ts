@@ -11,6 +11,7 @@ import { WebSocketServer } from "ws";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { XMLParser } from "fast-xml-parser";
+import { registerScreening } from "./src/modules/screening/screening.routes";
 
 dotenv.config();
 
@@ -3201,6 +3202,9 @@ Directives pour ce tour :
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // DiagAssist V2 — Screening / Coaching module. Uses the existing authenticated session store.
+  registerScreening(app, server, { requireAuth, getEffectivePlan, sessions });
 
   // Create standard WebSocketServer for low-latency live audio streaming
   const wss = new WebSocketServer({ noServer: true });
