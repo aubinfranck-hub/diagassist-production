@@ -23,6 +23,7 @@ import VisualRepairAssistant from "./components/VisualRepairAssistant";
 import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
 import AutoQuestioningLoop from "./components/AutoQuestioningLoop";
+import ScreeningV2Panel from "./components/ScreeningV2Panel";
 
 import { Diagnosis, ApiUsage, ChatMessage, SubscriptionPlan } from "./types";
 
@@ -214,7 +215,7 @@ export default function App() {
   }, []);
 
   // Navigation tabs
-  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts">("diagnose");
+  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening">("diagnose");
 
   const handleChooseProfile = (type: "mechanic" | "owner") => {
     setAccountType(type);
@@ -841,6 +842,26 @@ export default function App() {
                   </span>
                 </button>
 
+                {accountType === "mechanic" && (
+                  <button
+                    onClick={() => {
+                      setActiveTab("screening");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
+                      activeTab === "screening"
+                        ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/25 border border-white/10"
+                        : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Radio className="w-4.5 h-4.5" />
+                      <span>Coaching V2</span>
+                    </div>
+                    {activeTab === "screening" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  </button>
+                )}
+
                 {accountType === "owner" && (
                   <button
                     onClick={() => {
@@ -1164,6 +1185,23 @@ export default function App() {
               </span>
             </button>
 
+            {accountType === "mechanic" && (
+              <button
+                onClick={() => {
+                  setActiveTab("screening");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
+                  activeTab === "screening"
+                    ? "bg-slate-950 text-emerald-400 border border-emerald-500/20"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Radio className="w-5 h-5" />
+                <span className="text-[9px] font-black uppercase tracking-wider">Coaching</span>
+              </button>
+            )}
+
             {accountType === "owner" && (
               <button
                 onClick={() => {
@@ -1422,6 +1460,18 @@ export default function App() {
           </div>
         )}
 
+        {/* TAB 2: DiagAssist V2 Remote Technician Coaching */}
+        {activeTab === "screening" && accountType === "mechanic" && (
+          <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">DIAGASSIST V2</div>
+              <h1 className="text-2xl md:text-3xl font-black text-white mt-1">Coaching technicien à distance</h1>
+              <p className="text-sm text-slate-400 mt-2">Visualisez l’écran de la tablette, guidez les manipulations et gardez le diagnostic sous contrôle.</p>
+            </div>
+            <ScreeningV2Panel isPremium={currentPlan === "premium"} />
+          </div>
+        )}
+
         {/* TAB 2: Dedicated Immersive Vocal Live Page */}
         <div className={`max-w-xl mx-auto space-y-6 ${activeTab === "live" ? "block animate-fade-in" : "hidden"}`}>
           <DiagAssistLiveScreen 
@@ -1495,7 +1545,7 @@ export default function App() {
       {/* Immersive technical footer */}
       <footer className="max-w-7xl mx-auto px-4 mt-32 lg:mt-16 mb-8 border-t border-slate-900 pt-6 text-center text-[11px] text-slate-600 flex flex-col sm:flex-row justify-between gap-4 w-full">
         <div>
-          © 2026 <strong>DiagAssist v1 (Assistant mécanique pro)</strong>. Tous droits réservés.
+          © 2026 <strong>DiagAssist V2 (Assistant mécanique pro)</strong>. Tous droits réservés.
         </div>
         <div className="flex items-center justify-center gap-4">
           <span className="flex items-center gap-1">
