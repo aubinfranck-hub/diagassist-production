@@ -36,7 +36,8 @@ export function registerScreening(app:Express, server:Server, deps:{requireAuth:
   server.on("upgrade",(request,socket,head)=>{
     const url=new URL(request.url||"","http://localhost"); if(url.pathname!=="/api/screening/stream") return;
     const token=url.searchParams.get("token")||"", auth=deps.sessions.get(token);
-    if(!auth || deps.getEffectivePlan(auth.phone)!=="premium"){ socket.write("HTTP/1.1 403 Forbidden\\r\\n\\r\\n"); socket.destroy(); return; }
+    if(!auth || deps.getEffectivePlan(auth.phone)!=="premium"){ socket.write("HTTP/1.1 403 Forbidden\\r\
+\\r\\n"); socket.destroy(); return; }
     wss.handleUpgrade(request,socket,head,ws=>{ (ws as any)._phone=auth.phone; wss.emit("connection",ws); });
   });
   wss.on("connection",(ws:any)=>{
