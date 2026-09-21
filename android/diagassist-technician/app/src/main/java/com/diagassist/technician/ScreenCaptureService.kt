@@ -39,6 +39,7 @@ class ScreenCaptureService:Service(){
   return START_STICKY
  }
  private fun connect(base:String,token:String,session:String,pairing:String){
+  currentSession=session;
   val url=base.trimEnd("/")+"/api/screening/stream?token="+java.net.URLEncoder.encode(token,"UTF-8")
   val client=OkHttpClient.Builder().pingInterval(30,TimeUnit.SECONDS).build()
   socket=client.newWebSocket(Request.Builder().url(url).build(),object:WebSocketListener(){
