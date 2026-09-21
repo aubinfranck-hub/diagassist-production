@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
 
@@ -28,6 +30,10 @@ class RemoteAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     private fun handleCommand(action: String, payload: String) {
+        Handler(Looper.getMainLooper()).post { handleCommandOnMain(action, payload) }
+    }
+
+    private fun handleCommandOnMain(action: String, payload: String) {
         when (action) {
             "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
             "click" -> {
