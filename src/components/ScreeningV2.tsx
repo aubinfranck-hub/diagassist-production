@@ -20,6 +20,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   const [vision,setVision]=useState<VisionAnalysis|null>(null);
   const [visionBusy,setVisionBusy]=useState(false);
   const [autoCoach,setAutoCoach]=useState(true);
+  const [humanCoachRequested,setHumanCoachRequested]=useState(false);
   const lastAnalyzedFrameRef=useRef<string|null>(null);
   const token=localStorage.getItem("auth_session_token") || "";
 
@@ -38,6 +39,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
           setFrame(nextFrame);
         }
         if(m.type==="error")setStatus(m.message||"Erreur");
+        if(m.type==="human_coach_requested"){setHumanCoachRequested(true);setStatus("Coach humain demandé.");}
         if(m.type==="session_ended"){setConnected(false);setStatus("Session terminée.");}
       }catch{}
     };
@@ -81,13 +83,13 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   };
 
   useEffect(()=>{
-    if(role!=="coach"||!autoCoach||!frame||visionBusy||frame===lastAnalyzedFrameRef.current)return;
+    if(!autoCoach||!frame||visionBusy||frame===lastAnalyzedFrameRef.current)return;
     const timer=window.setTimeout(()=>{
       lastAnalyzedFrameRef.current=frame;
       analyzeFrame();
     },1500);
     return()=>window.clearTimeout(timer);
-  },[frame,role,autoCoach,visionBusy]);
+  },[frame,autoCoach,visionBusy]);
 
   const clickFrame=(e:React.MouseEvent<HTMLImageElement>)=>{
     if(role!=="coach")return;
@@ -107,6 +109,8 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
       {frame?<img onClick={clickFrame} src={frame} alt="Écran du technicien" className={role==="coach"?"max-w-full cursor-crosshair":"max-w-full"} style={{maxHeight:"70vh"}}/>:<div className="p-10 text-sm opacity-60">En attente de l’écran de la tablette…</div>}
     </div>
 
+    {role==="technician"&&<div className="rounded-2xl border border-red-500/20 bg-red-950/10 p-4 space-y-2"><div className="text-xs font-black uppercase tracking-widest text-red-300">🤖 Gemini — Coach par défaut</div><p className="text-sm text-slate-300">Gemini accompagne automatiquement le diagnostic. Un coach humain ne peut rejoindre la session qu’après confirmation du technicien.</p><button onClick={async()=>{try{const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/request-human-coach",{method:"POST",headers:{Authorization:"Bearer "+token}});const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Demande impossible.");setHumanCoachRequested(true);setStatus("Coach humain demandé.");}catch(e:any){setStatus(e.message||"Erreur.");}}} disabled={humanCoachRequested} className="px-3 py-2 rounded-lg bg-amber-600 disabled:opacity-50 text-white text-xs font-bold">{humanCoachRequested?"Coach humain demandé":"Demander un coach humain"}</button></div>}
+
     {role==="coach"&&<div className="space-y-2">
       <div className="flex flex-wrap gap-2">
         <button onClick={()=>command("request_screen")} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">Actualiser</button>
@@ -123,9 +127,9 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
       </div>
     </div>}
 
-    {role==="coach"&&vision&&<div className="rounded-2xl border border-red-500/20 bg-slate-950/70 p-4 space-y-3">
+    {vision&&<div className="rounded-2xl border border-red-500/20 bg-slate-950/70 p-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <strong className="text-white">Analyse IA de l’écran</strong>
+        <strong className="text-white">🤖 Gemini — Analyse et coaching</strong>
         <span className="text-xs text-slate-400">Confiance {Math.round(Math.max(0,Math.min(1,vision.confidence))*100)}%</span>
       </div>
       <p className="text-sm text-slate-200">{vision.summary}</p>
