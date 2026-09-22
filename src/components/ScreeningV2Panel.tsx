@@ -121,10 +121,10 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
           <div className="space-y-5">
             <div className="rounded-2xl border border-emerald-400/20 bg-emerald-950/10 p-5">
               <div className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-400">🤖 COACH PRINCIPAL</div>
-              <h2 className="text-xl font-black text-white mt-2">Gemini vous guide pendant le diagnostic</h2>
-              <p className="text-sm text-slate-300 mt-2">Gemini analyse les captures de votre scanner, explique ce qui est visible et vous indique la prochaine vérification. L’aide humaine reste une option secondaire.</p>
+              <h2 className="text-xl font-black text-white mt-2">DiagAssist vous guide pendant le diagnostic</h2>
+              <p className="text-sm text-slate-300 mt-2">DiagAssist analyse les captures de votre scanner, explique ce qui est visible et vous indique la prochaine vérification. L’aide humaine reste une option secondaire.</p>
               <button disabled={busy} onClick={createSession} className="mt-5 px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider">
-                {busy ? "Création…" : "Démarrer avec Gemini"}
+                {busy ? "Création…" : "Démarrer avec DiagAssist"}
               </button>
             </div>
             <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
@@ -143,7 +143,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
               <p className="text-sm text-slate-400 mt-2">Entrez le code session à 6 caractères communiqué par le technicien. Le code à 6 chiffres reste réservé à l’appairage de sa tablette.</p>
             </div>
             <input value={sessionId} onChange={e => setSessionId(e.target.value.trim().toUpperCase())} className="w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono tracking-widest" placeholder="Ex. YNA37Q" maxLength={6} autoCapitalize="characters" autoCorrect="off" />
-            <button type="button" onClick={() => setRole("technician")} className="text-xs text-slate-500 underline">Retour au coach Gemini</button>
+            <button type="button" onClick={() => setRole("technician")} className="text-xs text-slate-500 underline">Retour au coach DiagAssist</button>
             <button disabled={!/^[A-Z0-9]{6}$/.test(sessionId.trim())} onClick={() => { setStatus(""); setCreated(true); }} className="w-full px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-black uppercase tracking-wider">
               Rejoindre la session
             </button>
