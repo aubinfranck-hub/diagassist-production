@@ -107,7 +107,7 @@ class ScreenCaptureService : Service() {
 
     private fun buildNotification(text: String): Notification {
         return NotificationCompat.Builder(this, "diagassist")
-            .setContentTitle("DiagAssist Technician")
+            .setContentTitle("DiagAssist Scanner")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
