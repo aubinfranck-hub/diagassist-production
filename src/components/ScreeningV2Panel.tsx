@@ -10,6 +10,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
   const [created, setCreated] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const token = () => localStorage.getItem("auth_session_token") || "";
 
