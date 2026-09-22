@@ -293,5 +293,7 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+}
+
     companion object { const val ACTION_VOICE_START = "com.diagassist.technician.VOICE_START" }
 }
