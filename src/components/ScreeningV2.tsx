@@ -11,7 +11,7 @@ type VisionAnalysis = {
   uncertainty: string;
 };
 
-export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionId:string; pairingCode:string; role:"technician"|"coach" }) {
+export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionId:string; pairingCode:string; role:"technician"|"controller"|"coach" }) {
   const wsRef=useRef<WebSocket|null>(null);
   const [connected,setConnected]=useState(false);
   const [frame,setFrame]=useState<string|null>(null);
@@ -20,7 +20,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   const [vision,setVision]=useState<VisionAnalysis|null>(null);
   const [visionBusy,setVisionBusy]=useState(false);
   const [autoCoach,setAutoCoach]=useState(true);
-  const [remoteControlApproved,setRemoteControlApproved]=useState(false);
+  const [remoteControlApproved,setRemoteControlApproved]=useState(role === "controller");
   const [humanCoachRequested,setHumanCoachRequested]=useState(false);
   const [sessionEnded,setSessionEnded]=useState(false);
   const [voiceActive,setVoiceActive]=useState(false);
@@ -163,7 +163,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   },[frame,autoCoach,visionBusy]);
 
   const clickFrame=(e:React.MouseEvent<HTMLImageElement>)=>{
-    if(role!=="coach")return;
+    if(role!=="controller" && role!=="coach")return;
     const rect=e.currentTarget.getBoundingClientRect();
     const scaleX=e.currentTarget.naturalWidth/rect.width;
     const scaleY=e.currentTarget.naturalHeight/rect.height;
@@ -172,20 +172,20 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
 
   return <section className="screening-v2 space-y-3">
     <header className="flex items-center justify-between gap-3">
-      <div><strong>DiagAssist V2</strong><div className="text-xs opacity-70">{status}</div></div>
+      <div><strong>{role==="controller" ? "DiagAssist — Tablette du scanner" : "DiagAssist V2"}</strong><div className="text-xs opacity-70">{status}</div></div>
       {connected&&<span className="text-xs">🟢 Connecté</span>}
     </header>
 
-    {role==="coach"&&<div className="rounded-2xl overflow-hidden border border-white/10 bg-black min-h-[240px] flex items-center justify-center">
+    {(role==="controller"||role==="coach")&&<div className="rounded-2xl overflow-hidden border border-white/10 bg-black min-h-[240px] flex items-center justify-center">
       {frame?<img onClick={clickFrame} src={frame} alt="Écran du technicien" className={role==="coach"?"max-w-full cursor-crosshair":"max-w-full"} style={{maxHeight:"70vh"}}/>:<div className="p-10 text-sm opacity-60">En attente de l’écran de la tablette…</div>}
     </div>}
 
-    {role==="technician"&&<div className="rounded-2xl border border-emerald-500/20 bg-emerald-950/10 p-4 space-y-3"><div className="text-xs font-black uppercase tracking-widest text-emerald-300">🤖 Gemini — Coach principal</div><p className="text-sm text-slate-300">Gemini analyse automatiquement les nouvelles captures de votre scanner et vous explique quoi vérifier et quoi faire ensuite.</p><div className="text-[10px] uppercase font-black tracking-widest text-slate-500">Option 2 — aide d’un autre technicien</div><button onClick={async()=>{try{const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/request-human-coach",{method:"POST",headers:{Authorization:"Bearer "+token}});const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Demande impossible.");setHumanCoachRequested(true);setStatus("Demande d’aide envoyée. Gemini reste actif.");}catch(e:any){setStatus(e.message||"Erreur.");}}} disabled={humanCoachRequested} className="px-3 py-2 rounded-lg bg-amber-600 disabled:opacity-50 text-white text-xs font-bold">{humanCoachRequested?"Aide d’un autre technicien demandée":"Demander l’aide d’un ami / technicien"}</button></div>}
+    {role==="technician"&&<div className="rounded-2xl border border-emerald-500/20 bg-emerald-950/10 p-4 space-y-3"><div className="text-xs font-black uppercase tracking-widest text-emerald-300">🤖 DiagAssist — Coach principal</div><p className="text-sm text-slate-300">DiagAssist analyse automatiquement les nouvelles captures de votre scanner et vous explique quoi vérifier et quoi faire ensuite.</p><div className="text-[10px] uppercase font-black tracking-widest text-slate-500">Option 2 — aide d’un autre technicien</div><button onClick={async()=>{try{const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/request-human-coach",{method:"POST",headers:{Authorization:"Bearer "+token}});const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Demande impossible.");setHumanCoachRequested(true);setStatus("Demande d’aide envoyée. Gemini reste actif.");}catch(e:any){setStatus(e.message||"Erreur.");}}} disabled={humanCoachRequested} className="px-3 py-2 rounded-lg bg-amber-600 disabled:opacity-50 text-white text-xs font-bold">{humanCoachRequested?"Aide d’un autre technicien demandée":"Demander l’aide d’un ami / technicien"}</button></div>}
 
-    {role==="coach"&&!sessionEnded&&<div className="space-y-2">
+    {(role==="controller"||role==="coach")&&!sessionEnded&&<div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
         <button onClick={()=>command("request_screen")} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">Actualiser</button>
-        <button onClick={voiceActive?()=>endVoice():startVoice} disabled={voiceBusy} className="px-3 py-2 rounded-lg bg-emerald-600 disabled:opacity-40 text-white text-xs font-bold">{voiceBusy?"Connexion…":voiceActive?"🔴 Raccrocher":"🎙️ Appel vocal"}</button>
+        
         <button onClick={analyzeFrame} disabled={!frame||visionBusy} className="px-3 py-2 rounded-lg bg-red-600 disabled:opacity-40 text-white text-xs font-bold">
           {visionBusy?"Analyse…":"Analyser avec IA"}
         </button>
@@ -195,7 +195,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
       </div>
       <label className="flex items-center gap-2 text-[11px] text-amber-200">
         <input type="checkbox" checked={remoteControlApproved} onChange={e=>setRemoteControlApproved(e.target.checked)}/>
-        J’ai la confirmation du technicien avant chaque commande à distance.
+        Contrôle de la tablette autorisé après son appairage QR.
       </label>
       <label className="flex items-center gap-2 text-[11px] text-slate-400">
         <input type="checkbox" checked={autoCoach} onChange={e=>setAutoCoach(e.target.checked)}/>
@@ -209,7 +209,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
 
     {vision&&<div className="rounded-2xl border border-red-500/20 bg-slate-950/70 p-4 space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <strong className="text-white">🤖 Gemini — Analyse et coaching</strong>
+        <strong className="text-white">🤖 DiagAssist — Analyse et coaching</strong>
         <span className="text-xs text-slate-400">Confiance {Math.round(Math.max(0,Math.min(1,vision.confidence))*100)}%</span>
       </div>
       <p className="text-sm text-slate-200">{vision.summary}</p>
