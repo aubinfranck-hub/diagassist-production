@@ -14,6 +14,7 @@ const MAX_VISION_IMAGE_BYTES = 2_500_000;
 const ALLOWED = new Set(["click", "scroll", "input", "back", "request_screen"]);
 const MAX_FRAME_RATE_PER_SECOND = 4;
 const MAX_COMMAND_TEXT_LENGTH = 1_000;
+const VOICE_MESSAGE_TYPES = new Set(["voice_start","voice_signal","voice_end"]);
 
 function code() {
   return crypto.randomInt(100000, 1000000).toString();
@@ -541,6 +542,16 @@ Ne fabrique aucune donnée absente de l'image.`,
           sendAll(sid, m);
         } else if (m.type === "command_result" && role === "technician") {
           sendAll(sid, m, ws);
+        } else if (VOICE_MESSAGE_TYPES.has(m.type) && (role === "technician" || role === "coach")) {
+          const s = await getSessionAsync(sid);
+          if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
+          if (m.type === "voice_signal") {
+            const signal = m.payload;
+            if (!signal || typeof signal !== "object" || !["offer","answer","ice"].includes(signal.kind)) {
+              return ws.send(JSON.stringify({ type: "error", message: "Signal vocal invalide." }));
+            }
+          }
+          sendAll(sid, { type: m.type, payload: m.payload || {}, from: role }, ws);
         }
       } catch {
         ws.send(JSON.stringify({ type: "error", message: "Message invalide." }));
