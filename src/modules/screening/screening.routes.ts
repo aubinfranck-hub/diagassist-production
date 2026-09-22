@@ -283,6 +283,10 @@ Ne fabrique aucune donnée absente de l'image.`,
             return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives." }));
           }
 
+          if (s.status === "completed") {
+            return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
+          }
+
           if (Date.now() > s.pairingExpiresAt) {
             return ws.send(JSON.stringify({
               type: "error",
