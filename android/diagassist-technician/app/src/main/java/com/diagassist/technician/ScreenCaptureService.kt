@@ -35,6 +35,7 @@ class ScreenCaptureService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        ScreenCaptureServiceBridge.register { action, success -> sendCommandResult(action, success) }
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
             NotificationChannel("diagassist", "DiagAssist V2", NotificationManager.IMPORTANCE_LOW)
@@ -249,6 +250,7 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onDestroy() {
+        ScreenCaptureServiceBridge.register(null)
         socket?.close(1000, "stop")
         display?.release()
         reader?.close()
