@@ -1,0 +1,63 @@
+name: Build DiagAssist Technician Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android/diagassist-technician
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Decode signing keystore
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.DIAGASSIST_KEYSTORE_B64 }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_B64"
+          echo "$ANDROID_KEYSTORE_B64" | base64 --decode > diagassist-release.keystore
+
+      - name: Build signed Release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.DIAGASSIST_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DIAGASSIST_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.DIAGASSIST_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          gradle assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$PWD/diagassist-release.keystore" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      - name: Verify APK signature
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --verbose app/build/outputs/apk/release/*.apk
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagassist-technician-release
+          path: android/diagassist-technician/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f diagassist-release.keystore
