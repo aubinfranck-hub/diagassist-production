@@ -87,7 +87,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
             <div className="text-[10px] font-black uppercase tracking-widest text-red-400">Accès Coach</div>
             <h2 className="text-xl font-black text-white mt-2">ID DE SESSION</h2>
             <p className="text-sm text-slate-400 mt-2">Le coach saisit uniquement l’ID de session. Le code d’appairage reste réservé à la tablette du technicien.</p>
-            <input value={sessionId} onChange={e=>setSessionId(e.target.value)} className="mt-4 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="scr_..." />
+            <input value={sessionId} onChange={e=>setSessionId(e.target.value.trim())} className="mt-4 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="scr_..." />
             <button disabled={!sessionId} onClick={async()=>{
               try{
                 const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/join-coach",{method:"POST",headers:{Authorization:"Bearer "+token()}});
