@@ -39,7 +39,6 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         ScreenCaptureServiceBridge.register { action, success -> sendCommandResult(action, success) }
-        voice = VoiceCallManager(this) { type, payload -> sendVoice(type, payload) }
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
             NotificationChannel("diagassist", "DiagAssist V2", NotificationManager.IMPORTANCE_LOW)
@@ -49,12 +48,6 @@ class ScreenCaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = buildNotification("Capture écran active")
         if (Build.VERSION.SDK_INT >= 29) startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) else startForeground(1001, notification)
-        if (intent?.action == ACTION_VOICE_START) {
-            if (Build.VERSION.SDK_INT >= 29) startForeground(1001, buildNotification("Appel vocal DiagAssist en cours"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-            voice?.startOutgoing()
-            return START_STICKY
-        }
-
         val code = intent?.getIntExtra("resultCode", 0) ?: return START_NOT_STICKY
         val data = intent.getParcelableExtra<Intent>("resultData") ?: return START_NOT_STICKY
         wsBase = intent.getStringExtra("wsUrl") ?: "https://diagassist-production.onrender.com"
@@ -113,20 +106,12 @@ class ScreenCaptureService : Service() {
     }
 
     private fun buildNotification(text: String): Notification {
-        val callIntent = Intent(this, ScreenCaptureService::class.java).setAction(ACTION_VOICE_START)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
-        val callPending = PendingIntent.getService(this, 7001, callIntent, flags)
         return NotificationCompat.Builder(this, "diagassist")
-            .setContentTitle("DiagAssist V2")
+            .setContentTitle("DiagAssist Technician")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_btn_speak_now, "Appel vocal", callPending)
             .build()
-    }
-
-    private fun sendVoice(type: String, payload: JSONObject) {
-        socket?.send(JSONObject(mapOf("type" to type, "sessionId" to currentSession, "payload" to payload)).toString())
     }
 
     private fun startCapture() {
@@ -284,7 +269,6 @@ class ScreenCaptureService : Service() {
     override fun onDestroy() {
         ScreenCaptureServiceBridge.register(null)
         socket?.close(1000, "stop")
-        voice?.dispose()
         display?.release()
         reader?.close()
         projection?.stop()
@@ -295,5 +279,4 @@ class ScreenCaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
-    companion object { const val ACTION_VOICE_START = "com.diagassist.technician.VOICE_START" }
 }
