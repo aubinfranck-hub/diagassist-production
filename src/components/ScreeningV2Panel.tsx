@@ -94,9 +94,9 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
       <div className="space-y-5">
         {!coachJoined ? (
           <div className="premium-glass-card rounded-3xl border border-white/[0.08] p-6">
-            <div className="text-[10px] font-black uppercase tracking-widest text-red-400">Accès Coach</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-red-400">Accès aide technicien</div>
             <h2 className="text-xl font-black text-white mt-2">CODE SESSION</h2>
-            <p className="text-sm text-slate-400 mt-2">Le coach saisit le code session à 6 caractères <span className="font-mono text-white">ex. A7K2Q9</span>. Le code à 6 chiffres est réservé à l’appairage de la tablette du technicien.</p>
+            <p className="text-sm text-slate-400 mt-2">Le coach d’aide saisit le code session à 6 caractères <span className="font-mono text-white">ex. A7K2Q9</span>. Le code à 6 chiffres reste réservé à l’appairage de la tablette.</p>
             <input value={sessionId} onChange={e=>setSessionId(e.target.value.trim())} className="mt-4 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="Ex. A7K2Q9" autoCapitalize="none" autoCorrect="off" />
             <button disabled={!sessionId} onClick={async()=>{
               try{
