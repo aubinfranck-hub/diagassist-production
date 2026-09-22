@@ -7,6 +7,7 @@ import android.hardware.display.DisplayManager
 import android.media.Image
 import android.media.ImageReader
 import android.os.*
+import android.provider.Settings
 import android.util.Base64
 import androidx.core.app.NotificationCompat
 import okhttp3.*
@@ -31,6 +32,7 @@ class ScreenCaptureService : Service() {
     private var authToken = ""
     private var currentSession = ""
     private var pairingCode = ""
+    private var deviceId = ""
     private var reconnecting = false
 
     override fun onCreate() {
@@ -58,6 +60,7 @@ class ScreenCaptureService : Service() {
         currentSession = intent.getStringExtra("sessionId") ?: ""
         pairingCode = intent.getStringExtra("pairingCode") ?: ""
         authToken = intent.getStringExtra("token") ?: ""
+        deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown-device"
 
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
         projection = manager.getMediaProjection(code, data)
@@ -79,7 +82,8 @@ class ScreenCaptureService : Service() {
                     ws.send(JSONObject(mapOf(
                         "type" to "pairing",
                         "sessionId" to currentSession,
-                        "pairingCode" to pairingCode
+                        "pairingCode" to pairingCode,
+                        "deviceId" to deviceId
                     )).toString())
                 }
 
