@@ -2,6 +2,7 @@ import crypto from "crypto";
 import type { Express } from "express";
 import type { Server } from "http";
 import { WebSocketServer } from "ws";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const sessions = new Map<string, any>();
 const clients = new Map<string, Set<any>>();
@@ -9,6 +10,7 @@ const attempts = new Map<string, number>();
 const PAIRING_TTL = 10 * 60 * 1000;
 const SESSION_TTL = 60 * 60 * 1000;
 const MAX_FRAME_BYTES = 2_500_000;
+const MAX_VISION_IMAGE_BYTES = 2_500_000;
 const ALLOWED = new Set(["click", "scroll", "input", "back", "request_screen"]);
 
 function code() {
@@ -28,6 +30,15 @@ function sendAll(id: string, msg: any, except?: any) {
   for (const ws of clients.get(id) || []) {
     if (ws !== except && ws.readyState === 1) ws.send(JSON.stringify(msg));
   }
+}
+
+function getVisionClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY non configurée.");
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+  });
 }
 
 export function registerScreening(
@@ -60,7 +71,8 @@ export function registerScreening(
       status: "pending",
       createdAt: now,
       expiresAt: now + SESSION_TTL,
-      frameCount: 0
+      frameCount: 0,
+      lastVisionAt: 0,
     };
 
     sessions.set(id, s);
@@ -96,6 +108,121 @@ export function registerScreening(
     s.status = "completed";
     sendAll(s.id, { type: "session_ended", sessionId: s.id, timestamp: Date.now() });
     res.json({ success: true, frameCount: s.frameCount });
+  });
+
+  // Analyse explicite d'une capture d'écran par Gemini Vision.
+  // On ne lance pas d'analyse automatique à chaque frame afin de maîtriser coût et latence.
+  app.post("/api/screening/analyze-frame", deps.requireAuth, async (req: any, res) => {
+    try {
+      if (deps.getEffectivePlan(req.session.phone) !== "premium") {
+        return res.status(403).json({ success: false, message: "L'analyse Vision est réservée au Premium." });
+      }
+
+      const sessionId = String(req.body?.sessionId || "");
+      const imageData = String(req.body?.imageData || "");
+      const s = getSession(sessionId);
+
+      if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
+      if (req.session.phone !== s.technicianPhone && req.session.phone !== s.coachPhone) {
+        return res.status(403).json({ success: false, message: "Accès refusé." });
+      }
+      if (!imageData) return res.status(400).json({ success: false, message: "Capture d'écran requise." });
+      if (imageData.length > MAX_VISION_IMAGE_BYTES) {
+        return res.status(413).json({ success: false, message: "Capture trop volumineuse." });
+      }
+
+      // Protection simple contre les appels Vision trop rapprochés sur une même session.
+      if (Date.now() - (s.lastVisionAt || 0) < 4000) {
+        return res.status(429).json({ success: false, message: "Analyse trop rapprochée. Patientez quelques secondes." });
+      }
+      s.lastVisionAt = Date.now();
+
+      const base64 = imageData.replace(/^data:image\/[^;]+;base64,/, "");
+      const response = await getVisionClient().models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [{
+          role: "user",
+          parts: [
+            {
+              inlineData: {
+                data: base64,
+                mimeType: "image/jpeg",
+              },
+            },
+            {
+              text: `Tu es DiagAssist Vision, assistant de coaching pour un mécanicien automobile.
+Analyse UNIQUEMENT ce qui est réellement visible sur cette capture d'écran de tablette/valise/application automobile.
+Objectifs :
+1. Lire les codes défauts DTC visibles, sans les inventer.
+2. Identifier les paramètres, voyants, menus ou résultats de test visibles.
+3. Expliquer ce que l'écran indique et ce qu'il ne permet pas de conclure.
+4. Proposer la prochaine vérification utile, une seule à la fois.
+5. Signaler immédiatement tout risque de sécurité visible.
+6. Si le texte est illisible ou si l'écran ne permet pas de conclure, le dire clairement.
+
+Règle essentielle : un code défaut est un indice, pas une condamnation de pièce. Ne recommande jamais de remplacer une pièce uniquement à partir d'un code.
+
+Réponds en français sous forme JSON avec exactement ces champs :
+summary: résumé court de ce qui est visible ;
+observations: tableau des éléments réellement observés ;
+probableCodes: tableau des codes DTC lisibles, avec code et description, vide si aucun ;
+checks: tableau des contrôles à effectuer ensuite ;
+nextActions: tableau d'actions immédiates pour le coach ;
+safety: niveau "normal", "attention" ou "critique" + raison ;
+confidence: nombre de 0 à 1 ;
+uncertainty: limites ou éléments impossibles à lire/confirmer.
+Ne fabrique aucune donnée absente de l'image.`,
+            },
+          ],
+        }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              summary: { type: Type.STRING },
+              observations: { type: Type.ARRAY, items: { type: Type.STRING } },
+              probableCodes: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    code: { type: Type.STRING },
+                    description: { type: Type.STRING },
+                  },
+                  required: ["code", "description"],
+                },
+              },
+              checks: { type: Type.ARRAY, items: { type: Type.STRING } },
+              nextActions: { type: Type.ARRAY, items: { type: Type.STRING } },
+              safety: { type: Type.STRING },
+              confidence: { type: Type.NUMBER },
+              uncertainty: { type: Type.STRING },
+            },
+            required: ["summary", "observations", "probableCodes", "checks", "nextActions", "safety", "confidence", "uncertainty"],
+          },
+        },
+      });
+
+      const text = response.text?.trim();
+      if (!text) throw new Error("Gemini n'a renvoyé aucune analyse.");
+      const analysis = JSON.parse(text);
+
+      res.json({
+        success: true,
+        sessionId,
+        analysis,
+        modelUsed: "gemini-3.5-flash",
+        analyzedAt: Date.now(),
+        warning: "Analyse d'assistance : confirmer tout diagnostic par les mesures et procédures constructeur appropriées.",
+      });
+    } catch (error: any) {
+      console.error("[Screening Vision] Erreur:", error?.message || error);
+      res.status(500).json({
+        success: false,
+        message: "Impossible d'analyser cette capture pour le moment.",
+      });
+    }
   });
 
   server.on("upgrade", (request, socket, head) => {
