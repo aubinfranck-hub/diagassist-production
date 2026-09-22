@@ -86,6 +86,7 @@ export function registerScreening(
   };
 
   const getSessionAsync = async (id: string) => {
+    id = String(id || "").trim();
     const cached = getSession(id);
     if (cached) return cached;
     if (!dbQuery) return null;
