@@ -62,8 +62,58 @@ export function registerScreening(
     requireAuth: any;
     getEffectivePlan: (phone: string) => string;
     sessions: Map<string, any>;
+    dbQuery?: (sql: string, params?: any[]) => Promise<any>;
   }
 ) {
+  const dbQuery = deps.dbQuery;
+  const persistSession = async (s: any) => {
+    if (!dbQuery) return;
+    try {
+      await dbQuery(
+        `INSERT INTO screening_sessions
+          (id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type, human_coach_requested, status, created_at, expires_at, frame_count)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT (id) DO UPDATE SET
+           coach_phone=$3, pairing_expires_at=$5, coach_type=$6,
+           human_coach_requested=$7, status=$8, expires_at=$10, frame_count=$11`,
+        [s.id, s.technicianPhone, s.coachPhone || null, s.pairingCode, s.pairingExpiresAt,
+         s.coachType, s.humanCoachRequested, s.status, s.createdAt, s.expiresAt, s.frameCount]
+      );
+    } catch (err: any) {
+      console.error("[SCREENING][DB] sauvegarde session échouée:", err.message);
+    }
+  };
+
+  if (dbQuery) {
+    dbQuery(
+      `SELECT id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type,
+              human_coach_requested, status, created_at, expires_at, frame_count
+       FROM screening_sessions
+       WHERE expires_at > $1 OR status = 'completed'
+       ORDER BY created_at DESC
+       LIMIT 200`,
+      [Date.now() - 24 * 60 * 60 * 1000]
+    ).then((result: any) => {
+      for (const row of result.rows || []) {
+        if (row.status !== "completed" && Number(row.expires_at) <= Date.now()) continue;
+        sessions.set(row.id, {
+          id: row.id,
+          technicianPhone: row.technician_phone,
+          coachPhone: row.coach_phone || undefined,
+          pairingCode: row.pairing_code,
+          pairingExpiresAt: Number(row.pairing_expires_at),
+          coachType: row.coach_type === "human" ? "human" : "gemini",
+          humanCoachRequested: Boolean(row.human_coach_requested),
+          status: row.status === "completed" ? "completed" : "pending",
+          createdAt: Number(row.created_at),
+          expiresAt: Number(row.expires_at),
+          frameCount: Number(row.frame_count || 0),
+          lastVisionAt: 0,
+        });
+      }
+      console.log(`[SCREENING][DB] ${sessions.size} session(s) rechargée(s).`);
+    }).catch((err: any) => console.error("[SCREENING][DB] chargement échoué:", err.message));
+  }
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES + 100_000 });
 
   app.post("/api/screening/sessions", deps.requireAuth, (req: any, res) => {
@@ -92,6 +142,7 @@ export function registerScreening(
     };
 
     sessions.set(id, s);
+    persistSession(s).catch(() => {});
     res.json({
       success: true,
       sessionId: id,
@@ -113,14 +164,36 @@ export function registerScreening(
     res.json({ success: true, session: safe });
   });
 
+  app.get("/api/screening/history", deps.requireAuth, async (req: any, res) => {
+    if (!dbQuery) {
+      return res.json({ success: true, sessions: [] });
+    }
+    try {
+      const result = await dbQuery(
+        `SELECT id, technician_phone, coach_phone, coach_type, human_coach_requested,
+                status, created_at, expires_at, frame_count
+         FROM screening_sessions
+         WHERE technician_phone = $1 OR coach_phone = $1
+         ORDER BY created_at DESC
+         LIMIT 100`,
+        [req.session.phone]
+      );
+      res.json({ success: true, sessions: result.rows });
+    } catch (err: any) {
+      console.error("[SCREENING][DB] historique échoué:", err.message);
+      res.status(500).json({ success: false, message: "Historique indisponible." });
+    }
+  });
+
   app.post("/api/screening/sessions/:id/request-human-coach", deps.requireAuth, (req: any, res) => {
     const s = getSession(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
     if (req.session.phone !== s.technicianPhone) {
       return res.status(403).json({ success: false, message: "Seul le technicien peut demander un coach humain." });
     }
-    s.humanCoachRequested = true;
+s.humanCoachRequested = true;
     s.coachType = "human";
+    persistSession(s).catch(() => {});
     sendAll(s.id, { type: "human_coach_requested", sessionId: s.id, timestamp: Date.now() });
     res.json({ success: true, coachType: "human", message: "Coach humain demandé." });
   });
@@ -133,7 +206,8 @@ export function registerScreening(
       return res.status(403).json({ success: false, message: "Accès refusé." });
     }
 
-    s.status = "completed";
+s.status = "completed";
+    persistSession(s).catch(() => {});
     sendAll(s.id, { type: "session_ended", sessionId: s.id, timestamp: Date.now() });
     for (const ws of clients.get(s.id) || []) { try { ws.close(1000, "Session terminée"); } catch {} }
     clients.delete(s.id);
