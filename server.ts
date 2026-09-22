@@ -304,6 +304,24 @@ async function initDatabase(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_followups_customer ON shop_followups (customer_phone);
     CREATE INDEX IF NOT EXISTS idx_followups_scheduled ON shop_followups (scheduled_for);
+
+    -- Sessions de coaching/Screening V2 : persistance pour survivre aux redémarrages Render.
+    CREATE TABLE IF NOT EXISTS screening_sessions (
+      id TEXT PRIMARY KEY,
+      technician_phone TEXT NOT NULL,
+      coach_phone TEXT,
+      pairing_code TEXT NOT NULL,
+      pairing_expires_at BIGINT NOT NULL,
+      coach_type TEXT NOT NULL DEFAULT 'gemini',
+      human_coach_requested BOOLEAN NOT NULL DEFAULT false,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at BIGINT NOT NULL,
+      expires_at BIGINT NOT NULL,
+      frame_count INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_screening_sessions_technician ON screening_sessions (technician_phone);
+    CREATE INDEX IF NOT EXISTS idx_screening_sessions_coach ON screening_sessions (coach_phone);
+    CREATE INDEX IF NOT EXISTS idx_screening_sessions_created ON screening_sessions (created_at DESC);
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 
@@ -3204,7 +3222,12 @@ Directives pour ce tour :
   });
 
   // DiagAssist V2 — Screening / Coaching module. Uses the existing authenticated session store.
-  registerScreening(app, server, { requireAuth, getEffectivePlan, sessions });
+  registerScreening(app, server, {
+    requireAuth,
+    getEffectivePlan,
+    sessions,
+    dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
+  });
 
   // Create standard WebSocketServer for low-latency live audio streaming
   const wss = new WebSocketServer({ noServer: true });
