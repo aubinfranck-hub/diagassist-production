@@ -36,8 +36,7 @@ class MainActivity : ComponentActivity() {
             if (uri.scheme != "diagassist" || uri.host != "technician") {
                 throw IllegalArgumentException("QR DiagAssist non reconnu.")
             }
-            if (uri.getQueryParameter("token").isNullOrBlank() ||
-                uri.getQueryParameter("sessionId").isNullOrBlank() ||
+            if (uri.getQueryParameter("sessionId").isNullOrBlank() ||
                 uri.getQueryParameter("pairingCode").isNullOrBlank()
             ) {
                 throw IllegalArgumentException("QR d’appairage incomplet.")
