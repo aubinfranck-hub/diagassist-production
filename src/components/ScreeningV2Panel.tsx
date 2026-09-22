@@ -63,7 +63,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
             <div>
               <div className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Session Technicien</div>
               <div className="mt-4 rounded-2xl border border-white/10 bg-black/40 p-4">
-                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">ID DE SESSION — À COMMUNIQUER AU COACH</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">CODE SESSION — À COMMUNIQUER AU COACH</div>
                 <div className="mt-2 flex items-center gap-2">
                   <div className="flex-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-sm font-mono text-white break-all select-all">{sessionId}</div>
                   <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(sessionId);setCopiedSessionId(true);setTimeout(()=>setCopiedSessionId(false),1500)}catch{}}} className="shrink-0 px-3 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold">{copiedSessionId ? "✓" : "Copier"}</button>
@@ -93,9 +93,9 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
         {!coachJoined ? (
           <div className="premium-glass-card rounded-3xl border border-white/[0.08] p-6">
             <div className="text-[10px] font-black uppercase tracking-widest text-red-400">Accès Coach</div>
-            <h2 className="text-xl font-black text-white mt-2">ID DE SESSION</h2>
-            <p className="text-sm text-slate-400 mt-2">Le coach saisit l’ID de session <span className="font-mono text-white">scr_...</span>. Le code à 6 chiffres est réservé à l’appairage de la tablette du technicien.</p>
-            <input value={sessionId} onChange={e=>setSessionId(e.target.value.trim())} className="mt-4 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="scr_..." autoCapitalize="none" autoCorrect="off" />
+            <h2 className="text-xl font-black text-white mt-2">CODE SESSION</h2>
+            <p className="text-sm text-slate-400 mt-2">Le coach saisit le code session à 6 caractères <span className="font-mono text-white">ex. A7K2Q9</span>. Le code à 6 chiffres est réservé à l’appairage de la tablette du technicien.</p>
+            <input value={sessionId} onChange={e=>setSessionId(e.target.value.trim())} className="mt-4 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="Ex. A7K2Q9" autoCapitalize="none" autoCorrect="off" />
             <button disabled={!sessionId} onClick={async()=>{
               try{
                 const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/join-coach",{method:"POST",headers:{Authorization:"Bearer "+token()}});
@@ -130,8 +130,8 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
           </div>
         ) : (
           <div className="space-y-4">
-            <label className="block text-xs font-bold text-slate-400">ID DE SESSION
-              <input value={sessionId} onChange={e => setSessionId(e.target.value.trim())} className="mt-2 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="scr_..." />
+            <label className="block text-xs font-bold text-slate-400">CODE SESSION
+              <input value={sessionId} onChange={e => setSessionId(e.target.value.trim())} className="mt-2 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="Ex. A7K2Q9" />
             </label>
             <div className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4 text-xs text-amber-200">
               Le coach ne saisit aucun code d’appairage. Le technicien doit d’abord demander le coach humain depuis sa tablette/session.
