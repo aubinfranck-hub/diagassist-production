@@ -30,7 +30,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
     const protocol=location.protocol==="https:"?"wss":"ws";
     const ws=new WebSocket(protocol+"://"+location.host+"/api/screening/stream?token="+encodeURIComponent(token));
     wsRef.current=ws;
-    ws.onopen=()=>ws.send(JSON.stringify({type:"pairing",sessionId,pairingCode}));
+    ws.onopen=()=>ws.send(JSON.stringify({type:"pairing",sessionId,pairingCode,role}));
     ws.onmessage=e=>{
       try{
         const m=JSON.parse(e.data);
