@@ -1,4 +1,4 @@
-name: Build DiagAssist Technician Release
+name: Build DiagAssist Scanner Release
 
 on:
   workflow_dispatch:
@@ -58,7 +58,7 @@ jobs:
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: diagassist-technician-release
+          name: diagassist-scanner-release
           path: android/diagassist-technician/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
