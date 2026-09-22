@@ -139,7 +139,7 @@ export function registerScreening(
 
       const base64 = imageData.replace(/^data:image\/[^;]+;base64,/, "");
       const response = await getVisionClient().models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-2.5-flash",
         contents: [{
           role: "user",
           parts: [
