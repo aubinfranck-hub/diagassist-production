@@ -18,7 +18,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   const [status,setStatus]=useState("Connexion…");
   const [inputText,setInputText]=useState("");
   const [vision,setVision]=useState<VisionAnalysis|null>(null);
-  const [visionBusy,setVisionBusy]=useState(false);
+  const [visionBusy,setVisionBusy]=useState(false);\n  const [autoCoach,setAutoCoach]=useState(true);\n  const lastAnalyzedFrameRef=useRef<string|null>(null);
   const token=localStorage.getItem("auth_session_token") || "";
 
   useEffect(()=>{
@@ -31,7 +31,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
       try{
         const m=JSON.parse(e.data);
         if(m.type==="pairing"&&m.success){setConnected(true);setStatus("Session connectée.");}
-        if(m.type==="frame")setFrame(m.payload?.imageData||null);
+        if(m.type==="frame"){\n          const nextFrame=m.payload?.imageData||null;\n          setFrame(nextFrame);\n        }
         if(m.type==="error")setStatus(m.message||"Erreur");
         if(m.type==="session_ended"){setConnected(false);setStatus("Session terminée.");}
       }catch{}
@@ -75,7 +75,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
     }
   };
 
-  const clickFrame=(e:React.MouseEvent<HTMLImageElement>)=>{
+  useEffect(()=>{\n    if(role!=="coach"||!autoCoach||!frame||visionBusy||frame===lastAnalyzedFrameRef.current)return;\n    const timer=window.setTimeout(()=>{\n      lastAnalyzedFrameRef.current=frame;\n      analyzeFrame();\n    },1500);\n    return()=>window.clearTimeout(timer);\n  },[frame,role,autoCoach,visionBusy]);\n\n  const clickFrame=(e:React.MouseEvent<HTMLImageElement>)=>{
     if(role!=="coach")return;
     const rect=e.currentTarget.getBoundingClientRect();
     const scaleX=e.currentTarget.naturalWidth/rect.width;
