@@ -121,15 +121,15 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
             </button>
           </div>
         ) : (
-          <div className="grid md:grid-cols-2 gap-4">
-            <label className="text-xs font-bold text-slate-400">ID de session
-              <input value={sessionId} onChange={e => setSessionId(e.target.value)} className="mt-2 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white" placeholder="scr_..." />
+          <div className="space-y-4">
+            <label className="block text-xs font-bold text-slate-400">ID DE SESSION
+              <input value={sessionId} onChange={e => setSessionId(e.target.value.trim())} className="mt-2 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="scr_..." />
             </label>
-            <label className="text-xs font-bold text-slate-400">Code d’appairage
-              <input value={pairingCode} onChange={e => setPairingCode(e.target.value.replace(/\D/g, "").slice(0,6))} className="mt-2 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono tracking-widest" placeholder="000000" />
-            </label>
-            <button disabled={!sessionId || pairingCode.length !== 6} onClick={() => setCreated(true)} className="md:col-span-2 px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-black uppercase tracking-wider">
-              Se connecter au technicien
+            <div className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4 text-xs text-amber-200">
+              Le coach ne saisit aucun code d’appairage. Le technicien doit d’abord demander le coach humain depuis sa tablette/session.
+            </div>
+            <button disabled={!sessionId} onClick={() => setCreated(true)} className="w-full px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-black uppercase tracking-wider">
+              Continuer avec l’ID de session
             </button>
           </div>
         )}
