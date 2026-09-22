@@ -448,14 +448,17 @@ Ne fabrique aucune donnée absente de l'image.`,
     const token = url.searchParams.get("token") || "";
     const auth = deps.sessions.get(token);
 
-    if (!auth || deps.getEffectivePlan(auth.phone) !== "premium") {
+    // Controller/coach connections use the normal authenticated session token.
+    // Technician tablets may connect without a bearer token because the QR carries only
+    // the short-lived session ID + pairing code. The pairing handler below is the gate.
+    if (auth && deps.getEffectivePlan(auth.phone) !== "premium") {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
     }
 
     wss.handleUpgrade(request, socket, head, ws => {
-      (ws as any)._phone = auth.phone;
+      (ws as any)._phone = auth?.phone || null;
       wss.emit("connection", ws);
     });
   });
