@@ -107,7 +107,7 @@ export function registerScreening(
         pairingExpiresAt: Number(row.pairing_expires_at),
         coachType: row.coach_type === "human" ? "human" : "gemini",
         humanCoachRequested: Boolean(row.human_coach_requested),
-        status: row.status === "completed" ? "completed" : "pending",
+        status: row.status === "active" ? "active" : row.status === "completed" ? "completed" : "pending",
         createdAt: Number(row.created_at),
         expiresAt: Number(row.expires_at),
         frameCount: Number(row.frame_count || 0),
@@ -142,7 +142,7 @@ export function registerScreening(
           pairingExpiresAt: Number(row.pairing_expires_at),
           coachType: row.coach_type === "human" ? "human" : "gemini",
           humanCoachRequested: Boolean(row.human_coach_requested),
-          status: row.status === "completed" ? "completed" : "pending",
+          status: row.status === "active" ? "active" : row.status === "completed" ? "completed" : "pending",
           createdAt: Number(row.created_at),
           expiresAt: Number(row.expires_at),
           frameCount: Number(row.frame_count || 0),
@@ -237,9 +237,17 @@ export function registerScreening(
     if (req.session.phone !== s.technicianPhone) {
       return res.status(403).json({ success: false, message: "Seul le technicien peut demander un coach humain." });
     }
-s.humanCoachRequested = true;
+const previousRequested = s.humanCoachRequested;
+    const previousCoachType = s.coachType;
+    s.humanCoachRequested = true;
     s.coachType = "human";
-    persistSession(s).catch(() => {});
+    try {
+      await persistSession(s);
+    } catch {
+      s.humanCoachRequested = previousRequested;
+      s.coachType = previousCoachType;
+      return res.status(503).json({ success: false, message: "Impossible d'enregistrer la demande de coach. Réessayez." });
+    }
     sendAll(s.id, { type: "human_coach_requested", sessionId: s.id, timestamp: Date.now() });
     res.json({ success: true, coachType: "human", message: "Coach humain demandé." });
   });
@@ -252,8 +260,14 @@ s.humanCoachRequested = true;
       return res.status(403).json({ success: false, message: "Accès refusé." });
     }
 
-s.status = "completed";
-    persistSession(s).catch(() => {});
+const previousStatus = s.status;
+    s.status = "completed";
+    try {
+      await persistSession(s);
+    } catch {
+      s.status = previousStatus;
+      return res.status(503).json({ success: false, message: "Impossible d'enregistrer la fin de session. Réessayez." });
+    }
     sendAll(s.id, { type: "session_ended", sessionId: s.id, timestamp: Date.now() });
     for (const ws of clients.get(s.id) || []) { try { ws.close(1000, "Session terminée"); } catch {} }
     clients.delete(s.id);
