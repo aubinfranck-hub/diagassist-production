@@ -212,7 +212,7 @@ Ne fabrique aucune donnée absente de l'image.`,
         success: true,
         sessionId,
         analysis,
-        modelUsed: "gemini-3.5-flash",
+        modelUsed: "gemini-2.5-flash",
         analyzedAt: Date.now(),
         warning: "Analyse d'assistance : confirmer tout diagnostic par les mesures et procédures constructeur appropriées.",
       });
