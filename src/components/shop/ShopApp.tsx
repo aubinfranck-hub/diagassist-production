@@ -160,7 +160,7 @@ function ShopCatalog({ onSelectProduct, onGoCart }: { onSelectProduct: (slug: st
             <p className="mt-4 max-w-xl text-sm leading-6 text-slate-300 sm:mt-5 sm:text-base">Scanners diagnostic, programmation & J2534, outils atelier, accessoires et formations pour les professionnels de l'automobile.</p>
             <div className="mt-5 grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:gap-3">
               <button onClick={() => document.getElementById("shop-products")?.scrollIntoView({behavior:"smooth"})} className="rounded-xl bg-[#ed1c24] px-5 py-3.5 text-center text-sm font-black shadow-lg hover:bg-[#b90f16] sm:px-6">Découvrir les produits</button>
-              <button onClick={() => navigate("/boutique/piece-etranger")} className="rounded-xl border border-white/20 px-5 py-3.5 text-center text-sm font-black text-white hover:bg-white/10 sm:px-6">Besoin d'une pièce ?</button>
+              <button onClick={() => window.location.assign("/boutique/piece-etranger")} className="rounded-xl border border-white/20 px-5 py-3.5 text-center text-sm font-black text-white hover:bg-white/10 sm:px-6">Besoin d'une pièce ?</button>
             </div>
             <div className="mt-7 grid grid-cols-2 gap-2 sm:grid-cols-4">{[{label:"Diagnostic multimarque",Icon:ShieldCheck},{label:"Programmation & Codage",Icon:Zap},{label:"Toutes marques",Icon:Wrench},{label:"Formation & Support",Icon:Headphones}].map(({label:featureLabel,Icon:FeatureIcon})=><div key={featureLabel} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-[10px] font-black text-slate-200"><FeatureIcon className="h-4 w-4 shrink-0 text-[#ed1c24]"/>{featureLabel}</div>)}</div>
           </div>
@@ -464,3 +464,4 @@ export default function ShopApp() {
     <WhatsAppButton/>
   </div>;
 }
+
