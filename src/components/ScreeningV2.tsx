@@ -19,7 +19,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   const [inputText,setInputText]=useState("");
   const [vision,setVision]=useState<VisionAnalysis|null>(null);
   const [visionBusy,setVisionBusy]=useState(false);
-  const [autoCoach,setAutoCoach]=useState(false);
+  const [autoCoach,setAutoCoach]=useState(true);
   const [remoteControlApproved,setRemoteControlApproved]=useState(false);
   const [humanCoachRequested,setHumanCoachRequested]=useState(false);
   const [sessionEnded,setSessionEnded]=useState(false);
@@ -116,7 +116,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
       {frame?<img onClick={clickFrame} src={frame} alt="Écran du technicien" className={role==="coach"?"max-w-full cursor-crosshair":"max-w-full"} style={{maxHeight:"70vh"}}/>:<div className="p-10 text-sm opacity-60">En attente de l’écran de la tablette…</div>}
     </div>
 
-    {role==="technician"&&<div className="rounded-2xl border border-red-500/20 bg-red-950/10 p-4 space-y-2"><div className="text-xs font-black uppercase tracking-widest text-red-300">🤖 Gemini — Coach par défaut</div><p className="text-sm text-slate-300">Gemini accompagne automatiquement le diagnostic. Un coach humain ne peut rejoindre la session qu’après confirmation du technicien.</p><button onClick={async()=>{try{const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/request-human-coach",{method:"POST",headers:{Authorization:"Bearer "+token}});const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Demande impossible.");setHumanCoachRequested(true);setStatus("Coach humain demandé.");}catch(e:any){setStatus(e.message||"Erreur.");}}} disabled={humanCoachRequested} className="px-3 py-2 rounded-lg bg-amber-600 disabled:opacity-50 text-white text-xs font-bold">{humanCoachRequested?"Coach humain demandé":"Demander un coach humain"}</button></div>}
+    {role==="technician"&&<div className="rounded-2xl border border-emerald-500/20 bg-emerald-950/10 p-4 space-y-3"><div className="text-xs font-black uppercase tracking-widest text-emerald-300">🤖 Gemini — Coach principal</div><p className="text-sm text-slate-300">Gemini analyse automatiquement les nouvelles captures de votre scanner et vous explique quoi vérifier et quoi faire ensuite.</p><div className="text-[10px] uppercase font-black tracking-widest text-slate-500">Option 2 — aide d’un autre technicien</div><button onClick={async()=>{try{const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/request-human-coach",{method:"POST",headers:{Authorization:"Bearer "+token}});const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Demande impossible.");setHumanCoachRequested(true);setStatus("Demande d’aide envoyée. Gemini reste actif.");}catch(e:any){setStatus(e.message||"Erreur.");}}} disabled={humanCoachRequested} className="px-3 py-2 rounded-lg bg-amber-600 disabled:opacity-50 text-white text-xs font-bold">{humanCoachRequested?"Aide d’un autre technicien demandée":"Demander l’aide d’un ami / technicien"}</button></div>}
 
     {role==="coach"&&!sessionEnded&&<div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
