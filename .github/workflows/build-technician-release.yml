@@ -2,6 +2,10 @@ name: Build DiagAssist Technician Release
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "android/diagassist-technician/**"
+      - ".github/workflows/build-technician-release.yml"
 
 jobs:
   build-release:
