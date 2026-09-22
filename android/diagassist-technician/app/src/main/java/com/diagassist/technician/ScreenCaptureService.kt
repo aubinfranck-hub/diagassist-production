@@ -57,7 +57,7 @@ class ScreenCaptureService : Service() {
 
         val code = intent?.getIntExtra("resultCode", 0) ?: return START_NOT_STICKY
         val data = intent.getParcelableExtra<Intent>("resultData") ?: return START_NOT_STICKY
-        wsBase = intent.getStringExtra("wsUrl") ?: "https://diagassist-production.onrender.com"
+        wsBase = intent.getStringExtra("wsUrl") ?: "https://www.diagassist.app"
         currentSession = intent.getStringExtra("sessionId") ?: ""
         pairingCode = intent.getStringExtra("pairingCode") ?: ""
         authToken = intent.getStringExtra("token") ?: ""
@@ -88,6 +88,7 @@ class ScreenCaptureService : Service() {
                     reconnecting = false
                     ws.send(JSONObject(mapOf(
                         "type" to "pairing",
+                        "role" to "technician",
                         "sessionId" to currentSession,
                         "pairingCode" to pairingCode,
                         "deviceId" to deviceId
