@@ -81,7 +81,6 @@ class ScreenCaptureService : Service() {
                         "sessionId" to currentSession,
                         "pairingCode" to pairingCode
                     )).toString())
-                    startCapture()
                 }
 
                 override fun onMessage(ws: WebSocket, text: String) {
@@ -215,7 +214,12 @@ class ScreenCaptureService : Service() {
             val m = JSONObject(text)
             when (m.optString("type")) {
                 "pairing" -> {
-                    if (m.optBoolean("success", false)) currentSession = m.optString("sessionId", currentSession)
+                    if (m.optBoolean("success", false)) {
+                        currentSession = m.optString("sessionId", currentSession)
+                        startCapture()
+                    } else {
+                        stopCaptureAndExit()
+                    }
                 }
                 "command" -> {
                     val payload = m.optJSONObject("payload") ?: return
@@ -248,6 +252,11 @@ class ScreenCaptureService : Service() {
                 )
             ).toString()
         )
+    }
+
+    private fun stopCaptureAndExit() {
+        socket?.close(1000, "Appairage refusé")
+        stopSelf()
     }
 
     override fun onDestroy() {
