@@ -60,8 +60,12 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
             <div>
               <div className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Session Technicien</div>
-              <div className="text-3xl font-black text-white font-mono tracking-[0.18em] mt-2">{pairingCode}</div>
-              <p className="text-xs text-slate-400 mt-2">Code valable pour l’appairage de cette session.</p>
+              <div className="mt-4 rounded-2xl border-2 border-emerald-400/40 bg-black/40 p-5 text-center">
+                <div className="text-[11px] font-black uppercase tracking-[0.25em] text-emerald-300">CODE D’APPAIRAGE</div>
+                <div className="text-5xl font-black text-white font-mono tracking-[0.22em] mt-3 select-all">{pairingCode || "------"}</div>
+                <div className="text-xs text-slate-400 mt-3">À saisir sur la tablette du technicien · valable 10 minutes</div>
+                <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(pairingCode);setCopied(true);setTimeout(()=>setCopied(false),1500)}catch{}}} className="mt-3 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold">{copied ? "✓ Code copié" : "Copier le code"}</button>
+              </div>
             </div>
             <button onClick={launchTechnician} className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase tracking-wider">
               Ouvrir l’agent tablette
