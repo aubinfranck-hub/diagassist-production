@@ -121,6 +121,8 @@ export function registerScreening(
 
     s.status = "completed";
     sendAll(s.id, { type: "session_ended", sessionId: s.id, timestamp: Date.now() });
+    for (const ws of clients.get(s.id) || []) { try { ws.close(1000, "Session terminée"); } catch {} }
+    clients.delete(s.id);
     res.json({ success: true, frameCount: s.frameCount });
   });
 
@@ -327,12 +329,15 @@ Ne fabrique aucune donnée absente de l'image.`,
 
         if (m.type === "frame" && role === "technician") {
           const s = getSession(sid);
+          if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
           const imageData = String(m.payload?.imageData || "");
           if (s && imageData.length <= MAX_FRAME_BYTES) {
             s.frameCount++;
             sendAll(sid, m);
           }
         } else if (m.type === "command" && role === "coach") {
+          const s = getSession(sid);
+          if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
           if (!m.payload || typeof m.payload !== "object" || !ALLOWED.has(m.payload.action)) {
             return ws.send(JSON.stringify({ type: "error", message: "Commande non autorisée." }));
           }
