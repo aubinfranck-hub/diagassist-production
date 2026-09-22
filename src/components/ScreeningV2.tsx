@@ -112,14 +112,14 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
       {connected&&<span className="text-xs">🟢 Connecté</span>}
     </header>
 
-    <div className="rounded-2xl overflow-hidden border border-white/10 bg-black min-h-[240px] flex items-center justify-center">
+    {role==="coach"&&<div className="rounded-2xl overflow-hidden border border-white/10 bg-black min-h-[240px] flex items-center justify-center">
       {frame?<img onClick={clickFrame} src={frame} alt="Écran du technicien" className={role==="coach"?"max-w-full cursor-crosshair":"max-w-full"} style={{maxHeight:"70vh"}}/>:<div className="p-10 text-sm opacity-60">En attente de l’écran de la tablette…</div>}
     </div>
 
     {role==="technician"&&<div className="rounded-2xl border border-red-500/20 bg-red-950/10 p-4 space-y-2"><div className="text-xs font-black uppercase tracking-widest text-red-300">🤖 Gemini — Coach par défaut</div><p className="text-sm text-slate-300">Gemini accompagne automatiquement le diagnostic. Un coach humain ne peut rejoindre la session qu’après confirmation du technicien.</p><button onClick={async()=>{try{const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/request-human-coach",{method:"POST",headers:{Authorization:"Bearer "+token}});const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Demande impossible.");setHumanCoachRequested(true);setStatus("Coach humain demandé.");}catch(e:any){setStatus(e.message||"Erreur.");}}} disabled={humanCoachRequested} className="px-3 py-2 rounded-lg bg-amber-600 disabled:opacity-50 text-white text-xs font-bold">{humanCoachRequested?"Coach humain demandé":"Demander un coach humain"}</button></div>}
 
     {role==="coach"&&!sessionEnded&&<div className="space-y-2">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5">
         <button onClick={()=>command("request_screen")} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">Actualiser</button>
         <button onClick={analyzeFrame} disabled={!frame||visionBusy} className="px-3 py-2 rounded-lg bg-red-600 disabled:opacity-40 text-white text-xs font-bold">
           {visionBusy?"Analyse…":"Analyser avec IA"}
@@ -128,15 +128,15 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
         <button onClick={()=>command("scroll",{direction:"up"})} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">↑ Scroll</button>
         <button onClick={()=>command("scroll",{direction:"down"})} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">↓ Scroll</button>
       </div>
-      <label className="flex items-center gap-2 text-xs text-amber-200">
+      <label className="flex items-center gap-2 text-[11px] text-amber-200">
         <input type="checkbox" checked={remoteControlApproved} onChange={e=>setRemoteControlApproved(e.target.checked)}/>
         J’ai la confirmation du technicien avant chaque commande à distance.
       </label>
-      <label className="flex items-center gap-2 text-xs text-slate-400">
+      <label className="flex items-center gap-2 text-[11px] text-slate-400">
         <input type="checkbox" checked={autoCoach} onChange={e=>setAutoCoach(e.target.checked)}/>
         Analyser automatiquement les nouvelles captures (consomme le quota IA).
       </label>
-      <div className="flex gap-2">
+      <div className="flex gap-1.5">
         <input value={inputText} onChange={e=>setInputText(e.target.value)} placeholder="Texte à saisir sur la tablette" className="flex-1 rounded-lg bg-slate-950 border border-white/10 px-3 py-2 text-white text-sm"/>
         <button onClick={()=>{command("input",{text:inputText});setInputText("");}} disabled={!inputText} className="px-3 py-2 rounded-lg bg-red-600 disabled:opacity-40 text-white text-xs font-bold">Saisir</button>
       </div>
