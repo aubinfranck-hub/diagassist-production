@@ -57,30 +57,32 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
 
   if (created && role === "technician") {
     return (
-      <div className="space-y-5">
-        <div className="premium-glass-card rounded-3xl border border-emerald-500/20 bg-emerald-950/10 p-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Session Technicien</div>
-              <div className="mt-4 rounded-2xl border border-white/10 bg-black/40 p-4">
-                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">CODE SESSION — À COMMUNIQUER AU COACH</div>
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="flex-1 rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-sm font-mono text-white break-all select-all">{sessionId}</div>
-                  <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(sessionId);setCopiedSessionId(true);setTimeout(()=>setCopiedSessionId(false),1500)}catch{}}} className="shrink-0 px-3 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold">{copiedSessionId ? "✓" : "Copier"}</button>
-                </div>
-                <div className="mt-5 rounded-2xl border-2 border-emerald-400/40 bg-black/40 p-5 text-center">
-                <div className="text-[11px] font-black uppercase tracking-[0.25em] text-emerald-300">CODE D’APPAIRAGE — TABLETTE UNIQUEMENT</div>
-                <div className="text-5xl font-black text-white font-mono tracking-[0.22em] mt-3 select-all">{pairingCode || "------"}</div>
-                <div className="text-xs text-slate-400 mt-3">À saisir sur la tablette du technicien · valable 10 minutes</div>
-                <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(pairingCode);setCopied(true);setTimeout(()=>setCopied(false),1500)}catch{}}} className="mt-3 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold">{copied ? "✓ Code copié" : "Copier le code"}</button>
-                </div>
+      <div className="space-y-3">
+        <div className="premium-glass-card rounded-2xl border border-white/10 bg-slate-950/70 p-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="text-xs font-black uppercase tracking-widest text-emerald-400">Session active</div>
+            <span className="text-[11px] text-slate-500">10 min</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="rounded-xl bg-black/30 border border-white/10 px-3 py-3">
+              <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Code session · coach</div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="font-mono text-lg font-black text-white">{sessionId}</span>
+                <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(sessionId);setCopiedSessionId(true);setTimeout(()=>setCopiedSessionId(false),1200)}catch{}}} className="px-2.5 py-1.5 rounded-lg bg-slate-800 text-[10px] font-bold text-white">{copiedSessionId ? "✓" : "Copier"}</button>
               </div>
             </div>
-            <button onClick={launchTechnician} className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase tracking-wider">
-              Ouvrir l’agent tablette
-            </button>
+            <div className="rounded-xl bg-black/30 border border-emerald-400/20 px-3 py-3">
+              <div className="text-[9px] font-bold uppercase tracking-widest text-emerald-400">Code tablette</div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="font-mono text-lg font-black tracking-widest text-white">{pairingCode}</span>
+                <button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(pairingCode);setCopied(true);setTimeout(()=>setCopied(false),1200)}catch{}}} className="px-2.5 py-1.5 rounded-lg bg-slate-800 text-[10px] font-bold text-white">{copied ? "✓" : "Copier"}</button>
+              </div>
+            </div>
           </div>
-          {status && <p className="text-xs text-emerald-300 mt-4">{status}</p>}
+          <button onClick={launchTechnician} className="mt-3 w-full px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase">
+            Ouvrir l’agent tablette
+          </button>
+          {status && <p className="text-[11px] text-slate-400 mt-2">{status}</p>}
         </div>
         <ScreeningV2 sessionId={sessionId} pairingCode={pairingCode} role="technician" />
       </div>
