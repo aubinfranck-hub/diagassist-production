@@ -9,6 +9,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
   const [sessionId, setSessionId] = useState("");
   const [pairingCode, setPairingCode] = useState("");
   const [created, setCreated] = useState(false);
+  const [coachJoined, setCoachJoined] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -102,6 +103,10 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
     );
   }
 
+  if (role === "coach" && coachJoined) {
+    return <ScreeningV2 sessionId={sessionId} pairingCode="" role="coach" />;
+  }
+
   if (role === "coach") {
     return (
       <div className="premium-glass-card rounded-3xl border border-white/[0.08] p-6 space-y-4">
@@ -119,7 +124,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
               const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/join-coach",{method:"POST",headers:{Authorization:"Bearer "+token()}});
               const data=await res.json();
               if(!res.ok||!data.success) throw new Error(data.message||"Connexion impossible.");
-              setCreated(true);
+              setCoachJoined(true);
               setStatus("Technicien humain connecté.");
             }catch(e:any){setStatus(e.message||"Erreur.");}
           }}
