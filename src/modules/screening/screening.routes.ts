@@ -329,6 +329,26 @@ Ne fabrique aucune donnée absente de l'image.`,
     }
   });
 
+  // Le coach humain rejoint avec son ID de session uniquement.
+  // Le code d'appairage est strictement réservé à la tablette du technicien.
+  app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, (req: any, res) => {
+    const s = getSession(req.params.id);
+    if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
+    if (req.session.phone === s.technicianPhone) {
+      return res.status(400).json({ success: false, message: "Le technicien ne peut pas rejoindre comme coach." });
+    }
+    if (!s.humanCoachRequested || s.coachType !== "human") {
+      return res.status(403).json({ success: false, message: "Le technicien doit d'abord demander un coach humain." });
+    }
+    if (s.coachPhone && s.coachPhone !== req.session.phone) {
+      return res.status(409).json({ success: false, message: "Un coach est déjà connecté à cette session." });
+    }
+    s.coachPhone = req.session.phone;
+    s.status = "active";
+    persistSession(s).catch(() => {});
+    res.json({ success: true, sessionId: s.id, role: "coach" });
+  });
+
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "", "http://localhost");
     if (url.pathname !== "/api/screening/stream") return;
@@ -367,67 +387,38 @@ Ne fabrique aucune donnée absente de l'image.`,
 
         if (m.type === "pairing") {
           const s = getSession(String(m.sessionId));
-          if (!s) {
-            return ws.send(JSON.stringify({ type: "error", message: "Session expirée." }));
-          }
+          if (!s) return ws.send(JSON.stringify({ type: "error", message: "Session expirée." }));
+          if (s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
 
-          if (s.status === "completed") {
-            return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
-          }
+          const isTechnician = ws._phone === s.technicianPhone;
+          const isCoach = s.humanCoachRequested && s.coachPhone === ws._phone;
 
-          if (Date.now() > s.pairingExpiresAt) {
-            return ws.send(JSON.stringify({
-              type: "error",
-              message: "Code d’appairage expiré. Créez une nouvelle session."
-            }));
-          }
-
-          const key = s.id + ":" + ws._phone;
-          if (m.pairingCode !== s.pairingCode) {
-            const n = (attempts.get(key) || 0) + 1;
-            attempts.set(key, n);
-            if (n >= 3) {
-              return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives. Créez une nouvelle session." }));
+          if (isTechnician) {
+            if (Date.now() > s.pairingExpiresAt) {
+              return ws.send(JSON.stringify({ type: "error", message: "Code d’appairage expiré. Créez une nouvelle session." }));
             }
-            return ws.send(JSON.stringify({ type: "error", message: "Code incorrect." }));
-          }
-
-          role = ws._phone === s.technicianPhone ? "technician" : "coach";
-
-          if (role === "coach" && !s.humanCoachRequested) {
-            return ws.send(JSON.stringify({ type: "error", message: "Gemini est le coach par défaut. Le technicien doit confirmer l’appel d’un coach humain." }));
-          }
-
-          if (role === "coach") {
-            if (s.coachPhone && s.coachPhone !== ws._phone) {
-              return ws.send(JSON.stringify({ type: "error", message: "Coach non autorisé." }));
+            const key = s.id + ":" + ws._phone;
+            if (m.pairingCode !== s.pairingCode) {
+              const n = (attempts.get(key) || 0) + 1;
+              attempts.set(key, n);
+              if (n >= 3) return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives. Créez une nouvelle session." }));
+              return ws.send(JSON.stringify({ type: "error", message: "Code incorrect." }));
             }
-            s.coachPhone = ws._phone;
-          } else {
             const deviceId = typeof m.deviceId === "string" ? m.deviceId.trim() : "";
-            if (!deviceId || deviceId.length > 200) {
-              return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
-            }
-            if (s.technicianDeviceId && s.technicianDeviceId !== deviceId) {
-              return ws.send(JSON.stringify({ type: "error", message: "Cette session est déjà liée à une autre tablette." }));
-            }
+            if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
+            if (s.technicianDeviceId && s.technicianDeviceId !== deviceId) return ws.send(JSON.stringify({ type: "error", message: "Cette session est déjà liée à une autre tablette." }));
             s.technicianDeviceId = deviceId;
+          } else if (!isCoach) {
+            return ws.send(JSON.stringify({ type: "error", message: "Coach non autorisé. Utilisez l’accès coach avec l’ID de session." }));
           }
 
+          role = isTechnician ? "technician" : "coach";
           sid = s.id;
           paired = true;
           s.status = "active";
-
           if (!clients.has(sid)) clients.set(sid, new Set());
           clients.get(sid)!.add(ws);
-
-          return ws.send(JSON.stringify({
-            type: "pairing",
-            success: true,
-            role,
-            sessionId: sid,
-            timestamp: Date.now()
-          }));
+          return ws.send(JSON.stringify({ type: "pairing", success: true, role, sessionId: sid, timestamp: Date.now() }));
         }
 
         if (!paired || !sid) {
