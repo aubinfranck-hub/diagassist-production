@@ -480,7 +480,12 @@ Ne fabrique aucune donnée absente de l'image.`,
           if (s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
 
           const requestedRole = m.role === "coach" ? "coach" : (m.role === "controller" ? "controller" : "technician");
-          const isTechnician = requestedRole === "technician" && ws._phone === s.technicianPhone;
+          // Le scanner peut être un APK Android ou le module Web/Chrome.
+          // Une connexion technicien sans bearer token est autorisée uniquement après
+          // preuve de possession du code d'appairage court et liaison à un deviceId.
+          const isTechnicianSocket = requestedRole === "technician" && !ws._phone;
+          const isAuthenticatedTechnician = requestedRole === "technician" && ws._phone === s.technicianPhone;
+          const isTechnician = isTechnicianSocket || isAuthenticatedTechnician;
           const isController = requestedRole === "controller" && ws._phone === s.technicianPhone;
           const isCoach = requestedRole === "coach" && s.humanCoachRequested && s.coachPhone === ws._phone;
 
@@ -488,15 +493,15 @@ Ne fabrique aucune donnée absente de l'image.`,
             if (Date.now() > s.pairingExpiresAt) {
               return ws.send(JSON.stringify({ type: "error", message: "Code d’appairage expiré. Créez une nouvelle session." }));
             }
-            const key = s.id + ":" + ws._phone;
+            const deviceId = typeof m.deviceId === "string" ? m.deviceId.trim() : "";
+            if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
+            const key = s.id + ":" + (ws._phone || deviceId);
             if (m.pairingCode !== s.pairingCode) {
               const n = (attempts.get(key) || 0) + 1;
               attempts.set(key, n);
               if (n >= 3) return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives. Créez une nouvelle session." }));
               return ws.send(JSON.stringify({ type: "error", message: "Code incorrect." }));
             }
-            const deviceId = typeof m.deviceId === "string" ? m.deviceId.trim() : "";
-            if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
             if (s.technicianDeviceId && s.technicianDeviceId !== deviceId) return ws.send(JSON.stringify({ type: "error", message: "Cette session est déjà liée à une autre tablette." }));
             s.technicianDeviceId = deviceId;
           } else if (!isController && !isCoach) {
