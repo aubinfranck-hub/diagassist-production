@@ -19,7 +19,8 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   const [inputText,setInputText]=useState("");
   const [vision,setVision]=useState<VisionAnalysis|null>(null);
   const [visionBusy,setVisionBusy]=useState(false);
-  const [autoCoach,setAutoCoach]=useState(true);
+  const [autoCoach,setAutoCoach]=useState(false);
+  const [remoteControlApproved,setRemoteControlApproved]=useState(false);
   const [humanCoachRequested,setHumanCoachRequested]=useState(false);
   const lastAnalyzedFrameRef=useRef<string|null>(null);
   const token=localStorage.getItem("auth_session_token") || "";
@@ -48,6 +49,10 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   },[sessionId,pairingCode,token]);
 
   const command=(action:string,payload:any={})=>{
+    if(action!=="request_screen"&&!remoteControlApproved){
+      setStatus("Activez la validation humaine avant d’envoyer une commande à la tablette.");
+      return;
+    }
     if(wsRef.current?.readyState===WebSocket.OPEN)
       wsRef.current.send(JSON.stringify({type:"command",sessionId,payload:{action,...payload}}));
   };
@@ -121,6 +126,14 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
         <button onClick={()=>command("scroll",{direction:"up"})} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">↑ Scroll</button>
         <button onClick={()=>command("scroll",{direction:"down"})} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">↓ Scroll</button>
       </div>
+      <label className="flex items-center gap-2 text-xs text-amber-200">
+        <input type="checkbox" checked={remoteControlApproved} onChange={e=>setRemoteControlApproved(e.target.checked)}/>
+        J’ai la confirmation du technicien avant chaque commande à distance.
+      </label>
+      <label className="flex items-center gap-2 text-xs text-slate-400">
+        <input type="checkbox" checked={autoCoach} onChange={e=>setAutoCoach(e.target.checked)}/>
+        Analyser automatiquement les nouvelles captures (consomme le quota IA).
+      </label>
       <div className="flex gap-2">
         <input value={inputText} onChange={e=>setInputText(e.target.value)} placeholder="Texte à saisir sur la tablette" className="flex-1 rounded-lg bg-slate-950 border border-white/10 px-3 py-2 text-white text-sm"/>
         <button onClick={()=>{command("input",{text:inputText});setInputText("");}} disabled={!inputText} className="px-3 py-2 rounded-lg bg-red-600 disabled:opacity-40 text-white text-xs font-bold">Saisir</button>
@@ -145,3 +158,4 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
     <button onClick={endSession} className="px-3 py-2 rounded-lg border border-red-500/30 text-red-300 text-xs font-bold">Terminer la session</button>
   </section>;
 }
+
