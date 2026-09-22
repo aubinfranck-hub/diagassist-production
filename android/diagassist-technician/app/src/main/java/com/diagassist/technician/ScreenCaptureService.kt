@@ -1,6 +1,7 @@
 package com.diagassist.technician
 
 import android.app.*
+import android.content.pm.ServiceInfo
 import android.content.*
 import android.graphics.*
 import android.hardware.display.DisplayManager
@@ -35,10 +36,14 @@ class ScreenCaptureService : Service() {
     private var deviceId = ""
     private var reconnecting = false
     private var shouldReconnect = true
+    private var voice: VoiceCallManager? = null
 
     override fun onCreate() {
         super.onCreate()
-        ScreenCaptureServiceBridge.register { action, success -> sendCommandResult(action, success) }
+        ScreenCaptureServiceBridge.register { action, success -> sendCommandResult(action, success) 
+    companion object { const val ACTION_VOICE_START = "com.diagassist.technician.VOICE_START" }
+}
+        voice = VoiceCallManager(this) { type, payload -> sendVoice(type, payload) }
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
             NotificationChannel("diagassist", "DiagAssist V2", NotificationManager.IMPORTANCE_LOW)
@@ -46,14 +51,13 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(
-            1001,
-            NotificationCompat.Builder(this, "diagassist")
-                .setContentTitle("DiagAssist V2")
-                .setContentText("Capture écran active")
-                .setSmallIcon(android.R.drawable.ic_menu_view)
-                .build()
-        )
+        val notification = buildNotification("Capture écran active")
+        if (Build.VERSION.SDK_INT >= 29) startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) else startForeground(1001, notification)
+        if (intent?.action == ACTION_VOICE_START) {
+            if (Build.VERSION.SDK_INT >= 29) startForeground(1001, buildNotification("Appel vocal DiagAssist en cours"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            voice?.startOutgoing()
+            return START_STICKY
+        }
 
         val code = intent?.getIntExtra("resultCode", 0) ?: return START_NOT_STICKY
         val data = intent.getParcelableExtra<Intent>("resultData") ?: return START_NOT_STICKY
@@ -117,6 +121,23 @@ class ScreenCaptureService : Service() {
             reconnecting = false
             connect()
         }, 3000)
+    }
+
+    private fun buildNotification(text: String): Notification {
+        val callIntent = Intent(this, ScreenCaptureService::class.java).setAction(ACTION_VOICE_START)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+        val callPending = PendingIntent.getService(this, 7001, callIntent, flags)
+        return NotificationCompat.Builder(this, "diagassist")
+            .setContentTitle("DiagAssist V2")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_view)
+            .setOngoing(true)
+            .addAction(android.R.drawable.ic_btn_speak_now, "Appel vocal", callPending)
+            .build()
+    }
+
+    private fun sendVoice(type: String, payload: JSONObject) {
+        socket?.send(JSONObject(mapOf("type" to type, "sessionId" to currentSession, "payload" to payload)).toString())
     }
 
     private fun startCapture() {
@@ -234,6 +255,12 @@ class ScreenCaptureService : Service() {
                     }
                 }
                 "session_ended" -> stopCaptureAndExit()
+                "voice_start" -> {
+                    if (Build.VERSION.SDK_INT >= 29) startForeground(1001, buildNotification("Appel vocal DiagAssist en cours"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                    voice?.handleStart()
+                }
+                "voice_signal" -> voice?.handleSignal(m.optJSONObject("payload") ?: return)
+                "voice_end" -> voice?.stop()
                 "command" -> {
                     val payload = m.optJSONObject("payload") ?: return
                     val action = payload.optString("action")
@@ -277,6 +304,7 @@ class ScreenCaptureService : Service() {
         shouldReconnect = false
         ScreenCaptureServiceBridge.register(null)
         socket?.close(1000, "stop")
+        voice?.dispose()
         display?.release()
         reader?.close()
         projection?.stop()
