@@ -34,6 +34,7 @@ class ScreenCaptureService : Service() {
     private var pairingCode = ""
     private var deviceId = ""
     private var reconnecting = false
+    private var shouldReconnect = true
 
     override fun onCreate() {
         super.onCreate()
@@ -61,6 +62,12 @@ class ScreenCaptureService : Service() {
         pairingCode = intent.getStringExtra("pairingCode") ?: ""
         authToken = intent.getStringExtra("token") ?: ""
         deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown-device"
+
+        // The agent must only send the technician's screen over an encrypted public endpoint.
+        if (!wsBase.startsWith("https://") && !wsBase.startsWith("http://10.") && !wsBase.startsWith("http://192.168.")) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
         projection = manager.getMediaProjection(code, data)
@@ -92,11 +99,11 @@ class ScreenCaptureService : Service() {
                 }
 
                 override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                    scheduleReconnect()
+                    if (shouldReconnect) scheduleReconnect()
                 }
 
                 override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                    scheduleReconnect()
+                    if (shouldReconnect && code != 1000) scheduleReconnect()
                 }
             }
         )
@@ -225,6 +232,7 @@ class ScreenCaptureService : Service() {
                         stopCaptureAndExit()
                     }
                 }
+                "session_ended" -> stopCaptureAndExit()
                 "command" -> {
                     val payload = m.optJSONObject("payload") ?: return
                     val action = payload.optString("action")
@@ -259,11 +267,13 @@ class ScreenCaptureService : Service() {
     }
 
     private fun stopCaptureAndExit() {
+        shouldReconnect = false
         socket?.close(1000, "Appairage refusé")
         stopSelf()
     }
 
     override fun onDestroy() {
+        shouldReconnect = false
         ScreenCaptureServiceBridge.register(null)
         socket?.close(1000, "stop")
         display?.release()
@@ -275,3 +285,4 @@ class ScreenCaptureService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 }
+
