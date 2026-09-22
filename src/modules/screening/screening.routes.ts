@@ -98,7 +98,7 @@ export function registerScreening(
       const result = await dbQuery(
         `SELECT id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type,
                 human_coach_requested, status, created_at, expires_at, frame_count
-         FROM screening_sessions WHERE id = $1 LIMIT 1`,
+         FROM screening_sessions WHERE lower(trim(id)) = lower(trim($1)) LIMIT 1`,
         [id]
       );
       const row = result.rows?.[0];
@@ -122,7 +122,7 @@ export function registerScreening(
       return s;
     } catch (err: any) {
       console.error("[SCREENING][DB] récupération session échouée:", err.message);
-      return null;
+      throw err;
     }
   };
 
