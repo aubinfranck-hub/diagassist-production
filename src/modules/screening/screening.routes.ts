@@ -222,7 +222,7 @@ export function registerScreening(
   });
 
   app.post("/api/screening/sessions/:id/request-human-coach", deps.requireAuth, async (req: any, res) => {
-    const s = getSession(req.params.id);
+    const s = await getSessionAsync(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
     if (req.session.phone !== s.technicianPhone) {
       return res.status(403).json({ success: false, message: "Seul le technicien peut demander un coach humain." });
@@ -235,7 +235,7 @@ s.humanCoachRequested = true;
   });
 
   app.post("/api/screening/sessions/:id/end", deps.requireAuth, async (req: any, res) => {
-    const s = getSession(req.params.id);
+    const s = await getSessionAsync(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
 
     if (req.session.phone !== s.technicianPhone && req.session.phone !== s.coachPhone) {
@@ -368,7 +368,7 @@ Ne fabrique aucune donnée absente de l'image.`,
   // Le coach humain rejoint avec son ID de session uniquement.
   // Le code d'appairage est strictement réservé à la tablette du technicien.
   app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, async (req: any, res) => {
-    const s = getSession(req.params.id);
+    const s = await getSessionAsync(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
     if (req.session.phone === s.technicianPhone) {
       return res.status(400).json({ success: false, message: "Le technicien ne peut pas rejoindre comme coach." });
