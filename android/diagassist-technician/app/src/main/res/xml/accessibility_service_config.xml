@@ -5,4 +5,4 @@
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
-    android:description="Autoriser DiagAssist à piloter la tablette pendant une session de coaching." />
+    android:description="@string/accessibility_service_description" />
