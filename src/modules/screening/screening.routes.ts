@@ -396,7 +396,13 @@ Ne fabrique aucune donnée absente de l'image.`,
   // Le coach humain rejoint avec son ID de session uniquement.
   // Le code d'appairage est strictement réservé à la tablette du technicien.
   app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, async (req: any, res) => {
-    const s = await getSessionAsync(req.params.id);
+    let s: any;
+    try {
+      s = await getSessionAsync(req.params.id);
+    } catch (err: any) {
+      console.error("[SCREENING][JOIN][DB] récupération impossible:", err?.message || err);
+      return res.status(503).json({ success: false, message: "Le service de sessions est momentanément indisponible. Réessayez dans quelques secondes." });
+    }
     if (!s) {
       console.warn("[SCREENING][JOIN] session introuvable:", normalizeSessionId(req.params.id));
       return res.status(404).json({ success: false, message: "Session introuvable. Vérifiez l’ID scr_... et utilisez une session encore valide." });
