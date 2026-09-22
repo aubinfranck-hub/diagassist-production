@@ -22,6 +22,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   const [autoCoach,setAutoCoach]=useState(false);
   const [remoteControlApproved,setRemoteControlApproved]=useState(false);
   const [humanCoachRequested,setHumanCoachRequested]=useState(false);
+  const [sessionEnded,setSessionEnded]=useState(false);
   const lastAnalyzedFrameRef=useRef<string|null>(null);
   const token=localStorage.getItem("auth_session_token") || "";
 
@@ -41,7 +42,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
         }
         if(m.type==="error")setStatus(m.message||"Erreur");
         if(m.type==="human_coach_requested"){setHumanCoachRequested(true);setStatus("Coach humain demandé.");}
-        if(m.type==="session_ended"){setConnected(false);setStatus("Session terminée.");}
+        if(m.type==="session_ended"){setConnected(false);setSessionEnded(true);setStatus("Session terminée.");}
       }catch{}
     };
     ws.onclose=()=>setConnected(false);
@@ -49,6 +50,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   },[sessionId,pairingCode,token]);
 
   const command=(action:string,payload:any={})=>{
+    if(sessionEnded)return;
     if(action!=="request_screen"&&!remoteControlApproved){
       setStatus("Activez la validation humaine avant d’envoyer une commande à la tablette.");
       return;
@@ -64,7 +66,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   };
 
   const analyzeFrame=async()=>{
-    if(!frame||visionBusy)return;
+    if(sessionEnded||!frame||visionBusy)return;
     setVisionBusy(true);
     setStatus("Analyse Vision en cours…");
     try{
@@ -116,7 +118,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
 
     {role==="technician"&&<div className="rounded-2xl border border-red-500/20 bg-red-950/10 p-4 space-y-2"><div className="text-xs font-black uppercase tracking-widest text-red-300">🤖 Gemini — Coach par défaut</div><p className="text-sm text-slate-300">Gemini accompagne automatiquement le diagnostic. Un coach humain ne peut rejoindre la session qu’après confirmation du technicien.</p><button onClick={async()=>{try{const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/request-human-coach",{method:"POST",headers:{Authorization:"Bearer "+token}});const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Demande impossible.");setHumanCoachRequested(true);setStatus("Coach humain demandé.");}catch(e:any){setStatus(e.message||"Erreur.");}}} disabled={humanCoachRequested} className="px-3 py-2 rounded-lg bg-amber-600 disabled:opacity-50 text-white text-xs font-bold">{humanCoachRequested?"Coach humain demandé":"Demander un coach humain"}</button></div>}
 
-    {role==="coach"&&<div className="space-y-2">
+    {role==="coach"&&!sessionEnded&&<div className="space-y-2">
       <div className="flex flex-wrap gap-2">
         <button onClick={()=>command("request_screen")} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">Actualiser</button>
         <button onClick={analyzeFrame} disabled={!frame||visionBusy} className="px-3 py-2 rounded-lg bg-red-600 disabled:opacity-40 text-white text-xs font-bold">
@@ -155,7 +157,8 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
       <div className="text-[10px] text-slate-500">L’analyse IA est une aide au diagnostic et doit être confirmée par les mesures et procédures appropriées.</div>
     </div>}
 
-    <button onClick={endSession} className="px-3 py-2 rounded-lg border border-red-500/30 text-red-300 text-xs font-bold">Terminer la session</button>
+    {!sessionEnded&&<button onClick={endSession} className="px-3 py-2 rounded-lg border border-red-500/30 text-red-300 text-xs font-bold">Terminer la session</button>}
+    {sessionEnded&&<div className="rounded-xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-sm text-slate-400">Cette session est terminée. Créez une nouvelle session pour reprendre le coaching.</div>}
   </section>;
 }
 
