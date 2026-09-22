@@ -117,29 +117,35 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
   return (
     <div className="space-y-5">
       <div className="premium-glass-card rounded-3xl border border-white/[0.08] p-6">
-        <div className="flex flex-col sm:flex-row gap-2 mb-6">
-          <button onClick={() => setRole("technician")} className={`flex-1 py-3 rounded-xl text-xs font-black uppercase ${role === "technician" ? "bg-red-600 text-white" : "bg-slate-900 text-slate-400"}`}>Je suis technicien</button>
-          <button onClick={() => setRole("coach")} className={`flex-1 py-3 rounded-xl text-xs font-black uppercase ${role === "coach" ? "bg-red-600 text-white" : "bg-slate-900 text-slate-400"}`}>Je suis coach</button>
-        </div>
-
         {role === "technician" ? (
-          <div>
-            <h2 className="text-xl font-black text-white">Démarrer un coaching</h2>
-            <p className="text-sm text-slate-400 mt-2">Créez une session puis ouvrez l’agent DiagAssist sur la tablette du technicien.</p>
-            <button disabled={busy} onClick={createSession} className="mt-5 px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider">
-              {busy ? "Création…" : "Créer la session"}
-            </button>
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-emerald-400/20 bg-emerald-950/10 p-5">
+              <div className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-400">🤖 COACH PRINCIPAL</div>
+              <h2 className="text-xl font-black text-white mt-2">Gemini vous guide pendant le diagnostic</h2>
+              <p className="text-sm text-slate-300 mt-2">Gemini analyse les captures de votre scanner, explique ce qui est visible et vous indique la prochaine vérification. L’aide humaine reste une option secondaire.</p>
+              <button disabled={busy} onClick={createSession} className="mt-5 px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-black uppercase tracking-wider">
+                {busy ? "Création…" : "Démarrer avec Gemini"}
+              </button>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+              <div className="text-xs font-black uppercase tracking-widest text-slate-400">👨🏾‍🔧 BESOIN D’UN HUMAIN ?</div>
+              <p className="text-sm text-slate-400 mt-2">Un technicien peut rejoindre votre session, voir l’écran et vous assister à distance.</p>
+              <button type="button" onClick={() => setRole("coach")} className="mt-3 px-4 py-2.5 rounded-xl bg-slate-800 text-white text-xs font-black uppercase">
+                Rejoindre une session technicien
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-4">
-            <label className="block text-xs font-bold text-slate-400">CODE SESSION
-              <input value={sessionId} onChange={e => setSessionId(e.target.value.trim())} className="mt-2 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="Ex. YNA37Q" maxLength={6} autoCapitalize="characters" autoCorrect="off" />
-            </label>
-            <div className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4 text-xs text-amber-200">
-              Le coach ne saisit aucun code d’appairage. Utilisez uniquement le <strong className="text-white">code session à 6 caractères</strong> communiqué par le technicien. Le technicien doit d’abord demander l’aide d’un coach humain.
+            <div className="rounded-2xl border border-red-500/20 bg-red-950/10 p-4">
+              <div className="text-[10px] font-black uppercase tracking-widest text-red-300">👨🏾‍🔧 ASSISTANCE HUMAINE</div>
+              <h2 className="text-xl font-black text-white mt-2">Rejoindre une session</h2>
+              <p className="text-sm text-slate-400 mt-2">Entrez le code session à 6 caractères communiqué par le technicien. Le code à 6 chiffres reste réservé à l’appairage de sa tablette.</p>
             </div>
-            <button disabled={!/^[A-Za-z0-9]{6}$/.test(sessionId.trim())} onClick={() => { setStatus(""); setCreated(true); }} className="w-full px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-black uppercase tracking-wider">
-              Continuer avec le code session
+            <input value={sessionId} onChange={e => setSessionId(e.target.value.trim().toUpperCase())} className="w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono tracking-widest" placeholder="Ex. YNA37Q" maxLength={6} autoCapitalize="characters" autoCorrect="off" />
+            <button type="button" onClick={() => setRole("technician")} className="text-xs text-slate-500 underline">Retour au coach Gemini</button>
+            <button disabled={!/^[A-Z0-9]{6}$/.test(sessionId.trim())} onClick={() => { setStatus(""); setCreated(true); }} className="w-full px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-black uppercase tracking-wider">
+              Rejoindre la session
             </button>
           </div>
         )}
