@@ -8,6 +8,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
   const [sessionId, setSessionId] = useState("");
   const [pairingCode, setPairingCode] = useState("");
   const [created, setCreated] = useState(false);
+  const [coachJoined, setCoachJoined] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -79,7 +80,28 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
   }
 
   if (created && role === "coach") {
-    return <ScreeningV2 sessionId={sessionId} pairingCode={pairingCode} role="coach" />;
+    return (
+      <div className="space-y-5">
+        {!coachJoined ? (
+          <div className="premium-glass-card rounded-3xl border border-white/[0.08] p-6">
+            <div className="text-[10px] font-black uppercase tracking-widest text-red-400">Accès Coach</div>
+            <h2 className="text-xl font-black text-white mt-2">ID DE SESSION</h2>
+            <p className="text-sm text-slate-400 mt-2">Le coach saisit uniquement l’ID de session. Le code d’appairage reste réservé à la tablette du technicien.</p>
+            <input value={sessionId} onChange={e=>setSessionId(e.target.value)} className="mt-4 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="scr_..." />
+            <button disabled={!sessionId} onClick={async()=>{
+              try{
+                const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/join-coach",{method:"POST",headers:{Authorization:"Bearer "+token()}});
+                const data=await res.json();
+                if(!res.ok||!data.success) throw new Error(data.message||"Connexion coach impossible.");
+                setCoachJoined(true);
+                setStatus("Coach connecté à la session.");
+              }catch(e:any){setStatus(e.message||"Erreur.");}
+            }} className="mt-4 px-5 py-3 rounded-xl bg-red-600 disabled:opacity-40 text-white text-xs font-black uppercase">Rejoindre la session</button>
+            {status&&<p className="text-xs text-slate-400 mt-4">{status}</p>}
+          </div>
+        ) : <ScreeningV2 sessionId={sessionId} pairingCode="" role="coach" />}
+      </div>
+    );
   }
 
   return (
