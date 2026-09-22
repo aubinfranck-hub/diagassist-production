@@ -96,9 +96,9 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
           <div className="premium-glass-card rounded-3xl border border-white/[0.08] p-6">
             <div className="text-[10px] font-black uppercase tracking-widest text-red-400">Accès aide technicien</div>
             <h2 className="text-xl font-black text-white mt-2">CODE SESSION</h2>
-            <p className="text-sm text-slate-400 mt-2">Le coach saisit l’identifiant complet de la session <span className="font-mono text-white">ex. scr_abc123...</span>. Le code à 6 chiffres reste réservé uniquement à l’appairage de la tablette.</p>
-            <input value={sessionId} onChange={e=>setSessionId(e.target.value.trim())} className="mt-4 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="Ex. scr_..." autoCapitalize="none" autoCorrect="off" />
-            <button disabled={!sessionId.trim().toLowerCase().startsWith("scr_")} onClick={async()=>{
+            <p className="text-sm text-slate-400 mt-2">Le technicien vous communique le <strong className="text-white">code session à 6 caractères</strong>. Le code à 6 chiffres reste réservé uniquement à l’appairage de sa tablette.</p>
+            <input value={sessionId} onChange={e=>setSessionId(e.target.value.trim())} className="mt-4 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="Ex. YNA37Q" maxLength={6} autoCapitalize="characters" autoCorrect="off" />
+            <button disabled={!/^[A-Za-z0-9]{6}$/.test(sessionId.trim())} onClick={async()=>{
               try{
                 const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/join-coach",{method:"POST",headers:{Authorization:"Bearer "+token()}});
                 const data=await res.json();
@@ -133,13 +133,13 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
         ) : (
           <div className="space-y-4">
             <label className="block text-xs font-bold text-slate-400">CODE SESSION
-              <input value={sessionId} onChange={e => setSessionId(e.target.value.trim())} className="mt-2 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="Ex. scr_..." />
+              <input value={sessionId} onChange={e => setSessionId(e.target.value.trim())} className="mt-2 w-full rounded-xl bg-slate-950 border border-white/10 px-4 py-3 text-white font-mono" placeholder="Ex. YNA37Q" maxLength={6} autoCapitalize="characters" autoCorrect="off" />
             </label>
             <div className="rounded-xl border border-amber-500/20 bg-amber-950/10 p-4 text-xs text-amber-200">
-              Le coach ne saisit aucun code d’appairage. Utilisez l’ID complet <span className="font-mono">scr_...</span>. Le technicien doit d’abord demander le coach humain depuis sa tablette/session.
+              Le coach ne saisit aucun code d’appairage. Utilisez uniquement le <strong className="text-white">code session à 6 caractères</strong> communiqué par le technicien. Le technicien doit d’abord demander l’aide d’un coach humain.
             </div>
-            <button disabled={!sessionId.trim().toLowerCase().startsWith("scr_")} onClick={() => { setStatus(""); setCreated(true); }} className="w-full px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-black uppercase tracking-wider">
-              Continuer avec l’ID de session
+            <button disabled={!/^[A-Za-z0-9]{6}$/.test(sessionId.trim())} onClick={() => { setStatus(""); setCreated(true); }} className="w-full px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-black uppercase tracking-wider">
+              Continuer avec le code session
             </button>
           </div>
         )}
