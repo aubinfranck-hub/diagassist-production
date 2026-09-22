@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { AnimatePresence } from "motion/react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText, 
-  Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench,
+  Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench, Chrome,
   Sun, Moon, Monitor, Users, Package
 } from "lucide-react";
 
@@ -24,6 +24,7 @@ import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
 import AutoQuestioningLoop from "./components/AutoQuestioningLoop";
 import ScreeningV2Panel from "./components/ScreeningV2Panel";
+import ScannerWebModule from "./components/ScannerWebModule";
 
 import { Diagnosis, ApiUsage, ChatMessage, SubscriptionPlan } from "./types";
 
@@ -215,7 +216,7 @@ export default function App() {
   }, []);
 
   // Navigation tabs
-  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening">("diagnose");
+  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening" | "scanner-web">("diagnose");
 
   const handleChooseProfile = (type: "mechanic" | "owner") => {
     setAccountType(type);
@@ -845,6 +846,26 @@ export default function App() {
                 {accountType === "mechanic" && (
                   <button
                     onClick={() => {
+                      setActiveTab("scanner-web");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
+                      activeTab === "scanner-web"
+                        ? "bg-blue-600 text-white shadow-lg shadow-blue-600/25 border border-white/10"
+                        : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Chrome className="w-4.5 h-4.5" />
+                      <span>DiagAssist Scanner</span>
+                    </div>
+                    {activeTab === "scanner-web" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  </button>
+                )}
+
+                {accountType === "mechanic" && (
+                  <button
+                    onClick={() => {
                       setActiveTab("screening");
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     }}
@@ -1188,6 +1209,23 @@ export default function App() {
             {accountType === "mechanic" && (
               <button
                 onClick={() => {
+                  setActiveTab("scanner-web");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
+                  activeTab === "scanner-web"
+                    ? "bg-slate-950 text-blue-400 border border-blue-500/20"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Chrome className="w-5 h-5" />
+                <span className="text-[9px] font-black uppercase tracking-wider">Scanner</span>
+              </button>
+            )}
+
+            {accountType === "mechanic" && (
+              <button
+                onClick={() => {
                   setActiveTab("screening");
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
@@ -1457,6 +1495,13 @@ export default function App() {
 
             </div>
 
+          </div>
+        )}
+
+        {/* TAB: DiagAssist Scanner Web / Chrome experiment */}
+        {activeTab === "scanner-web" && accountType === "mechanic" && (
+          <div className="max-w-6xl mx-auto animate-fade-in">
+            <ScannerWebModule />
           </div>
         )}
 
