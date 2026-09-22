@@ -69,7 +69,7 @@ class MainActivity : ComponentActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "DiagAssist Technician"
+            text = "DiagAssist Scanner"
             textSize = 26f
             setTextColor(Color.rgb(20, 30, 45))
             gravity = Gravity.CENTER
@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, "Tablette appairée. DiagAssist va recevoir son écran.", Toast.LENGTH_LONG).show()
 
         if (!isAccessibilityEnabled()) {
-            Toast.makeText(this, "Activez « DiagAssist Remote Control » dans Accessibilité pour permettre les clics, retours et défilements.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Activez « DiagAssist Scanner — Contrôle » dans Accessibilité pour permettre les clics, retours et défilements.", Toast.LENGTH_LONG).show()
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
