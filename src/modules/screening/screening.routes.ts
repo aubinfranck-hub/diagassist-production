@@ -12,6 +12,8 @@ const SESSION_TTL = 60 * 60 * 1000;
 const MAX_FRAME_BYTES = 2_500_000;
 const MAX_VISION_IMAGE_BYTES = 2_500_000;
 const ALLOWED = new Set(["click", "scroll", "input", "back", "request_screen"]);
+const MAX_FRAME_RATE_PER_SECOND = 4;
+const MAX_COMMAND_TEXT_LENGTH = 1_000;
 
 function code() {
   return crypto.randomInt(100000, 1000000).toString();
@@ -24,6 +26,18 @@ function getSession(id: string) {
     return null;
   }
   return s;
+}
+
+function isSafeOrigin(origin: string | undefined, host: string | undefined): boolean {
+  // Android WebSocket clients do not send Origin. Browsers do, and must only use this service's
+  // public origin (or APP_URL when a custom domain is configured).
+  if (!origin) return true;
+  try {
+    const expected = process.env.APP_URL ? new URL(process.env.APP_URL).origin : "";
+    return origin === expected || new URL(origin).host === host;
+  } catch {
+    return false;
+  }
 }
 
 function sendAll(id: string, msg: any, except?: any) {
@@ -50,7 +64,7 @@ export function registerScreening(
     sessions: Map<string, any>;
   }
 ) {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES + 100_000 });
 
   app.post("/api/screening/sessions", deps.requireAuth, (req: any, res) => {
     if (deps.getEffectivePlan(req.session.phone) !== "premium") {
@@ -245,6 +259,12 @@ Ne fabrique aucune donnée absente de l'image.`,
     const url = new URL(request.url || "", "http://localhost");
     if (url.pathname !== "/api/screening/stream") return;
 
+    if (!isSafeOrigin(request.headers.origin, request.headers.host)) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
     const token = url.searchParams.get("token") || "";
     const auth = deps.sessions.get(token);
 
@@ -264,6 +284,8 @@ Ne fabrique aucune donnée absente de l'image.`,
     let paired = false;
     let role: string | null = null;
     let sid: string | null = null;
+    let lastFrameWindowAt = Date.now();
+    let framesInWindow = 0;
 
     ws.on("message", (raw: Buffer) => {
       try {
@@ -273,14 +295,6 @@ Ne fabrique aucune donnée absente de l'image.`,
           const s = getSession(String(m.sessionId));
           if (!s) {
             return ws.send(JSON.stringify({ type: "error", message: "Session expirée." }));
-          }
-
-          const key = s.id + ":" + ws._phone;
-          const n = (attempts.get(key) || 0) + 1;
-          attempts.set(key, n);
-
-          if (n > 3) {
-            return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives." }));
           }
 
           if (s.status === "completed") {
@@ -294,7 +308,13 @@ Ne fabrique aucune donnée absente de l'image.`,
             }));
           }
 
+          const key = s.id + ":" + ws._phone;
           if (m.pairingCode !== s.pairingCode) {
+            const n = (attempts.get(key) || 0) + 1;
+            attempts.set(key, n);
+            if (n >= 3) {
+              return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives. Créez une nouvelle session." }));
+            }
             return ws.send(JSON.stringify({ type: "error", message: "Code incorrect." }));
           }
 
@@ -309,6 +329,15 @@ Ne fabrique aucune donnée absente de l'image.`,
               return ws.send(JSON.stringify({ type: "error", message: "Coach non autorisé." }));
             }
             s.coachPhone = ws._phone;
+          } else {
+            const deviceId = typeof m.deviceId === "string" ? m.deviceId.trim() : "";
+            if (!deviceId || deviceId.length > 200) {
+              return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
+            }
+            if (s.technicianDeviceId && s.technicianDeviceId !== deviceId) {
+              return ws.send(JSON.stringify({ type: "error", message: "Cette session est déjà liée à une autre tablette." }));
+            }
+            s.technicianDeviceId = deviceId;
           }
 
           sid = s.id;
@@ -335,15 +364,25 @@ Ne fabrique aucune donnée absente de l'image.`,
           const s = getSession(sid);
           if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
           const imageData = String(m.payload?.imageData || "");
-          if (s && imageData.length <= MAX_FRAME_BYTES) {
-            s.frameCount++;
-            sendAll(sid, m);
+          if (!imageData.startsWith("data:image/jpeg;base64,") || imageData.length > MAX_FRAME_BYTES) {
+            return ws.send(JSON.stringify({ type: "error", message: "Image de capture invalide ou trop volumineuse." }));
           }
+          const now = Date.now();
+          if (now - lastFrameWindowAt >= 1000) {
+            lastFrameWindowAt = now;
+            framesInWindow = 0;
+          }
+          if (++framesInWindow > MAX_FRAME_RATE_PER_SECOND) return;
+          s.frameCount++;
+          sendAll(sid, m);
         } else if (m.type === "command" && role === "coach") {
           const s = getSession(sid);
           if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
           if (!m.payload || typeof m.payload !== "object" || !ALLOWED.has(m.payload.action)) {
             return ws.send(JSON.stringify({ type: "error", message: "Commande non autorisée." }));
+          }
+          if (m.payload.action === "input" && (typeof m.payload.text !== "string" || m.payload.text.length > MAX_COMMAND_TEXT_LENGTH)) {
+            return ws.send(JSON.stringify({ type: "error", message: "Texte de commande invalide." }));
           }
           sendAll(sid, m);
         } else if (m.type === "command_result" && role === "technician") {
@@ -359,3 +398,4 @@ Ne fabrique aucune donnée absente de l'image.`,
     });
   });
 }
+
