@@ -81,6 +81,7 @@ export function registerScreening(
       );
     } catch (err: any) {
       console.error("[SCREENING][DB] sauvegarde session échouée:", err.message);
+      throw err;
     }
   };
 
@@ -152,7 +153,7 @@ export function registerScreening(
   }
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES + 100_000 });
 
-  app.post("/api/screening/sessions", deps.requireAuth, (req: any, res) => {
+  app.post("/api/screening/sessions", deps.requireAuth, async (req: any, res) => {
     if (deps.getEffectivePlan(req.session.phone) !== "premium") {
       return res.status(403).json({
         success: false,
@@ -178,7 +179,15 @@ export function registerScreening(
     };
 
     sessions.set(id, s);
-    persistSession(s).catch(() => {});
+    try {
+      await persistSession(s);
+    } catch {
+      sessions.delete(id);
+      return res.status(503).json({
+        success: false,
+        message: "Impossible d'enregistrer la session. Réessayez.",
+      });
+    }
     res.json({
       success: true,
       sessionId: id,
@@ -376,9 +385,17 @@ Ne fabrique aucune donnée absente de l'image.`,
     if (s.coachPhone && s.coachPhone !== req.session.phone) {
       return res.status(409).json({ success: false, message: "Un coach est déjà connecté à cette session." });
     }
+    const previousCoachPhone = s.coachPhone;
+    const previousStatus = s.status;
     s.coachPhone = req.session.phone;
     s.status = "active";
-    persistSession(s).catch(() => {});
+    try {
+      await persistSession(s);
+    } catch {
+      s.coachPhone = previousCoachPhone;
+      s.status = previousStatus;
+      return res.status(503).json({ success: false, message: "Impossible d'enregistrer le coach. Réessayez." });
+    }
     res.json({ success: true, sessionId: s.id, role: "coach" });
   });
 
