@@ -23,6 +23,11 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
   const [remoteControlApproved,setRemoteControlApproved]=useState(false);
   const [humanCoachRequested,setHumanCoachRequested]=useState(false);
   const [sessionEnded,setSessionEnded]=useState(false);
+  const [voiceActive,setVoiceActive]=useState(false);
+  const [voiceBusy,setVoiceBusy]=useState(false);
+  const peerRef=useRef<RTCPeerConnection|null>(null);
+  const voiceStreamRef=useRef<MediaStream|null>(null);
+  const voiceAudioRef=useRef<HTMLAudioElement|null>(null);
   const lastAnalyzedFrameRef=useRef<string|null>(null);
   const token=localStorage.getItem("auth_session_token") || "";
 
@@ -43,6 +48,9 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
         if(m.type==="error")setStatus(m.message||"Erreur");
         if(m.type==="human_coach_requested"){setHumanCoachRequested(true);setStatus("Coach humain demandé.");}
         if(m.type==="session_ended"){setConnected(false);setSessionEnded(true);setStatus("Session terminée.");}
+        if(m.type==="voice_start" && role==="coach"){setStatus("Appel vocal demandé depuis la tablette.");}
+        if(m.type==="voice_signal" && role==="coach"){handleVoiceSignal(m.payload);}
+        if(m.type==="voice_end"){endVoice(false);}
       }catch{}
     };
     ws.onclose=()=>setConnected(false);
@@ -58,6 +66,62 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
     if(wsRef.current?.readyState===WebSocket.OPEN)
       wsRef.current.send(JSON.stringify({type:"command",sessionId,payload:{action,...payload}}));
   };
+
+  const sendVoice=(type:string,payload:any={})=>{
+    if(wsRef.current?.readyState===WebSocket.OPEN) wsRef.current.send(JSON.stringify({type,sessionId,payload}));
+  };
+
+  const createVoicePeer=async(initiator:boolean)=>{
+    if(peerRef.current) return peerRef.current;
+    const pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
+    peerRef.current=pc;
+    pc.onicecandidate=e=>{if(e.candidate)sendVoice("voice_signal",{kind:"ice",candidate:e.candidate});};
+    pc.ontrack=e=>{if(voiceAudioRef.current){voiceAudioRef.current.srcObject=e.streams[0];voiceAudioRef.current.play().catch(()=>{});}};
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    voiceStreamRef.current=stream;
+    stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+    pc.onconnectionstatechange=()=>{if(["connected","completed"].includes(pc.connectionState)){setVoiceActive(true);setVoiceBusy(false);} if(["failed","closed","disconnected"].includes(pc.connectionState)){setVoiceActive(false);}};
+    if(initiator){
+      const offer=await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      sendVoice("voice_signal",{kind:"offer",sdp:offer.sdp});
+    }
+    return pc;
+  };
+
+  const handleVoiceSignal=async(signal:any)=>{
+    if(!signal)return;
+    try{
+      const pc=await createVoicePeer(signal.kind==="offer");
+      if(signal.kind==="offer"){
+        await pc.setRemoteDescription({type:"offer",sdp:signal.sdp});
+        const answer=await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        sendVoice("voice_signal",{kind:"answer",sdp:answer.sdp});
+      }else if(signal.kind==="answer"){
+        await pc.setRemoteDescription({type:"answer",sdp:signal.sdp});
+      }else if(signal.kind==="ice"&&signal.candidate){await pc.addIceCandidate(signal.candidate);}
+    }catch(e:any){setVoiceBusy(false);setStatus(e.message||"Appel vocal impossible.");}
+  };
+
+  const startVoice=async()=>{
+    if(sessionEnded||voiceBusy||voiceActive)return;
+    setVoiceBusy(true);
+    setStatus("Connexion audio…");
+    try{await createVoicePeer(true);sendVoice("voice_start");}catch(e:any){setVoiceBusy(false);setStatus(e.message||"Autorisation micro requise.");}
+  };
+
+  const endVoice=(notify=true)=>{
+    voiceStreamRef.current?.getTracks().forEach(t=>t.stop());
+    voiceStreamRef.current=null;
+    peerRef.current?.close();
+    peerRef.current=null;
+    if(voiceAudioRef.current)voiceAudioRef.current.srcObject=null;
+    setVoiceActive(false);setVoiceBusy(false);
+    if(notify)sendVoice("voice_end");
+  };
+
+  useEffect(()=>()=>endVoice(false),[]);
 
   const endSession=async()=>{
     await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/end",{
@@ -121,6 +185,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
     {role==="coach"&&!sessionEnded&&<div className="space-y-2">
       <div className="flex flex-wrap gap-1.5">
         <button onClick={()=>command("request_screen")} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">Actualiser</button>
+        <button onClick={voiceActive?()=>endVoice():startVoice} disabled={voiceBusy} className="px-3 py-2 rounded-lg bg-emerald-600 disabled:opacity-40 text-white text-xs font-bold">{voiceBusy?"Connexion…":voiceActive?"🔴 Raccrocher":"🎙️ Appel vocal"}</button>
         <button onClick={analyzeFrame} disabled={!frame||visionBusy} className="px-3 py-2 rounded-lg bg-red-600 disabled:opacity-40 text-white text-xs font-bold">
           {visionBusy?"Analyse…":"Analyser avec IA"}
         </button>
@@ -157,6 +222,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
       <div className="text-[10px] text-slate-500">L’analyse IA est une aide au diagnostic et doit être confirmée par les mesures et procédures appropriées.</div>
     </div>}
 
+    <audio ref={voiceAudioRef} autoPlay playsInline className="hidden" />
     {!sessionEnded&&<button onClick={endSession} className="px-3 py-2 rounded-lg border border-red-500/30 text-red-300 text-xs font-bold">Terminer la session</button>}
     {sessionEnded&&<div className="rounded-xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-sm text-slate-400">Cette session est terminée. Créez une nouvelle session pour reprendre le coaching.</div>}
   </section>;
