@@ -39,8 +39,8 @@ class RemoteAccessibilityService : AccessibilityService() {
                 "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
                 "click" -> {
                     val data = JSONObject(payload)
-                    val x = data.optFloat("x", -1f)
-                    val y = data.optFloat("y", -1f)
+                    val x = data.optDouble("x", -1.0).toFloat()
+                    val y = data.optDouble("y", -1.0).toFloat()
                     if (x >= 0 && y >= 0) clickAt(x, y) else clickText(data.optString("text", ""))
                 }
                 "scroll" -> {
@@ -57,8 +57,6 @@ class RemoteAccessibilityService : AccessibilityService() {
             false
         }
 
-        // L'accusé de réception est préparé ici pour le service de capture.
-        // L'exécution reste locale au service Accessibility.
         ScreenCaptureServiceBridge.result(action, ok)
     }
 
@@ -120,7 +118,6 @@ class RemoteAccessibilityService : AccessibilityService() {
     }
 }
 
-// Petit pont sans dépendance Android supplémentaire : l'agent de capture expose le dernier service actif.
 object ScreenCaptureServiceBridge {
     @Volatile private var sender: ((String, Boolean) -> Unit)? = null
 
