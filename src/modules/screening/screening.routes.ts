@@ -370,9 +370,6 @@ Ne fabrique aucune donnée absente de l'image.`,
   app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, async (req: any, res) => {
     const s = await getSessionAsync(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
-    if (req.session.phone === s.technicianPhone) {
-      return res.status(400).json({ success: false, message: "Le technicien ne peut pas rejoindre comme coach." });
-    }
     if (!s.humanCoachRequested || s.coachType !== "human") {
       return res.status(403).json({ success: false, message: "Le technicien doit d'abord demander un coach humain." });
     }
@@ -426,8 +423,9 @@ Ne fabrique aucune donnée absente de l'image.`,
           if (!s) return ws.send(JSON.stringify({ type: "error", message: "Session expirée." }));
           if (s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
 
-          const isTechnician = ws._phone === s.technicianPhone;
-          const isCoach = s.humanCoachRequested && s.coachPhone === ws._phone;
+          const requestedRole = m.role === "coach" ? "coach" : "technician";
+          const isTechnician = requestedRole === "technician" && ws._phone === s.technicianPhone;
+          const isCoach = requestedRole === "coach" && s.humanCoachRequested && s.coachPhone === ws._phone;
 
           if (isTechnician) {
             if (Date.now() > s.pairingExpiresAt) {
@@ -448,7 +446,10 @@ Ne fabrique aucune donnée absente de l'image.`,
             return ws.send(JSON.stringify({ type: "error", message: "Coach non autorisé. Utilisez l’accès coach avec l’ID de session." }));
           }
 
-          role = isTechnician ? "technician" : "coach";
+          if (!isTechnician && !isCoach) {
+            return ws.send(JSON.stringify({ type: "error", message: "Rôle non autorisé pour cette session." }));
+          }
+          role = requestedRole;
           sid = s.id;
           paired = true;
           s.status = "active";
