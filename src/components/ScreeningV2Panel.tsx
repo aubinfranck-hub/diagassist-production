@@ -38,8 +38,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
   };
 
   const qrValue = created
-    ? "diagassist://technician?token=" + encodeURIComponent(token()) +
-      "&sessionId=" + encodeURIComponent(sessionId) +
+    ? "diagassist://technician?sessionId=" + encodeURIComponent(sessionId) +
       "&pairingCode=" + encodeURIComponent(pairingCode) +
       "&wsUrl=" + encodeURIComponent("https://" + window.location.host)
     : "";
