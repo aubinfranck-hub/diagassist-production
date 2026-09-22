@@ -19,6 +19,13 @@ function code() {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
+function sessionCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < 6; i++) out += alphabet[crypto.randomInt(0, alphabet.length)];
+  return out;
+}
+
 function normalizeSessionId(id: string) {
   return String(id || "").replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
 }
@@ -167,7 +174,7 @@ export function registerScreening(
       });
     }
 
-    const id = "scr_" + crypto.randomBytes(12).toString("hex");
+    const id = sessionCode();
     const now = Date.now();
     const s = {
       id,
