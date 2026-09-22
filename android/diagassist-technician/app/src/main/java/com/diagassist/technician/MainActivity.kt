@@ -12,7 +12,7 @@ class MainActivity:ComponentActivity(){
  override fun onCreate(state:Bundle?){super.onCreate(state); launchUri=intent?.data; requestProjection()}
  private fun requestProjection(){val m=getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager; startActivityForResult(m.createScreenCaptureIntent(),requestCode)}
  override fun onActivityResult(code:Int,result:Int,data:Intent?){super.onActivityResult(code,result,data); if(code!=requestCode||result!=Activity.RESULT_OK||data==null)return
-  val u=launchUri; val token=u?.getQueryParameter("token")?:""; val session=u?.getQueryParameter("sessionId")?:""; val pairing=u?.getQueryParameter("pairingCode")?:""; val ws=u?.getQueryParameter("wsUrl")?:"wss://diagassist.com"
+  val u=launchUri; val token=u?.getQueryParameter("token")?:""; val session=u?.getQueryParameter("sessionId")?:""; val pairing=u?.getQueryParameter("pairingCode")?:""; val ws=u?.getQueryParameter("wsUrl") ?: "https://diagassist-production.onrender.com"
   startForegroundService(Intent(this,ScreenCaptureService::class.java).apply{putExtra("resultCode",result);putExtra("resultData",data);putExtra("token",token);putExtra("sessionId",session);putExtra("pairingCode",pairing);putExtra("wsUrl",ws)})
   finish()
  }
