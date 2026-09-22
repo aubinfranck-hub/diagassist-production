@@ -476,8 +476,9 @@ Ne fabrique aucune donnée absente de l'image.`,
           if (!s) return ws.send(JSON.stringify({ type: "error", message: "Session expirée." }));
           if (s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
 
-          const requestedRole = m.role === "coach" ? "coach" : "technician";
+          const requestedRole = m.role === "coach" ? "coach" : (m.role === "controller" ? "controller" : "technician");
           const isTechnician = requestedRole === "technician" && ws._phone === s.technicianPhone;
+          const isController = requestedRole === "controller" && ws._phone === s.technicianPhone;
           const isCoach = requestedRole === "coach" && s.humanCoachRequested && s.coachPhone === ws._phone;
 
           if (isTechnician) {
@@ -495,11 +496,11 @@ Ne fabrique aucune donnée absente de l'image.`,
             if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
             if (s.technicianDeviceId && s.technicianDeviceId !== deviceId) return ws.send(JSON.stringify({ type: "error", message: "Cette session est déjà liée à une autre tablette." }));
             s.technicianDeviceId = deviceId;
-          } else if (!isCoach) {
-            return ws.send(JSON.stringify({ type: "error", message: "Coach non autorisé. Utilisez l’accès coach avec l’ID de session." }));
+          } else if (!isController && !isCoach) {
+            return ws.send(JSON.stringify({ type: "error", message: "Contrôleur non autorisé pour cette session." }));
           }
 
-          if (!isTechnician && !isCoach) {
+          if (!isTechnician && !isController && !isCoach) {
             return ws.send(JSON.stringify({ type: "error", message: "Rôle non autorisé pour cette session." }));
           }
           role = requestedRole;
@@ -530,7 +531,7 @@ Ne fabrique aucune donnée absente de l'image.`,
           if (++framesInWindow > MAX_FRAME_RATE_PER_SECOND) return;
           s.frameCount++;
           sendAll(sid, m);
-        } else if (m.type === "command" && role === "coach") {
+        } else if (m.type === "command" && (role === "controller" || role === "coach")) {
           const s = getSession(sid);
           if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
           if (!m.payload || typeof m.payload !== "object" || !ALLOWED.has(m.payload.action)) {
