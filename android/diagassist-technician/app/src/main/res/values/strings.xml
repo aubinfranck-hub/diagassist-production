@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">DiagAssist Scanner</string>
+    <string name="scanner_subtitle">Module Android pour votre valise de diagnostic</string>
+    <string name="scanner_step_1">1. Affichez le QR d’une session sur le téléphone DiagAssist.</string>
+    <string name="scanner_step_2">2. Scannez le QR avec cette tablette.</string>
+    <string name="scanner_step_3">3. Autorisez la capture d’écran.</string>
+    <string name="scanner_step_4">4. Activez le contrôle dans Accessibilité si demandé.</string>
+    <string name="scan_button">SCANNER LE QR DIAGASSIST</string>
     <string name="accessibility_service_description">Autoriser DiagAssist à piloter la tablette pendant une session d’assistance.</string>
 </resources>
