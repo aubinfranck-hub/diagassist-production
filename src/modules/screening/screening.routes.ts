@@ -19,6 +19,10 @@ function code() {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
+function normalizeSessionId(id: string) {
+  return String(id || "").replace(/[\u200B-\u200D\uFEFF]/g, "").trim().toLowerCase();
+}
+
 function getSession(id: string) {
   const s = sessions.get(id);
   if (!s || Date.now() > s.expiresAt) {
@@ -86,7 +90,7 @@ export function registerScreening(
   };
 
   const getSessionAsync = async (id: string) => {
-    id = String(id || "").trim();
+    id = normalizeSessionId(id);
     const cached = getSession(id);
     if (cached) return cached;
     if (!dbQuery) return null;
@@ -393,7 +397,10 @@ Ne fabrique aucune donnée absente de l'image.`,
   // Le code d'appairage est strictement réservé à la tablette du technicien.
   app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, async (req: any, res) => {
     const s = await getSessionAsync(req.params.id);
-    if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
+    if (!s) {
+      console.warn("[SCREENING][JOIN] session introuvable:", normalizeSessionId(req.params.id));
+      return res.status(404).json({ success: false, message: "Session introuvable. Vérifiez l’ID scr_... et utilisez une session encore valide." });
+    }
     if (!s.humanCoachRequested || s.coachType !== "human") {
       return res.status(403).json({ success: false, message: "Le technicien doit d'abord demander un coach humain." });
     }
