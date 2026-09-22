@@ -64,36 +64,61 @@ class MainActivity : ComponentActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(48, 48, 48, 48)
-            setBackgroundColor(Color.WHITE)
+            setPadding(40, 48, 40, 40)
+            setBackgroundColor(Color.rgb(15, 23, 42))
+        }
+
+        val logo = android.widget.ImageView(this).apply {
+            setImageResource(com.diagassist.technician.R.drawable.ic_diagassist_scanner)
+            contentDescription = "Logo DiagAssist Scanner"
+            layoutParams = LinearLayout.LayoutParams(132, 132).apply { bottomMargin = 24 }
         }
 
         val title = TextView(this).apply {
             text = "DiagAssist Scanner"
-            textSize = 26f
-            setTextColor(Color.rgb(20, 30, 45))
+            textSize = 28f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
+        }
+
+        val subtitle = TextView(this).apply {
+            text = getString(com.diagassist.technician.R.string.scanner_subtitle)
+            textSize = 14f
+            setTextColor(Color.rgb(148, 163, 184))
+            gravity = Gravity.CENTER
+            setPadding(0, 8, 0, 28)
         }
 
         val info = TextView(this).apply {
-            text = "Cette tablette est le module qui utilise le scanner OBD.\n\n1. Le téléphone DiagAssist affiche un QR.\n2. Scannez le QR ici.\n3. Autorisez ensuite la capture d’écran.\n4. Activez le contrôle DiagAssist dans Accessibilité si demandé."
-            textSize = 16f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 32, 0, 32)
+            text = listOf(
+                getString(com.diagassist.technician.R.string.scanner_step_1),
+                getString(com.diagassist.technician.R.string.scanner_step_2),
+                getString(com.diagassist.technician.R.string.scanner_step_3),
+                getString(com.diagassist.technician.R.string.scanner_step_4)
+            ).joinToString("\n\n")
+            textSize = 15f
+            setTextColor(Color.rgb(226, 232, 240))
+            gravity = Gravity.START
+            setPadding(8, 20, 8, 28)
         }
 
         val scan = Button(this).apply {
-            text = "SCANNER LE QR DIAGASSIST"
+            text = getString(com.diagassist.technician.R.string.scan_button)
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(220, 38, 38))
             setOnClickListener { launchQrScanner() }
         }
 
+        root.addView(logo)
         root.addView(title, LinearLayout.LayoutParams(-1, -2))
+        root.addView(subtitle, LinearLayout.LayoutParams(-1, -2))
         root.addView(info, LinearLayout.LayoutParams(-1, -2))
-        root.addView(scan, LinearLayout.LayoutParams(-1, -2))
+        root.addView(scan, LinearLayout.LayoutParams(-1, 56).apply {
+            topMargin = 8
+        })
         setContentView(root)
 
-        // Parcours normal : la tablette ouvre directement le scanner QR.
         window.decorView.postDelayed({ launchQrScanner() }, 350)
     }
 
