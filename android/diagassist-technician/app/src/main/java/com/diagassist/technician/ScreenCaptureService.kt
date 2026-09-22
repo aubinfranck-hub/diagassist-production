@@ -67,7 +67,7 @@ class ScreenCaptureService : Service() {
 
     private fun connect() {
         if (authToken.isBlank() || currentSession.isBlank() || pairingCode.isBlank()) return
-        val schemeBase = wsBase.trimEnd("/").replaceFirst("^https://".toRegex(), "wss://").replaceFirst("^http://".toRegex(), "ws://")
+        val schemeBase = wsBase.trimEnd('/').replaceFirst("^https://".toRegex(), "wss://").replaceFirst("^http://".toRegex(), "ws://")
         val url = schemeBase + "/api/screening/stream?token=" + URLEncoder.encode(authToken, "UTF-8")
         val client = OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build()
 
