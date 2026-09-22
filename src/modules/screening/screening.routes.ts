@@ -336,7 +336,7 @@ Ne fabrique aucune donnée absente de l'image.`,
           if (!m.payload || typeof m.payload !== "object" || !ALLOWED.has(m.payload.action)) {
             return ws.send(JSON.stringify({ type: "error", message: "Commande non autorisée." }));
           }
-          sendAll(sid, m, ws);
+          sendAll(sid, m);
         } else if (m.type === "command_result" && role === "technician") {
           sendAll(sid, m, ws);
         }
