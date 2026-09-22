@@ -84,6 +84,42 @@ export function registerScreening(
     }
   };
 
+  const getSessionAsync = async (id: string) => {
+    const cached = getSession(id);
+    if (cached) return cached;
+    if (!dbQuery) return null;
+    try {
+      const result = await dbQuery(
+        `SELECT id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type,
+                human_coach_requested, status, created_at, expires_at, frame_count
+         FROM screening_sessions WHERE id = $1 LIMIT 1`,
+        [id]
+      );
+      const row = result.rows?.[0];
+      if (!row) return null;
+      const s = {
+        id: row.id,
+        technicianPhone: row.technician_phone,
+        coachPhone: row.coach_phone || undefined,
+        pairingCode: row.pairing_code,
+        pairingExpiresAt: Number(row.pairing_expires_at),
+        coachType: row.coach_type === "human" ? "human" : "gemini",
+        humanCoachRequested: Boolean(row.human_coach_requested),
+        status: row.status === "completed" ? "completed" : "pending",
+        createdAt: Number(row.created_at),
+        expiresAt: Number(row.expires_at),
+        frameCount: Number(row.frame_count || 0),
+        lastVisionAt: 0,
+      };
+      if (Date.now() > s.expiresAt && s.status !== "completed") return null;
+      sessions.set(id, s);
+      return s;
+    } catch (err: any) {
+      console.error("[SCREENING][DB] récupération session échouée:", err.message);
+      return null;
+    }
+  };
+
   if (dbQuery) {
     dbQuery(
       `SELECT id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type,
@@ -151,8 +187,8 @@ export function registerScreening(
     });
   });
 
-  app.get("/api/screening/sessions/:id", deps.requireAuth, (req: any, res) => {
-    const s = getSession(req.params.id);
+  app.get("/api/screening/sessions/:id", deps.requireAuth, async (req: any, res) => {
+    const s = await getSessionAsync(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
 
     if (req.session.phone !== s.technicianPhone && req.session.phone !== s.coachPhone) {
@@ -185,7 +221,7 @@ export function registerScreening(
     }
   });
 
-  app.post("/api/screening/sessions/:id/request-human-coach", deps.requireAuth, (req: any, res) => {
+  app.post("/api/screening/sessions/:id/request-human-coach", deps.requireAuth, async (req: any, res) => {
     const s = getSession(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
     if (req.session.phone !== s.technicianPhone) {
@@ -198,7 +234,7 @@ s.humanCoachRequested = true;
     res.json({ success: true, coachType: "human", message: "Coach humain demandé." });
   });
 
-  app.post("/api/screening/sessions/:id/end", deps.requireAuth, (req: any, res) => {
+  app.post("/api/screening/sessions/:id/end", deps.requireAuth, async (req: any, res) => {
     const s = getSession(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
 
@@ -224,7 +260,7 @@ s.status = "completed";
 
       const sessionId = String(req.body?.sessionId || "");
       const imageData = String(req.body?.imageData || "");
-      const s = getSession(sessionId);
+      const s = await getSessionAsync(sessionId);
 
       if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
       if (req.session.phone !== s.technicianPhone && req.session.phone !== s.coachPhone) {
@@ -331,7 +367,7 @@ Ne fabrique aucune donnée absente de l'image.`,
 
   // Le coach humain rejoint avec son ID de session uniquement.
   // Le code d'appairage est strictement réservé à la tablette du technicien.
-  app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, (req: any, res) => {
+  app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, async (req: any, res) => {
     const s = getSession(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
     if (req.session.phone === s.technicianPhone) {
@@ -381,12 +417,12 @@ Ne fabrique aucune donnée absente de l'image.`,
     let lastFrameWindowAt = Date.now();
     let framesInWindow = 0;
 
-    ws.on("message", (raw: Buffer) => {
+    ws.on("message", async (raw: Buffer) => {
       try {
         const m = JSON.parse(raw.toString());
 
         if (m.type === "pairing") {
-          const s = getSession(String(m.sessionId));
+          const s = await getSessionAsync(String(m.sessionId));
           if (!s) return ws.send(JSON.stringify({ type: "error", message: "Session expirée." }));
           if (s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
 
@@ -426,7 +462,7 @@ Ne fabrique aucune donnée absente de l'image.`,
         }
 
         if (m.type === "frame" && role === "technician") {
-          const s = getSession(sid);
+          const s = await getSessionAsync(sid);
           if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
           const imageData = String(m.payload?.imageData || "");
           if (!imageData.startsWith("data:image/jpeg;base64,") || imageData.length > MAX_FRAME_BYTES) {
