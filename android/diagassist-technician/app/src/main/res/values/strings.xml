@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DiagAssist Technician</string>
+    <string name="accessibility_service_description">Autoriser DiagAssist à piloter la tablette pendant une session de coaching.</string>
+</resources>
