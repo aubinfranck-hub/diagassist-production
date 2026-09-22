@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="diagassist_navy">#0F172A</color>
+    <color name="diagassist_red">#DC2626</color>
+    <color name="diagassist_blue">#38BDF8</color>
+    <color name="diagassist_white">#FFFFFF</color>
+    <color name="diagassist_muted">#94A3B8</color>
+</resources>
