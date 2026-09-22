@@ -1,4 +1,4 @@
-name: Build DiagAssist Technician APK
+name: Build DiagAssist Scanner APK
 
 on:
   workflow_dispatch:
@@ -35,6 +35,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: diagassist-technician-debug
+          name: diagassist-scanner-debug
           path: android/diagassist-technician/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
