@@ -35,14 +35,10 @@ class ScreenCaptureService : Service() {
     private var pairingCode = ""
     private var deviceId = ""
     private var reconnecting = false
-    private var shouldReconnect = true
-    private var voice: VoiceCallManager? = null
 
     override fun onCreate() {
         super.onCreate()
-        ScreenCaptureServiceBridge.register { action, success -> sendCommandResult(action, success) 
-    companion object { const val ACTION_VOICE_START = "com.diagassist.technician.VOICE_START" }
-}
+        ScreenCaptureServiceBridge.register { action, success -> sendCommandResult(action, success) }
         voice = VoiceCallManager(this) { type, payload -> sendVoice(type, payload) }
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(
@@ -61,17 +57,11 @@ class ScreenCaptureService : Service() {
 
         val code = intent?.getIntExtra("resultCode", 0) ?: return START_NOT_STICKY
         val data = intent.getParcelableExtra<Intent>("resultData") ?: return START_NOT_STICKY
-        wsBase = intent.getStringExtra("wsUrl") ?: "https://www.diagassist.app"
+        wsBase = intent.getStringExtra("wsUrl") ?: "https://diagassist-production.onrender.com"
         currentSession = intent.getStringExtra("sessionId") ?: ""
         pairingCode = intent.getStringExtra("pairingCode") ?: ""
         authToken = intent.getStringExtra("token") ?: ""
         deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown-device"
-
-        // The agent must only send the technician's screen over an encrypted public endpoint.
-        if (!wsBase.startsWith("https://") && !wsBase.startsWith("http://10.") && !wsBase.startsWith("http://192.168.")) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
 
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
         projection = manager.getMediaProjection(code, data)
@@ -92,7 +82,6 @@ class ScreenCaptureService : Service() {
                     reconnecting = false
                     ws.send(JSONObject(mapOf(
                         "type" to "pairing",
-                        "role" to "technician",
                         "sessionId" to currentSession,
                         "pairingCode" to pairingCode,
                         "deviceId" to deviceId
@@ -104,11 +93,11 @@ class ScreenCaptureService : Service() {
                 }
 
                 override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                    if (shouldReconnect) scheduleReconnect()
+                    scheduleReconnect()
                 }
 
                 override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                    if (shouldReconnect && code != 1000) scheduleReconnect()
+                    scheduleReconnect()
                 }
             }
         )
@@ -254,13 +243,6 @@ class ScreenCaptureService : Service() {
                         stopCaptureAndExit()
                     }
                 }
-                "session_ended" -> stopCaptureAndExit()
-                "voice_start" -> {
-                    if (Build.VERSION.SDK_INT >= 29) startForeground(1001, buildNotification("Appel vocal DiagAssist en cours"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-                    voice?.handleStart()
-                }
-                "voice_signal" -> voice?.handleSignal(m.optJSONObject("payload") ?: return)
-                "voice_end" -> voice?.stop()
                 "command" -> {
                     val payload = m.optJSONObject("payload") ?: return
                     val action = payload.optString("action")
@@ -295,13 +277,11 @@ class ScreenCaptureService : Service() {
     }
 
     private fun stopCaptureAndExit() {
-        shouldReconnect = false
         socket?.close(1000, "Appairage refusé")
         stopSelf()
     }
 
     override fun onDestroy() {
-        shouldReconnect = false
         ScreenCaptureServiceBridge.register(null)
         socket?.close(1000, "stop")
         voice?.dispose()
@@ -313,5 +293,5 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+    companion object { const val ACTION_VOICE_START = "com.diagassist.technician.VOICE_START" }
 }
-
