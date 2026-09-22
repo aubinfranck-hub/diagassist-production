@@ -68,6 +68,8 @@ export function registerScreening(
       technicianPhone: req.session.phone,
       pairingCode: code(),
       pairingExpiresAt: now + PAIRING_TTL,
+      coachType: "gemini",
+      humanCoachRequested: false,
       status: "pending",
       createdAt: now,
       expiresAt: now + SESSION_TTL,
@@ -95,6 +97,18 @@ export function registerScreening(
     const safe = { ...s };
     if (req.session.phone !== s.technicianPhone) delete safe.pairingCode;
     res.json({ success: true, session: safe });
+  });
+
+  app.post("/api/screening/sessions/:id/request-human-coach", deps.requireAuth, (req: any, res) => {
+    const s = getSession(req.params.id);
+    if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
+    if (req.session.phone !== s.technicianPhone) {
+      return res.status(403).json({ success: false, message: "Seul le technicien peut demander un coach humain." });
+    }
+    s.humanCoachRequested = true;
+    s.coachType = "human";
+    sendAll(s.id, { type: "human_coach_requested", sessionId: s.id, timestamp: Date.now() });
+    res.json({ success: true, coachType: "human", message: "Coach humain demandé." });
   });
 
   app.post("/api/screening/sessions/:id/end", deps.requireAuth, (req: any, res) => {
@@ -279,6 +293,10 @@ Ne fabrique aucune donnée absente de l'image.`,
           }
 
           role = ws._phone === s.technicianPhone ? "technician" : "coach";
+
+          if (role === "coach" && !s.humanCoachRequested) {
+            return ws.send(JSON.stringify({ type: "error", message: "Gemini est le coach par défaut. Le technicien doit confirmer l’appel d’un coach humain." }));
+          }
 
           if (role === "coach") {
             if (s.coachPhone && s.coachPhone !== ws._phone) {
