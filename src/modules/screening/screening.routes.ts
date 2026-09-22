@@ -330,7 +330,7 @@ Ne fabrique aucune donnée absente de l'image.`,
           const imageData = String(m.payload?.imageData || "");
           if (s && imageData.length <= MAX_FRAME_BYTES) {
             s.frameCount++;
-            sendAll(sid, m, ws);
+            sendAll(sid, m);
           }
         } else if (m.type === "command" && role === "coach") {
           if (!m.payload || typeof m.payload !== "object" || !ALLOWED.has(m.payload.action)) {
