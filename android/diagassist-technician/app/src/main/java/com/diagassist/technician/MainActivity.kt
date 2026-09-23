@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
+import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
@@ -247,7 +248,15 @@ class MainActivity : ComponentActivity() {
         }
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         Toast.makeText(this, "Connexion reconnue. Autorisez maintenant le partage de l’écran.", Toast.LENGTH_LONG).show()
-        startActivityForResult(manager.createScreenCaptureIntent(), requestProjectionCode)
+        val projectionIntent = if (android.os.Build.VERSION.SDK_INT >= 34) {
+            // Ask Android to let the user choose the app/window to share, instead of
+            // implicitly selecting the whole display. This is required for the
+            // diagnostic-app-on-the-tablet workflow.
+            manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForUserChoice())
+        } else {
+            manager.createScreenCaptureIntent()
+        }
+        startActivityForResult(projectionIntent, requestProjectionCode)
     }
 
     @Deprecated("Android activity result compatibility")
