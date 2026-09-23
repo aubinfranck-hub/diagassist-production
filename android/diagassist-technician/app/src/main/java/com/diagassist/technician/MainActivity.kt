@@ -147,8 +147,9 @@ class MainActivity : ComponentActivity() {
         root.addView(title, LinearLayout.LayoutParams(-1, -2))
         root.addView(subtitle, LinearLayout.LayoutParams(-1, -2))
         root.addView(info, LinearLayout.LayoutParams(-1, -2))
-        root.addView(scan, LinearLayout.LayoutParams(-1, 56).apply { topMargin = 4 })
-        root.addView(codeButton, LinearLayout.LayoutParams(-1, 56).apply { topMargin = 10 })
+        val buttonHeight = (64 * resources.displayMetrics.density).toInt()
+        root.addView(scan, LinearLayout.LayoutParams(-1, buttonHeight).apply { topMargin = 4 })
+        root.addView(codeButton, LinearLayout.LayoutParams(-1, buttonHeight).apply { topMargin = 10 })
         root.addView(footer, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
 
