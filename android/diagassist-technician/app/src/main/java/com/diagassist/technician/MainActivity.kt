@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
-import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
@@ -31,6 +30,7 @@ class MainActivity : ComponentActivity() {
     private var launchUri: Uri? = null
     private var projectionResult = 0
     private var projectionData: Intent? = null
+    private var waitingForProjection = false
     private val httpClient = OkHttpClient()
 
     private val qrLauncher = registerForActivityResult(ScanContract()) { result ->
@@ -61,13 +61,25 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        if (state != null) {
+            launchUri = state.getString("launchUri")?.let { runCatching { Uri.parse(it) }.getOrNull() }
+            waitingForProjection = state.getBoolean("waitingForProjection", false)
+        }
         val incoming = intent?.data
         if (incoming?.scheme == "diagassist" && incoming.host == "technician") {
             launchUri = incoming
             requestProjection()
+        } else if (launchUri != null && waitingForProjection) {
+            // Android may recreate this Activity while the system projection picker is open.
         } else {
             showScannerScreen()
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("launchUri", launchUri?.toString())
+        outState.putBoolean("waitingForProjection", waitingForProjection)
+        super.onSaveInstanceState(outState)
     }
 
     private fun showScannerScreen() {
@@ -247,24 +259,19 @@ class MainActivity : ComponentActivity() {
             return
         }
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        Toast.makeText(this, "Connexion reconnue. Autorisez maintenant le partage de l’écran.", Toast.LENGTH_LONG).show()
-        val projectionIntent = if (android.os.Build.VERSION.SDK_INT >= 34) {
-            // Ask Android to let the user choose the app/window to share, instead of
-            // implicitly selecting the whole display. This is required for the
-            // diagnostic-app-on-the-tablet workflow.
-            manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForUserChoice())
-        } else {
-            manager.createScreenCaptureIntent()
-        }
-        startActivityForResult(projectionIntent, requestProjectionCode)
+        waitingForProjection = true
+        Toast.makeText(this, "QR validé. À l’écran suivant, choisissez l’application de diagnostic à diffuser.", Toast.LENGTH_LONG).show()
+        // Android 14+ already provides the app-window/full-display choice by default.
+        startActivityForResult(manager.createScreenCaptureIntent(), requestProjectionCode)
     }
 
     @Deprecated("Android activity result compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != requestProjectionCode) return
+        waitingForProjection = false
         if (resultCode != Activity.RESULT_OK || data == null) {
-            Toast.makeText(this, "La capture d’écran est nécessaire pour connecter la tablette.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Partage annulé. Utilisez les boutons QR ou CODE pour recommencer.", Toast.LENGTH_LONG).show()
             showScannerScreen()
             return
         }
