@@ -8,25 +8,34 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.text.InputType
 import android.view.Gravity
 import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private val requestProjectionCode = 9001
     private var launchUri: Uri? = null
     private var projectionResult = 0
     private var projectionData: Intent? = null
+    private val httpClient = OkHttpClient()
 
     private val qrLauncher = registerForActivityResult(ScanContract()) { result ->
         val raw = result.contents
         if (raw.isNullOrBlank()) {
-            Toast.makeText(this, "Scan annulé.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Scan annulé. Choisissez QR ou Code pour recommencer.", Toast.LENGTH_SHORT).show()
             showScannerScreen()
             return@registerForActivityResult
         }
@@ -64,18 +73,18 @@ class MainActivity : ComponentActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(40, 48, 40, 40)
+            setPadding(40, 40, 40, 36)
             setBackgroundColor(Color.rgb(15, 23, 42))
         }
 
-        val logo = android.widget.ImageView(this).apply {
-            setImageResource(com.diagassist.technician.R.drawable.ic_diagassist_scanner)
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.ic_diagassist_scanner)
             contentDescription = "Logo DiagAssist Scanner"
-            layoutParams = LinearLayout.LayoutParams(132, 132).apply { bottomMargin = 24 }
+            layoutParams = LinearLayout.LayoutParams(124, 124).apply { bottomMargin = 18 }
         }
 
         val title = TextView(this).apply {
-            text = "DiagAssist Scanner"
+            text = getString(R.string.app_name)
             textSize = 28f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
@@ -83,43 +92,54 @@ class MainActivity : ComponentActivity() {
         }
 
         val subtitle = TextView(this).apply {
-            text = getString(com.diagassist.technician.R.string.scanner_subtitle)
+            text = getString(R.string.scanner_subtitle)
             textSize = 14f
             setTextColor(Color.rgb(148, 163, 184))
             gravity = Gravity.CENTER
-            setPadding(0, 8, 0, 28)
+            setPadding(0, 8, 0, 20)
         }
 
         val info = TextView(this).apply {
-            text = listOf(
-                getString(com.diagassist.technician.R.string.scanner_step_1),
-                getString(com.diagassist.technician.R.string.scanner_step_2),
-                getString(com.diagassist.technician.R.string.scanner_step_3),
-                getString(com.diagassist.technician.R.string.scanner_step_4)
-            ).joinToString("\n\n")
+            text = getString(R.string.scanner_connection_help)
             textSize = 15f
             setTextColor(Color.rgb(226, 232, 240))
-            gravity = Gravity.START
-            setPadding(8, 20, 8, 28)
+            gravity = Gravity.CENTER
+            setPadding(8, 8, 8, 20)
         }
 
         val scan = Button(this).apply {
-            text = getString(com.diagassist.technician.R.string.scan_button)
+            text = getString(R.string.scan_button)
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.rgb(220, 38, 38))
             setOnClickListener { launchQrScanner() }
+        }
+
+        val codeButton = Button(this).apply {
+            text = getString(R.string.code_button)
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(30, 64, 175))
+            setOnClickListener { showCodeDialog() }
+        }
+
+        val footer = TextView(this).apply {
+            text = getString(R.string.scanner_footer)
+            textSize = 12f
+            setTextColor(Color.rgb(148, 163, 184))
+            gravity = Gravity.CENTER
+            setPadding(0, 18, 0, 0)
         }
 
         root.addView(logo)
         root.addView(title, LinearLayout.LayoutParams(-1, -2))
         root.addView(subtitle, LinearLayout.LayoutParams(-1, -2))
         root.addView(info, LinearLayout.LayoutParams(-1, -2))
-        root.addView(scan, LinearLayout.LayoutParams(-1, 56).apply {
-            topMargin = 8
-        })
+        root.addView(scan, LinearLayout.LayoutParams(-1, 56).apply { topMargin = 4 })
+        root.addView(codeButton, LinearLayout.LayoutParams(-1, 56).apply { topMargin = 10 })
+        root.addView(footer, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
 
-        window.decorView.postDelayed({ launchQrScanner() }, 350)
+        // Important: do NOT relaunch the scanner automatically. The previous auto-launch
+        // caused a loop when Android closed the scanner activity or when pairing was cancelled.
     }
 
     private fun launchQrScanner() {
@@ -132,13 +152,101 @@ class MainActivity : ComponentActivity() {
         qrLauncher.launch(options)
     }
 
+    private fun showCodeDialog() {
+        val input = EditText(this).apply {
+            hint = getString(R.string.code_hint)
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setSingleLine(true)
+            textSize = 22f
+            gravity = Gravity.CENTER
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40, 8, 40, 0)
+            addView(input, LinearLayout.LayoutParams(-1, 64))
+        }
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(getString(R.string.code_title))
+            .setMessage(getString(R.string.code_message))
+            .setView(container)
+            .setNegativeButton("Annuler", null)
+            .setPositiveButton("VALIDER", null)
+            .create()
+            .also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        val code = input.text.toString().trim()
+                        if (!code.matches(Regex("\\d{6}"))) {
+                            input.error = "Entrez le code à 6 chiffres"
+                            return@setOnClickListener
+                        }
+                        dialog.dismiss()
+                        pairByCode(code)
+                    }
+                }
+                dialog.show()
+            }
+    }
+
+    private fun pairByCode(code: String) {
+        Toast.makeText(this, "Vérification du code…", Toast.LENGTH_SHORT).show()
+
+        Thread {
+            try {
+                val body = JSONObject().put("pairingCode", code).toString()
+                    .toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = Request.Builder()
+                    .url("https://diagassist-production.onrender.com/api/screening/pair-by-code")
+                    .post(body)
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    val text = response.body?.string().orEmpty()
+                    val json = if (text.isNotBlank()) JSONObject(text) else JSONObject()
+                    if (!response.isSuccessful || !json.optBoolean("success", false)) {
+                        val message = json.optString("message", "Code invalide ou expiré.")
+                        runOnUiThread {
+                            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                        }
+                        return@use
+                    }
+
+                    val session = json.optString("sessionId")
+                    val pairing = json.optString("pairingCode")
+                    val ws = json.optString("wsUrl", "https://diagassist-production.onrender.com")
+                    if (session.isBlank() || pairing.isBlank()) {
+                        runOnUiThread {
+                            Toast.makeText(this, "Réponse de connexion incomplète.", Toast.LENGTH_LONG).show()
+                        }
+                        return@use
+                    }
+
+                    launchUri = Uri.parse("diagassist://technician")
+                        .buildUpon()
+                        .appendQueryParameter("sessionId", session)
+                        .appendQueryParameter("pairingCode", pairing)
+                        .appendQueryParameter("wsUrl", ws)
+                        .build()
+
+                    runOnUiThread { requestProjection() }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Connexion impossible. Vérifiez Internet et réessayez.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
     private fun requestProjection() {
         val uri = launchUri ?: run {
             showScannerScreen()
             return
         }
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        Toast.makeText(this, "QR reconnu. Autorisez maintenant le partage de l’écran.", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Connexion reconnue. Autorisez maintenant le partage de l’écran.", Toast.LENGTH_LONG).show()
         startActivityForResult(manager.createScreenCaptureIntent(), requestProjectionCode)
     }
 
@@ -159,7 +267,6 @@ class MainActivity : ComponentActivity() {
 
     private fun startAgent() {
         val u = launchUri ?: return
-        val token = u.getQueryParameter("token") ?: ""
         val session = u.getQueryParameter("sessionId") ?: ""
         val pairing = u.getQueryParameter("pairingCode") ?: ""
         val ws = u.getQueryParameter("wsUrl") ?: "https://diagassist-production.onrender.com"
@@ -167,7 +274,6 @@ class MainActivity : ComponentActivity() {
         startForegroundService(Intent(this, ScreenCaptureService::class.java).apply {
             putExtra("resultCode", projectionResult)
             putExtra("resultData", projectionData)
-            putExtra("token", token)
             putExtra("sessionId", session)
             putExtra("pairingCode", pairing)
             putExtra("wsUrl", ws)
