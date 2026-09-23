@@ -477,10 +477,11 @@ Ne fabrique aucune donnée absente de l'image.`,
     }
     if (!s) {
       console.warn("[SCREENING][JOIN] session introuvable:", normalizeSessionId(req.params.id));
-      return res.status(404).json({ success: false, message: "Session introuvable. Vérifiez l’ID scr_... et utilisez une session encore valide." });
+      return res.status(404).json({ success: false, message: "Session introuvable. Vérifiez le code session à 6 caractères." });
     }
     if (!s.humanCoachRequested || s.coachType !== "human") {
-      return res.status(403).json({ success: false, message: "Le technicien doit d'abord demander un coach humain." });
+      s.humanCoachRequested = true;
+      s.coachType = "human";
     }
     if (s.coachPhone && s.coachPhone !== req.session.phone) {
       return res.status(409).json({ success: false, message: "Un coach est déjà connecté à cette session." });
@@ -496,6 +497,7 @@ Ne fabrique aucune donnée absente de l'image.`,
       s.status = previousStatus;
       return res.status(503).json({ success: false, message: "Impossible d'enregistrer le coach. Réessayez." });
     }
+    sendAll(s.id, { type: "human_coach_requested", sessionId: s.id, timestamp: Date.now() });
     res.json({ success: true, sessionId: s.id, role: "coach" });
   });
 
