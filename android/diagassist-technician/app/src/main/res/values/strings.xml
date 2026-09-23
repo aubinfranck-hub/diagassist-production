@@ -1,12 +1,12 @@
 <resources>
     <string name="app_name">DiagAssist Scanner</string>
     <string name="scanner_subtitle">Module Android pour votre valise de diagnostic</string>
-    <string name="scanner_connection_help">Connectez la tablette à une session DiagAssist avec le QR ou le code affiché sur le téléphone.</string>
-    <string name="scan_button">SCANNER LE QR DIAGASSIST</string>
-    <string name="code_button">ENTRER LE CODE DE CONNEXION</string>
+    <string name="scanner_connection_help">ÉTAPE 1 — Sur le téléphone DiagAssist : créez la session. Le QR et le code à 6 chiffres apparaissent à l’écran. ÉTAPE 2 — Sur cette tablette : scannez le QR ou saisissez le code. ÉTAPE 3 — Android affichera « Partager l’écran » : choisissez l’application de diagnostic à diffuser.</string>
+    <string name="scan_button">1 — SCANNER LE QR AFFICHÉ SUR LE TÉLÉPHONE</string>
+    <string name="code_button">2 — ENTRER LE CODE À 6 CHIFFRES</string>
     <string name="code_title">Code de connexion</string>
     <string name="code_message">Saisissez le code à 6 chiffres affiché dans DiagAssist.</string>
     <string name="code_hint">123456</string>
-    <string name="scanner_footer">Le QR et le code sont valables pendant quelques minutes.</string>
+    <string name="scanner_footer">Après validation du QR/code, ne rescanez pas : choisissez l’application de diagnostic dans l’écran Android de partage.</string>
     <string name="accessibility_service_description">Autoriser DiagAssist à piloter la tablette pendant une session d’assistance.</string>
 </resources>
