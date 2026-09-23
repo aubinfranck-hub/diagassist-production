@@ -1,4 +1,5 @@
 name: Build DiagAssist Scanner Release
+# Release workflow keeps the APK synchronized with the current Android module.
 
 on:
   workflow_dispatch:
