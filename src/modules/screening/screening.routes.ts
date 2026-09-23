@@ -209,6 +209,30 @@ export function registerScreening(
     });
   });
 
+  app.post("/api/screening/pair-by-code", async (req: any, res) => {
+    const pairingCode = String(req.body?.pairingCode || "").replace(/\D/g, "");
+    if (!/^\d{6}$/.test(pairingCode)) {
+      return res.status(400).json({ success: false, message: "Code de connexion invalide." });
+    }
+    const candidates = Array.from(sessions.values()).filter((s: any) =>
+      s.pairingCode === pairingCode &&
+      Date.now() <= s.pairingExpiresAt &&
+      s.status !== "completed" &&
+      Date.now() <= s.expiresAt
+    );
+    if (candidates.length !== 1) {
+      return res.status(404).json({ success: false, message: "Code introuvable ou expiré. Vérifiez le code affiché sur DiagAssist." });
+    }
+    const s = candidates[0];
+    res.json({
+      success: true,
+      sessionId: s.id,
+      pairingCode: s.pairingCode,
+      wsUrl: process.env.APP_URL || "https://diagassist-production.onrender.com",
+      expiresIn: Math.max(0, s.pairingExpiresAt - Date.now()),
+    });
+  });
+
   app.get("/api/screening/sessions/:id", deps.requireAuth, async (req: any, res) => {
     const s = await getSessionAsync(req.params.id);
     if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
