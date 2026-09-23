@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
@@ -261,8 +262,14 @@ class MainActivity : ComponentActivity() {
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         waitingForProjection = true
         Toast.makeText(this, "QR validé. À l’écran suivant, choisissez l’application de diagnostic à diffuser.", Toast.LENGTH_LONG).show()
-        // Android 14+ already provides the app-window/full-display choice by default.
-        startActivityForResult(manager.createScreenCaptureIntent(), requestProjectionCode)
+        // Android 14+ : demander explicitement à Android le choix de la fenêtre/application.
+        // Sur certains appareils Xiaomi/HyperOS, le choix explicite est plus fiable.
+        if (Build.VERSION.SDK_INT >= 34) {
+            val config = android.media.projection.MediaProjectionConfig.createConfigForUserChoice()
+            startActivityForResult(manager.createScreenCaptureIntent(config), requestProjectionCode)
+        } else {
+            startActivityForResult(manager.createScreenCaptureIntent(), requestProjectionCode)
+        }
     }
 
     @Deprecated("Android activity result compatibility")
