@@ -35,6 +35,8 @@ class ScreenCaptureService : Service() {
     private var pairingCode = ""
     private var deviceId = ""
     private var reconnecting = false
+    private var projectionCallback: android.media.projection.MediaProjection.Callback? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -115,18 +117,38 @@ class ScreenCaptureService : Service() {
     }
 
     private fun startCapture() {
-        if (reader != null) return
-        val metrics = resources.displayMetrics
-        val w = metrics.widthPixels
-        val h = metrics.heightPixels
-        val density = metrics.densityDpi
+        if (reader != null || projection == null) return
 
-        reader = ImageReader.newInstance(w, h, android.graphics.PixelFormat.RGBA_8888, 2)
-        reader!!.setOnImageAvailableListener({ r ->
-            executor.execute { process(r.acquireLatestImage(), w, h, false) }
-        }, null)
+        val metrics = if (Build.VERSION.SDK_INT >= 30) {
+            (getSystemService(WINDOW_SERVICE) as android.view.WindowManager).maximumWindowMetrics
+        } else {
+            null
+        }
+        val w = metrics?.bounds?.width() ?: resources.displayMetrics.widthPixels
+        val h = metrics?.bounds?.height() ?: resources.displayMetrics.heightPixels
+        val density = resources.displayMetrics.densityDpi
 
-        display = projection?.createVirtualDisplay(
+        createCaptureSurface(w, h)
+
+        val p = projection ?: return
+        projectionCallback = object : android.media.projection.MediaProjection.Callback() {
+            override fun onCapturedContentResize(width: Int, height: Int) {
+                if (width > 0 && height > 0) {
+                    mainHandler.post { resizeCapture(width, height, density) }
+                }
+            }
+
+            override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+                // Required lifecycle callback for Android 14+ app-window capture.
+            }
+
+            override fun onStop() {
+                mainHandler.post { stopCaptureResources() }
+            }
+        }
+        p.registerCallback(projectionCallback!!, mainHandler)
+
+        display = p.createVirtualDisplay(
             "DiagAssist",
             w,
             h,
@@ -134,9 +156,26 @@ class ScreenCaptureService : Service() {
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             reader!!.surface,
             null,
-            null
+            mainHandler
         )
     }
+
+    private fun createCaptureSurface(w: Int, h: Int) {
+        reader?.close()
+        reader = ImageReader.newInstance(w, h, android.graphics.PixelFormat.RGBA_8888, 2)
+        reader!!.setOnImageAvailableListener({ r ->
+            executor.execute { process(r.acquireLatestImage(), w, h, false) }
+        }, mainHandler)
+    }
+
+    private fun resizeCapture(w: Int, h: Int, density: Int) {
+        val vd = display ?: return
+        createCaptureSurface(w, h)
+        vd.resize(w, h, density)
+        vd.surface = reader?.surface
+        forceNextFrame = true
+    }
+
 
     private fun imageToBitmap(image: Image, width: Int, height: Int): Bitmap? {
         val plane = image.planes.firstOrNull() ?: return null
@@ -266,12 +305,20 @@ class ScreenCaptureService : Service() {
         stopSelf()
     }
 
+    private fun stopCaptureResources() {
+        display?.release()
+        display = null
+        reader?.close()
+        reader = null
+    }
+
     override fun onDestroy() {
         ScreenCaptureServiceBridge.register(null)
         socket?.close(1000, "stop")
-        display?.release()
-        reader?.close()
+        projectionCallback?.let { cb -> runCatching { projection?.unregisterCallback(cb) } }
+        stopCaptureResources()
         projection?.stop()
+        projection = null
         executor.shutdownNow()
         super.onDestroy()
     }
