@@ -33,29 +33,74 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
 
   useEffect(()=>{
     if(!token){setStatus("Connexion DiagAssist requise.");return;}
-    const protocol=location.protocol==="https:"?"wss":"ws";
-    const ws=new WebSocket(protocol+"://"+location.host+"/api/screening/stream?token="+encodeURIComponent(token));
-    wsRef.current=ws;
-    ws.onopen=()=>ws.send(JSON.stringify({type:"pairing",sessionId,pairingCode,role}));
-    ws.onmessage=e=>{
-      try{
-        const m=JSON.parse(e.data);
-        if(m.type==="pairing"&&m.success){setConnected(true);setStatus("Session connectée.");}
-        if(m.type==="frame"){
-          const nextFrame=m.payload?.imageData||null;
-          setFrame(nextFrame);
+    let stopped=false;
+    let reconnectTimer:number|undefined;
+    let reconnectAttempt=0;
+    let sessionEndedLocal=false;
+
+    const connect=()=>{
+      if(stopped||sessionEndedLocal)return;
+      const protocol=location.protocol==="https:"?"wss":"ws";
+      const ws=new WebSocket(protocol+"://"+location.host+"/api/screening/stream?token="+encodeURIComponent(token));
+      wsRef.current=ws;
+      ws.onopen=()=>{
+        reconnectAttempt=0;
+        if(!stopped&&!sessionEndedLocal){
+          setStatus("Connexion de la session…");
+          ws.send(JSON.stringify({type:"pairing",sessionId,pairingCode,role}));
         }
-        if(m.type==="error")setStatus(m.message||"Erreur");
-        if(m.type==="human_coach_requested"){setHumanCoachRequested(true);setStatus("Coach humain demandé.");}
-        if(m.type==="session_ended"){setConnected(false);setSessionEnded(true);setStatus("Session terminée.");}
-        if(m.type==="voice_start" && role==="coach"){setStatus("Appel vocal demandé depuis la tablette.");}
-        if(m.type==="voice_signal" && role==="coach"){handleVoiceSignal(m.payload);}
-        if(m.type==="voice_end"){endVoice(false);}
-      }catch{}
+      };
+      ws.onmessage=e=>{
+        try{
+          const m=JSON.parse(e.data);
+          if(m.type==="pairing"&&m.success){setConnected(true);setStatus("Session connectée.");}
+          if(m.type==="frame"){
+            const nextFrame=m.payload?.imageData||null;
+            setFrame(nextFrame);
+          }
+          if(m.type==="error"){
+            setConnected(false);
+            setStatus(m.message||"Erreur");
+            if(/session.*termin|session.*expir/i.test(String(m.message||""))){
+              sessionEndedLocal=true;
+              setSessionEnded(true);
+              if(reconnectTimer!==undefined)window.clearTimeout(reconnectTimer);
+            }
+          }
+          if(m.type==="human_coach_requested"){setHumanCoachRequested(true);setStatus("Coach humain demandé.");}
+          if(m.type==="session_ended"){
+            sessionEndedLocal=true;
+            setConnected(false);
+            setSessionEnded(true);
+            setStatus("Session terminée.");
+            if(reconnectTimer!==undefined)window.clearTimeout(reconnectTimer);
+          }
+          if(m.type==="voice_start" && role==="coach"){setStatus("Appel vocal demandé depuis la tablette.");}
+          if(m.type==="voice_signal" && role==="coach"){handleVoiceSignal(m.payload);}
+          if(m.type==="voice_end"){endVoice(false);}
+        }catch{}
+      };
+      ws.onclose=()=>{
+        setConnected(false);
+        if(stopped||sessionEndedLocal)return;
+        const delays=[1000,2000,5000,10000];
+        const delay=delays[Math.min(reconnectAttempt,delays.length-1)];
+        reconnectAttempt=Math.min(reconnectAttempt+1,delays.length-1);
+        setStatus("Connexion interrompue. Reconnexion…");
+        reconnectTimer=window.setTimeout(connect,delay);
+      };
+      ws.onerror=()=>setConnected(false);
     };
-    ws.onclose=()=>setConnected(false);
-    return()=>ws.close();
-  },[sessionId,pairingCode,token]);
+
+    connect();
+    return()=>{
+      stopped=true;
+      if(reconnectTimer!==undefined)window.clearTimeout(reconnectTimer);
+      const ws=wsRef.current;
+      wsRef.current=null;
+      if(ws)ws.close();
+    };
+  },[sessionId,pairingCode,token,role]);
 
   const command=(action:string,payload:any={})=>{
     if(sessionEnded)return;

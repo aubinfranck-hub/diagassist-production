@@ -543,7 +543,10 @@ Ne fabrique aucune donnée absente de l'image.`,
           if (!s) return ws.send(JSON.stringify({ type: "error", message: "Session expirée." }));
           if (s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
 
-          const requestedRole = m.role === "coach" ? "coach" : (m.role === "controller" ? "controller" : "technician");
+          const requestedRole = typeof m.role === "string" ? m.role : "";
+          if (!["technician", "controller", "coach"].includes(requestedRole)) {
+            return ws.send(JSON.stringify({ type: "error", message: "Rôle de connexion invalide. La connexion doit préciser technician, controller ou coach." }));
+          }
           // Le scanner peut être un APK Android ou le module Web/Chrome.
           // Une connexion technicien sans bearer token est autorisée uniquement après
           // preuve de possession du code d'appairage court et liaison à un deviceId.
@@ -587,6 +590,12 @@ Ne fabrique aucune donnée absente de l'image.`,
           sid = s.id;
           paired = true;
           s.status = "active";
+          try {
+            await persistSession(s);
+          } catch {
+            paired = false;
+            return ws.send(JSON.stringify({ type: "error", message: "Impossible d’enregistrer l’état de la session." }));
+          }
           if (!clients.has(sid)) clients.set(sid, new Set());
           clients.get(sid)!.add(ws);
           return ws.send(JSON.stringify({ type: "pairing", success: true, role, sessionId: sid, timestamp: Date.now() }));
