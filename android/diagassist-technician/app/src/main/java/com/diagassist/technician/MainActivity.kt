@@ -322,3 +322,4 @@ class MainActivity : ComponentActivity() {
         return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
     }
 }
+// CI: keep technician APK build synchronized with Android source changes.
