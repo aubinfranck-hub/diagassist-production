@@ -214,12 +214,49 @@ export function registerScreening(
     if (!/^\d{6}$/.test(pairingCode)) {
       return res.status(400).json({ success: false, message: "Code de connexion invalide." });
     }
-    const candidates = Array.from(sessions.values()).filter((s: any) =>
+    let candidates = Array.from(sessions.values()).filter((s: any) =>
       s.pairingCode === pairingCode &&
       Date.now() <= s.pairingExpiresAt &&
       s.status !== "completed" &&
       Date.now() <= s.expiresAt
     );
+
+    // Fallback DB : le service Render peut redémarrer entre la création de la session
+    // et l'appairage de la tablette. La session persistée doit alors rester utilisable.
+    if (candidates.length === 0 && dbQuery) {
+      try {
+        const result = await dbQuery(
+          `SELECT id, technician_phone, coach_phone, pairing_code, pairing_expires_at,
+                  coach_type, human_coach_requested, status, created_at, expires_at, frame_count
+           FROM screening_sessions
+           WHERE pairing_code = $1
+             AND pairing_expires_at > $2
+             AND expires_at > $2
+             AND status <> 'completed'
+           ORDER BY created_at DESC
+           LIMIT 2`,
+          [pairingCode, Date.now()]
+        );
+        candidates = (result.rows || []).map((row: any) => ({
+          id: row.id,
+          technicianPhone: row.technician_phone,
+          coachPhone: row.coach_phone || undefined,
+          pairingCode: row.pairing_code,
+          pairingExpiresAt: Number(row.pairing_expires_at),
+          coachType: row.coach_type === "human" ? "human" : "gemini",
+          humanCoachRequested: Boolean(row.human_coach_requested),
+          status: row.status === "active" ? "active" : "pending",
+          createdAt: Number(row.created_at),
+          expiresAt: Number(row.expires_at),
+          frameCount: Number(row.frame_count || 0),
+          lastVisionAt: 0,
+        }));
+        if (candidates.length === 1) sessions.set(candidates[0].id, candidates[0]);
+      } catch (err: any) {
+        console.error("[SCREENING][PAIR] récupération DB échouée:", err?.message || err);
+      }
+    }
+
     if (candidates.length !== 1) {
       return res.status(404).json({ success: false, message: "Code introuvable ou expiré. Vérifiez le code affiché sur DiagAssist." });
     }
