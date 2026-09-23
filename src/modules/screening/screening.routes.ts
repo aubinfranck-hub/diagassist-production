@@ -498,6 +498,7 @@ Ne fabrique aucune donnée absente de l'image.`,
       return res.status(503).json({ success: false, message: "Impossible d'enregistrer le coach. Réessayez." });
     }
     sendAll(s.id, { type: "human_coach_requested", sessionId: s.id, timestamp: Date.now() });
+    sendAll(s.id, { type: "command", sessionId: s.id, payload: { action: "request_screen" } });
     res.json({ success: true, sessionId: s.id, role: "coach" });
   });
 
@@ -600,6 +601,9 @@ Ne fabrique aucune donnée absente de l'image.`,
           }
           if (!clients.has(sid)) clients.set(sid, new Set());
           clients.get(sid)!.add(ws);
+          if ((role === "coach" || role === "controller") && s.lastFrame) {
+            try { ws.send(JSON.stringify(s.lastFrame)); } catch {}
+          }
           return ws.send(JSON.stringify({ type: "pairing", success: true, role, sessionId: sid, timestamp: Date.now() }));
         }
 
@@ -621,6 +625,7 @@ Ne fabrique aucune donnée absente de l'image.`,
           }
           if (++framesInWindow > MAX_FRAME_RATE_PER_SECOND) return;
           s.frameCount++;
+          s.lastFrame = m;
           sendAll(sid, m);
         } else if (m.type === "command" && (role === "controller" || role === "coach")) {
           const s = getSession(sid);
