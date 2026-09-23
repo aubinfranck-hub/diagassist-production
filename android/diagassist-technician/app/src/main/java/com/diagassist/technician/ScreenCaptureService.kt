@@ -35,6 +35,9 @@ class ScreenCaptureService : Service() {
     private var pairingCode = ""
     private var deviceId = ""
     private var reconnecting = false
+    private var everPaired = false
+    private var stopped = false
+    private val httpClient = OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build()
     private var projectionCallback: android.media.projection.MediaProjection.Callback? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -68,9 +71,9 @@ class ScreenCaptureService : Service() {
         if (currentSession.isBlank() || pairingCode.isBlank()) return
         val schemeBase = wsBase.trimEnd('/').replaceFirst("^https://".toRegex(), "wss://").replaceFirst("^http://".toRegex(), "ws://")
         val url = schemeBase + "/api/screening/stream"
-        val client = OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build()
-
-        socket = client.newWebSocket(
+        if (stopped) return
+        socket?.cancel()
+        socket = httpClient.newWebSocket(
             Request.Builder().url(url).build(),
             object : WebSocketListener() {
                 override fun onOpen(ws: WebSocket, response: Response) {
@@ -79,11 +82,20 @@ class ScreenCaptureService : Service() {
                         "type" to "pairing",
                         "sessionId" to currentSession,
                         "pairingCode" to pairingCode,
-                        "deviceId" to deviceId
+                        "deviceId" to deviceId,
+                        "reconnect" to everPaired
                     )).toString())
                 }
 
                 override fun onMessage(ws: WebSocket, text: String) {
+                    try {
+                        val m = JSONObject(text)
+                        if (m.optString("type") == "error") {
+                            stopCaptureAndExit()
+                            return
+                        }
+                    } catch (_: Exception) {
+                    }
                     handleCommand(text)
                 }
 
@@ -99,9 +111,10 @@ class ScreenCaptureService : Service() {
     }
 
     private fun scheduleReconnect() {
-        if (reconnecting) return
+        if (stopped || reconnecting) return
         reconnecting = true
-        Handler(Looper.getMainLooper()).postDelayed({
+        mainHandler.postDelayed({
+            if (stopped) return@postDelayed
             reconnecting = false
             connect()
         }, 3000)
@@ -262,6 +275,7 @@ class ScreenCaptureService : Service() {
                 "pairing" -> {
                     if (m.optBoolean("success", false)) {
                         currentSession = m.optString("sessionId", currentSession)
+                        everPaired = true
                         startCapture()
                     } else {
                         stopCaptureAndExit()
@@ -301,6 +315,8 @@ class ScreenCaptureService : Service() {
     }
 
     private fun stopCaptureAndExit() {
+        stopped = true
+        mainHandler.removeCallbacksAndMessages(null)
         socket?.close(1000, "Appairage refusé")
         stopSelf()
     }
@@ -313,6 +329,8 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onDestroy() {
+        stopped = true
+        mainHandler.removeCallbacksAndMessages(null)
         ScreenCaptureServiceBridge.register(null)
         socket?.close(1000, "stop")
         projectionCallback?.let { cb -> runCatching { projection?.unregisterCallback(cb) } }

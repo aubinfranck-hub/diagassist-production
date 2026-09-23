@@ -83,13 +83,13 @@ export function registerScreening(
     try {
       await dbQuery(
         `INSERT INTO screening_sessions
-          (id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type, human_coach_requested, status, created_at, expires_at, frame_count)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          (id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type, human_coach_requested, status, created_at, expires_at, frame_count, technician_device_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          ON CONFLICT (id) DO UPDATE SET
            coach_phone=$3, pairing_expires_at=$5, coach_type=$6,
-           human_coach_requested=$7, status=$8, expires_at=$10, frame_count=$11`,
+           human_coach_requested=$7, status=$8, expires_at=$10, frame_count=$11, technician_device_id=COALESCE($12, screening_sessions.technician_device_id)`,
         [s.id, s.technicianPhone, s.coachPhone || null, s.pairingCode, s.pairingExpiresAt,
-         s.coachType, s.humanCoachRequested, s.status, s.createdAt, s.expiresAt, s.frameCount]
+         s.coachType, s.humanCoachRequested, s.status, s.createdAt, s.expiresAt, s.frameCount, s.technicianDeviceId || null]
       );
     } catch (err: any) {
       console.error("[SCREENING][DB] sauvegarde session échouée:", err.message);
@@ -105,7 +105,7 @@ export function registerScreening(
     try {
       const result = await dbQuery(
         `SELECT id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type,
-                human_coach_requested, status, created_at, expires_at, frame_count
+                human_coach_requested, status, created_at, expires_at, frame_count, technician_device_id
          FROM screening_sessions WHERE lower(trim(id)) = lower(trim($1)) LIMIT 1`,
         [id]
       );
@@ -123,6 +123,7 @@ export function registerScreening(
         createdAt: Number(row.created_at),
         expiresAt: Number(row.expires_at),
         frameCount: Number(row.frame_count || 0),
+        technicianDeviceId: row.technician_device_id || undefined,
         lastVisionAt: 0,
       };
       if (Date.now() > s.expiresAt && s.status !== "completed") return null;
@@ -137,7 +138,7 @@ export function registerScreening(
   if (dbQuery) {
     dbQuery(
       `SELECT id, technician_phone, coach_phone, pairing_code, pairing_expires_at, coach_type,
-              human_coach_requested, status, created_at, expires_at, frame_count
+              human_coach_requested, status, created_at, expires_at, frame_count, technician_device_id
        FROM screening_sessions
        WHERE expires_at > $1 OR status = 'completed'
        ORDER BY created_at DESC
@@ -158,6 +159,7 @@ export function registerScreening(
           createdAt: Number(row.created_at),
           expiresAt: Number(row.expires_at),
           frameCount: Number(row.frame_count || 0),
+          technicianDeviceId: row.technician_device_id || undefined,
           lastVisionAt: 0,
         });
       }
@@ -227,7 +229,7 @@ export function registerScreening(
       try {
         const result = await dbQuery(
           `SELECT id, technician_phone, coach_phone, pairing_code, pairing_expires_at,
-                  coach_type, human_coach_requested, status, created_at, expires_at, frame_count
+                  coach_type, human_coach_requested, status, created_at, expires_at, frame_count, technician_device_id
            FROM screening_sessions
            WHERE pairing_code = $1
              AND pairing_expires_at > $2
@@ -249,6 +251,7 @@ export function registerScreening(
           createdAt: Number(row.created_at),
           expiresAt: Number(row.expires_at),
           frameCount: Number(row.frame_count || 0),
+          technicianDeviceId: row.technician_device_id || undefined,
           lastVisionAt: 0,
         }));
         if (candidates.length === 1) sessions.set(candidates[0].id, candidates[0]);
@@ -290,7 +293,7 @@ export function registerScreening(
     try {
       const result = await dbQuery(
         `SELECT id, technician_phone, coach_phone, coach_type, human_coach_requested,
-                status, created_at, expires_at, frame_count
+                status, created_at, expires_at, frame_count, technician_device_id
          FROM screening_sessions
          WHERE technician_phone = $1 OR coach_phone = $1
          ORDER BY created_at DESC
@@ -551,10 +554,15 @@ Ne fabrique aucune donnée absente de l'image.`,
           const isCoach = requestedRole === "coach" && s.humanCoachRequested && s.coachPhone === ws._phone;
 
           if (isTechnician) {
-            if (Date.now() > s.pairingExpiresAt) {
+            const deviceId = typeof m.deviceId === "string" ? m.deviceId.trim() : "";
+            const isReconnect = m.reconnect === true;
+            if (isReconnect) {
+              if (!s.technicianDeviceId || s.technicianDeviceId !== deviceId || s.status === "completed") {
+                return ws.send(JSON.stringify({ type: "error", message: "Reconnexion refusée. Cette tablette n’est pas liée à la session." }));
+              }
+            } else if (Date.now() > s.pairingExpiresAt) {
               return ws.send(JSON.stringify({ type: "error", message: "Code d’appairage expiré. Créez une nouvelle session." }));
             }
-            const deviceId = typeof m.deviceId === "string" ? m.deviceId.trim() : "";
             if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
             const key = s.id + ":" + (ws._phone || deviceId);
             if (m.pairingCode !== s.pairingCode) {
@@ -564,7 +572,10 @@ Ne fabrique aucune donnée absente de l'image.`,
               return ws.send(JSON.stringify({ type: "error", message: "Code incorrect." }));
             }
             if (s.technicianDeviceId && s.technicianDeviceId !== deviceId) return ws.send(JSON.stringify({ type: "error", message: "Cette session est déjà liée à une autre tablette." }));
-            s.technicianDeviceId = deviceId;
+            if (s.technicianDeviceId !== deviceId) {
+              s.technicianDeviceId = deviceId;
+              try { await persistSession(s); } catch { return ws.send(JSON.stringify({ type: "error", message: "Impossible d’enregistrer la tablette." })); }
+            }
           } else if (!isController && !isCoach) {
             return ws.send(JSON.stringify({ type: "error", message: "Contrôleur non autorisé pour cette session." }));
           }

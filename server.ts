@@ -319,6 +319,7 @@ async function initDatabase(): Promise<void> {
       expires_at BIGINT NOT NULL,
       frame_count INTEGER NOT NULL DEFAULT 0
     );
+    ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS technician_device_id TEXT;
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_technician ON screening_sessions (technician_phone);
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_coach ON screening_sessions (coach_phone);
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_created ON screening_sessions (created_at DESC);
