@@ -616,7 +616,9 @@ Ne fabrique aucune donnée absente de l'image.`,
           if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
           const imageData = String(m.payload?.imageData || "");
           if (!imageData.startsWith("data:image/jpeg;base64,") || imageData.length > MAX_FRAME_BYTES) {
-            return ws.send(JSON.stringify({ type: "error", message: "Image de capture invalide ou trop volumineuse." }));
+            // Non fatal : une capture trop lourde ne doit pas couper tout le partage d'écran,
+            // seulement cette image (le prochain frame sera tenté normalement).
+            return ws.send(JSON.stringify({ type: "error", message: "Image de capture invalide ou trop volumineuse.", fatal: false }));
           }
           const now = Date.now();
           if (now - lastFrameWindowAt >= 1000) {
@@ -651,7 +653,8 @@ Ne fabrique aucune donnée absente de l'image.`,
           sendAll(sid, { type: m.type, payload: m.payload || {}, from: role }, ws);
         }
       } catch {
-        ws.send(JSON.stringify({ type: "error", message: "Message invalide." }));
+        // Non fatal : un message mal formé ne doit pas couper toute la session en cours.
+        ws.send(JSON.stringify({ type: "error", message: "Message invalide.", fatal: false }));
       }
     });
 
