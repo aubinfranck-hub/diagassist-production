@@ -27,6 +27,13 @@ export default function ScannerWebModule() {
   const captureTimerRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const deviceId = useMemo(makeDeviceId, []);
+  const manualDisconnectRef = useRef(true);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const stateRef = useRef<ConnectionState>("idle");
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     setBrowserSupport({
@@ -39,12 +46,18 @@ export default function ScannerWebModule() {
   }, []);
 
   useEffect(() => () => {
+    manualDisconnectRef.current = true;
+    if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
     if (captureTimerRef.current) window.clearInterval(captureTimerRef.current);
     captureStreamRef.current?.getTracks().forEach(t => t.stop());
     wsRef.current?.close();
   }, []);
 
   const connect = () => {
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     if (!sessionId || !pairingCode) {
       setStatus("Saisissez le code session et le code d'appairage.");
       return;
@@ -57,6 +70,7 @@ export default function ScannerWebModule() {
     if (target.startsWith("https://")) target = "wss://" + target.slice(8);
     if (!target.endsWith("/api/screening/stream")) target = target.replace(/\/$/, "") + "/api/screening/stream";
 
+    manualDisconnectRef.current = false;
     wsRef.current?.close();
     setState("connecting");
     setStatus("Connexion de la tablette Chrome…");
@@ -90,8 +104,12 @@ export default function ScannerWebModule() {
           handleBrowserCommand(action, message.payload || {});
         }
         if (message.type === "session_ended") {
+          manualDisconnectRef.current = true;
           setState("idle");
           setStatus("Session terminée par DiagAssist.");
+        }
+        if (message.type === "error") {
+          setStatus(message.message || "Erreur du serveur.");
         }
       } catch {
         setStatus("Message serveur invalide.");
@@ -99,10 +117,15 @@ export default function ScannerWebModule() {
     };
     ws.onerror = () => {
       setState("error");
-      setStatus("Erreur de connexion WebSocket.");
     };
     ws.onclose = () => {
+      const wasConnected = stateRef.current === "connected";
       setState(prev => prev === "connected" ? "idle" : prev);
+      if (manualDisconnectRef.current) return;
+      setStatus(wasConnected
+        ? "Connexion perdue avec DiagAssist. Reconnexion en cours…"
+        : "Connexion impossible. Nouvelle tentative…");
+      reconnectTimerRef.current = window.setTimeout(connect, 3000);
     };
   };
 
