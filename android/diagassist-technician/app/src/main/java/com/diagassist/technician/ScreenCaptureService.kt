@@ -85,6 +85,7 @@ class ScreenCaptureService : Service() {
                         "sessionId" to currentSession,
                         "pairingCode" to pairingCode,
                         "deviceId" to deviceId,
+                        "role" to "technician",
                         "reconnect" to everPaired
                     )).toString())
                 }
