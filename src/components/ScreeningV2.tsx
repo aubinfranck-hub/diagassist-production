@@ -59,7 +59,8 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
             setFrame(nextFrame);
           }
           if(m.type==="error"){
-            setConnected(false);
+            const fatal=m.fatal!==false;
+            if(fatal)setConnected(false);
             setStatus(m.message||"Erreur");
             if(/session.*termin|session.*expir/i.test(String(m.message||""))){
               sessionEndedLocal=true;

@@ -85,6 +85,7 @@ class ScreenCaptureService : Service() {
                         "sessionId" to currentSession,
                         "pairingCode" to pairingCode,
                         "deviceId" to deviceId,
+                        "role" to "technician",
                         "reconnect" to everPaired
                     )).toString())
                 }
@@ -93,7 +94,16 @@ class ScreenCaptureService : Service() {
                     try {
                         val m = JSONObject(text)
                         if (m.optString("type") == "error") {
-                            stopCaptureAndExit(m.optString("message", "Appairage refusé par DiagAssist."))
+                            // Le serveur envoie aussi des erreurs récupérables (ex : une capture
+                            // trop lourde) sur le même canal que les refus d'appairage/session.
+                            // Seules les erreurs marquées fatal (ou sans indication, par défaut)
+                            // doivent couper tout le partage d'écran.
+                            if (m.optBoolean("fatal", true)) {
+                                stopCaptureAndExit(m.optString("message", "Appairage refusé par DiagAssist."))
+                            } else {
+                                val message = m.optString("message", "Erreur DiagAssist.")
+                                mainHandler.post { Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show() }
+                            }
                             return
                         }
                     } catch (_: Exception) {
