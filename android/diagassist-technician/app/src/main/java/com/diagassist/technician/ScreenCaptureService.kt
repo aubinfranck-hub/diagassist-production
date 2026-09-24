@@ -10,6 +10,7 @@ import android.media.ImageReader
 import android.os.*
 import android.provider.Settings
 import android.util.Base64
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import okhttp3.*
 import org.json.JSONObject
@@ -37,6 +38,7 @@ class ScreenCaptureService : Service() {
     private var reconnecting = false
     private var everPaired = false
     private var stopped = false
+    private var preParingAttempts = 0
     private val httpClient = OkHttpClient.Builder().pingInterval(30, TimeUnit.SECONDS).build()
     private var projectionCallback: android.media.projection.MediaProjection.Callback? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -91,7 +93,7 @@ class ScreenCaptureService : Service() {
                     try {
                         val m = JSONObject(text)
                         if (m.optString("type") == "error") {
-                            stopCaptureAndExit()
+                            stopCaptureAndExit(m.optString("message", "Appairage refusé par DiagAssist."))
                             return
                         }
                     } catch (_: Exception) {
@@ -112,6 +114,13 @@ class ScreenCaptureService : Service() {
 
     private fun scheduleReconnect() {
         if (stopped || reconnecting) return
+        if (!everPaired) {
+            preParingAttempts++
+            if (preParingAttempts > MAX_PRE_PAIRING_ATTEMPTS) {
+                stopCaptureAndExit("Connexion à DiagAssist impossible. Vérifiez la connexion Internet de la tablette et réessayez.")
+                return
+            }
+        }
         reconnecting = true
         mainHandler.postDelayed({
             if (stopped) return@postDelayed
@@ -276,9 +285,10 @@ class ScreenCaptureService : Service() {
                     if (m.optBoolean("success", false)) {
                         currentSession = m.optString("sessionId", currentSession)
                         everPaired = true
+                        preParingAttempts = 0
                         startCapture()
                     } else {
-                        stopCaptureAndExit()
+                        stopCaptureAndExit(m.optString("message", "Appairage refusé par DiagAssist."))
                     }
                 }
                 "command" -> {
@@ -314,11 +324,16 @@ class ScreenCaptureService : Service() {
         )
     }
 
-    private fun stopCaptureAndExit() {
+    private fun stopCaptureAndExit(message: String) {
         stopped = true
         mainHandler.removeCallbacksAndMessages(null)
         socket?.close(1000, "Appairage refusé")
+        mainHandler.post { Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show() }
         stopSelf()
+    }
+
+    companion object {
+        private const val MAX_PRE_PAIRING_ATTEMPTS = 5
     }
 
     private fun stopCaptureResources() {
