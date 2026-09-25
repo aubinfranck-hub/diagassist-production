@@ -317,9 +317,23 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
               {diagnosis.brandModelInfo || "Véhicule Identifié"}
             </h2>
             {diagnosis.groundedInSources && (
-              <span className="inline-flex items-center gap-1.5 mt-2 text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
-                ✓ Vérifié via recherche sur sources ouvertes
-              </span>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-1">
+                  ✓ Vérifié via recherche sur sources ouvertes
+                </span>
+                {diagnosis.sources?.map((s, i) => (
+                  <a
+                    key={i}
+                    href={s.uri}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={s.title}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-300 bg-slate-900/60 border border-white/[0.08] rounded-full px-2.5 py-1 hover:border-emerald-500/30 hover:text-emerald-400 transition max-w-[180px] truncate"
+                  >
+                    🔗 {new URL(s.uri).hostname.replace("www.", "")}
+                  </a>
+                ))}
+              </div>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-3 shrink-0">

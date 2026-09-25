@@ -20,6 +20,11 @@ export interface EstimatedCosts {
   currency: string;
 }
 
+export interface GroundingSource {
+  title: string;
+  uri: string;
+}
+
 export interface Diagnosis {
   brandModelInfo: string;
   dtcCodesDetected: DtcCode[];
@@ -32,6 +37,7 @@ export interface Diagnosis {
   explanationText: string;
   clarifyingQuestions?: string[];
   groundedInSources?: boolean;
+  sources?: GroundingSource[];
 }
 
 export interface ApiUsage {
@@ -51,6 +57,7 @@ export interface ChatMessage {
   file?: string;
   mimeType?: string;
   fileName?: string;
+  sources?: GroundingSource[];
 }
 
 export interface DiagnosisResponse {

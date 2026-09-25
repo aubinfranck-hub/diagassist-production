@@ -790,6 +790,22 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries = 3, initial
 /**
  * Executes a generateContent call with automatic fallback models and retries
  */
+// Extrait les vraies sources citées par le grounding Google Search (URL + titre), pour les
+// afficher côté client plutôt qu'un simple badge "vérifié" sans preuve consultable.
+function extractGroundingSources(response: any): { title: string; uri: string }[] {
+  const chunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks;
+  if (!Array.isArray(chunks)) return [];
+  const seen = new Set<string>();
+  const sources: { title: string; uri: string }[] = [];
+  for (const chunk of chunks) {
+    const uri = chunk?.web?.uri;
+    if (!uri || seen.has(uri)) continue;
+    seen.add(uri);
+    sources.push({ title: chunk?.web?.title || uri, uri });
+  }
+  return sources.slice(0, 6);
+}
+
 async function generateContentWithFallbackAndRetry(
   contents: any,
   config: any,
@@ -973,6 +989,7 @@ async function startServer() {
       // le prompt du diagnostic structuré ci-dessous — au lieu de laisser Gemini deviner uniquement
       // depuis sa mémoire d'entraînement, potentiellement datée ou générique.
       let groundedFindings: string | null = null;
+      let groundingSources: { title: string; uri: string }[] = [];
       if (vehicleBrand || textDescription) {
         try {
           const searchQuery = `${vehicleBrand || ""} ${vehicleModel || ""} ${vehicleYear || ""} panne "${textDescription || ""}" code défaut cause diagnostic automobile`;
@@ -982,6 +999,7 @@ async function startServer() {
             config: { tools: [{ googleSearch: {} }] },
           });
           groundedFindings = searchResult.text || null;
+          groundingSources = extractGroundingSources(searchResult);
         } catch (searchErr) {
           console.warn("[Diagnose Grounding] Recherche web indisponible, poursuite sur connaissance générale:", searchErr);
         }
@@ -1207,6 +1225,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       // recherche de sources ouvertes (DTC officiels, forums techniques, bulletins constructeur)
       // ou uniquement sur la connaissance générale de l'IA.
       diagnosisData.groundedInSources = Boolean(groundedFindings);
+      diagnosisData.sources = groundingSources;
 
       // Add actual API usage metadata to the response
       res.json({
@@ -1295,6 +1314,16 @@ L'utilisateur peut transmettre une photo, vidéo ou enregistrement audio À TOUT
 STRUCTURE DE SUIVI D'ÉTAT (SESSION STATE JSON) :
 Maintiens l'état de la session : { vehicule, historique_intervention, symptome, outils_disponibles, outils_invitation_envoyee, codes_releves, hypotheses, prerequisites, current_test, tests_done, hypotheses_ecartees, medias_session, diagnostic_final }.
 
+RECHERCHE WEB EN TEMPS RÉEL (OBLIGATOIRE POUR LES QUESTIONS FACTUELLES PRÉCISES) :
+Tu as accès à une recherche web en direct. Utilise-la SYSTÉMATIQUEMENT dès que le mécanicien pose une question
+factuelle précise à laquelle ta mémoire seule ne suffit pas à répondre avec certitude, par exemple :
+- Localisation d'une pièce sur un modèle précis ("où est le bouchon de vidange d'huile sur un Mercedes GLB ?")
+- Décodage d'un numéro VIN (position, chiffre) ou identification d'un véhicule à partir de son VIN
+- Couples de serrage, capacités (huile, liquide de refroidissement), références de pièces OEM
+- Bulletins constructeur, rappels (recalls), procédures spécifiques à un modèle/année précis
+Ne réponds jamais "je ne sais pas" ou une estimation vague à ce type de question sans avoir d'abord cherché.
+Si la recherche ne donne rien de fiable, dis-le clairement plutôt que d'inventer un chiffre.
+
 CONTEXTE TECHNIQUE DU VÉHICULE ACTUEL :
 ${JSON.stringify(diagnosticContext || {})}
 
@@ -1339,18 +1368,24 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         parts: userParts,
       });
 
-      // Query Gemini 3.5 Flash for conversational feedback (with fallback and retries)
+      // Query Gemini 3.5 Flash for conversational feedback (with fallback and retries).
+      // Grounding Google Search activé ici : contrairement au diagnostic initial (réponse JSON
+      // structurée, incompatible avec l'outil de recherche dans le même appel), le chat répond en
+      // texte libre — le modèle peut donc chercher sur le web et répondre en un seul appel, ce qui
+      // lui permet de se comporter en agent sur les questions factuelles précises (localisation
+      // d'une pièce, décodage VIN, couples de serrage, bulletins constructeur...).
       const response = await generateContentWithFallbackAndRetry(
         contentsPayload,
         {
           systemInstruction,
+          tools: [{ googleSearch: {} }],
         }
       );
 
       const responseText = response.text || "Je n'ai pas pu générer de réponse.";
       const promptTokens = response.usageMetadata?.promptTokenCount || 0;
       const candidatesTokens = response.usageMetadata?.candidatesTokenCount || 0;
-      
+
       const inputCost = promptTokens * 0.000000075;
       const outputCost = candidatesTokens * 0.000000300;
       const totalCostUSD = inputCost + outputCost;
@@ -1358,6 +1393,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       res.json({
         success: true,
         reply: responseText,
+        sources: extractGroundingSources(response),
         apiUsage: {
           promptTokens,
           candidatesTokens,

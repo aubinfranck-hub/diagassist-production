@@ -610,6 +610,7 @@ export default function App() {
           text: data.reply,
           timestamp: new Date(),
           apiUsage: data.apiUsage,
+          sources: data.sources,
         };
 
         setChatHistory((prev) => [...prev, modelMsg]);

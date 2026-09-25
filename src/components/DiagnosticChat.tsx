@@ -650,6 +650,23 @@ export default function DiagnosticChat({ diagnosis, chatHistory, onSendMessage, 
                         <span className="text-[9px] text-red-500/80 font-mono ml-1.5 uppercase font-bold tracking-wider">Lecture en cours...</span>
                       </div>
                     )}
+
+                    {!isUser && msg.sources && msg.sources.length > 0 && (
+                      <div className="mt-2.5 pt-2.5 border-t border-white/[0.06] flex flex-wrap gap-1.5">
+                        {msg.sources.map((s, i) => (
+                          <a
+                            key={i}
+                            href={s.uri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={s.title}
+                            className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-1 hover:bg-emerald-500/20 transition max-w-[160px] truncate"
+                          >
+                            🔗 {new URL(s.uri).hostname.replace("www.", "")}
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Speaker icon for user questions (on right) */}
