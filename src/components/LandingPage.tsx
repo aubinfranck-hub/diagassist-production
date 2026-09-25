@@ -83,14 +83,14 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             {isOwner ? (
               <>VOTRE VOITURE FAIT UN BRUIT ? <span className="text-red-500">SACHEZ SI C'EST GRAVE</span></>
             ) : (
-              <>"ÇA FAIT UN BRUIT BIZARRE", DIT LE CLIENT. <span className="text-red-500">VOUS, VOUS TESTEZ QUOI ?</span></>
+              <>LE CODE DÉFAUT, C'EST FACILE. <span className="text-red-500">SAVOIR QUOI TESTER, C'EST AUTRE CHOSE.</span></>
             )}
           </h1>
 
           <p className="text-[#cbd5e1] text-sm md:text-base max-w-xl mt-4 leading-relaxed relative">
             {isOwner
               ? "Décrivez ce que vous constatez, en mots simples. DiagAssist vous explique ce qui se passe, si vous pouvez rouler, combien ça devrait coûter — et vous oriente vers un mécanicien agréé près de chez vous."
-              : "Pas de code défaut clair, pas envie de changer une pièce au hasard pour voir. Décrivez le symptôme, joignez une photo ou un son du moteur : DiagAssist vous guide test par test jusqu'à la vraie cause, avant de toucher à quoi que ce soit."}
+              : "Interprétation du code, protocole de test, bonnes pratiques de diagnostic : saisissez le code de votre valise ou décrivez le symptôme. Chaque diagnostic est recoupé avec des sources ouvertes réelles — bases de codes DTC, bulletins constructeur, forums techniques reconnus."}
           </p>
 
           <div className="space-y-2.5 mt-6 relative">
@@ -101,9 +101,9 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
                   "Évitez de vous faire surfacturer au garage",
                 ]
               : [
-                  "Jamais de pièce changée à l'aveugle : un protocole de test avant chaque conclusion",
-                  "Un diagnostic argumenté à montrer au client, pas juste \"il faut changer ça\"",
-                  "Fonctionne avec le matériel que vous avez déjà en atelier",
+                  "Protocole de test étape par étape pour chaque code défaut, pas juste sa définition",
+                  "Recoupé avec des sources ouvertes réelles (DTC, bulletins constructeur, forums pros)",
+                  "Jamais de pièce changée à l'aveugle : un test avant chaque conclusion",
                 ]
             ).map((t, i) => (
               <div key={i} className="flex items-center gap-2.5 text-sm text-[#e2e8f0]">
@@ -141,11 +141,11 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             DiagAssist, c'est quoi exactement ?
           </h2>
           <p className="text-sm text-slate-400 leading-relaxed">
-            Un bruit métallique au freinage, un voyant moteur sans code clair, une panne électrique qui va et vient :
-            DiagAssist est un assistant de diagnostic automobile conçu avec des professionnels de la mécanique pour
-            traiter exactement ce genre de cas. Vous décrivez le symptôme — par texte, photo ou son du moteur — et
-            vous recevez un vrai rapport technique (causes probables classées par fréquence, protocole de test,
-            guide de réparation, chiffrage), avec un chat de suivi et un copilote vocal en direct pendant l'intervention.
+            Votre valise sort un code défaut, mais un code seul ne dit pas quoi tester ni dans quel ordre. DiagAssist
+            est un assistant de diagnostic automobile conçu avec des professionnels de la mécanique pour combler
+            exactement ce manque : saisissez le code (ou décrivez le symptôme, avec photo ou son du moteur) et
+            recevez un vrai rapport technique — causes probables classées par fréquence, protocole de test, guide
+            de réparation, chiffrage — avec un chat de suivi et un copilote vocal en direct pendant l'intervention.
           </p>
         </div>
 
