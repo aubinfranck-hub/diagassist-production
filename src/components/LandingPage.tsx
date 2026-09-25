@@ -352,7 +352,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             <p className="text-3xl font-black text-white">15 000F</p>
             <p className="text-[11px] text-slate-500">Par mois</p>
             <ul className="text-left space-y-1.5 pt-2">
-              {["Diagnostics illimités", "Explications vocales", "Données techniques Haynes Pro"].map((t, i) => (
+              {["Diagnostics illimités", "Explications vocales", "Fiche technique approfondie"].map((t, i) => (
                 <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
                   <Check className="w-3 h-3 text-red-400 shrink-0 mt-0.5" /> {t}
                 </li>

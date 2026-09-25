@@ -427,7 +427,7 @@ export default function AdminPanel({
               onChange={(e) => setSubscribersLite(parseInt(e.target.value))}
               className="w-full accent-sky-500 h-1.5 bg-slate-850 rounded-lg cursor-pointer"
             />
-            <span className="text-[10px] text-slate-500 block">Mécaniciens abonnés à la formule sans audio ni Haynes Pro</span>
+            <span className="text-[10px] text-slate-500 block">Mécaniciens abonnés à la formule sans audio ni fiche technique approfondie</span>
           </div>
 
           <div className="space-y-2">
@@ -444,14 +444,14 @@ export default function AdminPanel({
               onChange={(e) => setSubscribersPremium(parseInt(e.target.value))}
               className="w-full accent-red-600 h-1.5 bg-slate-850 rounded-lg cursor-pointer"
             />
-            <span className="text-[10px] text-slate-500 block">Mécaniciens professionnels (Haynes Pro + Audio TTS)</span>
+            <span className="text-[10px] text-slate-500 block">Mécaniciens professionnels (fiche technique approfondie + Audio TTS)</span>
           </div>
         </div>
 
         {/* Calculations */}
         {(() => {
           const COST_PER_QUERY_CFA = 0.243; // Standard: 1800 in, 900 out tokens at $0.075/0.30 per 1M
-          const COST_PER_PREMIUM_QUERY_CFA = 0.495; // Premium: 5000 in, 1500 out tokens with TTS/Haynes Pro
+          const COST_PER_PREMIUM_QUERY_CFA = 0.495; // Premium: 5000 in, 1500 out tokens with TTS/fiche technique
 
           // Revenue
           const revPass = subscribersPass * 500;

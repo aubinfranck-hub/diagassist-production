@@ -665,7 +665,7 @@ export default function App() {
       "Diagnostic Panne: Peugeot 208 (2018) - Code OBD P0234",
       "Analyse Audio: Clac-clac moteur métallique à froid",
       "Analyse Photo: Voyant FAP allumé sur tableau de bord",
-      "Recherche Fiche Haynes Pro: Couples de serrage injecteurs",
+      "Recherche Fiche Technique: Couples de serrage injecteurs",
       "Discussion Chat: 'Où se situe le capteur de pression d'admission ?'"
     ];
     const randomAction = mockActions[Math.floor(Math.random() * mockActions.length)];

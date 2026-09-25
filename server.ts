@@ -1294,6 +1294,81 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
     }
   });
 
+  // API Route : fiche technique approfondie (remplace l'ancien panneau "Haynes Pro" qui affichait
+  // des valeurs génériques FABRIQUÉES par correspondance de mots-clés, présentées à tort comme
+  // vérifiées. Fait maintenant une vraie recherche web ciblée sur le composant précis, puis
+  // structure UNIQUEMENT ce qui a été trouvé — le modèle doit répondre "Non trouvé dans les
+  // sources" plutôt que d'inventer une valeur numérique absente de la recherche.
+  app.post("/api/diagnose/technical-lookup", requireAuth, async (req: any, res) => {
+    try {
+      const { brandModelInfo, probableCauses, dtcCodesDetected } = req.body;
+      const { plan } = req.session;
+      const premiumEligible = ["free_trial", "premium", "payg_active"].includes(plan);
+      if (!premiumEligible) {
+        return res.status(403).json({ success: false, message: "Cette fonctionnalité nécessite un forfait actif." });
+      }
+      if (!brandModelInfo) {
+        return res.status(400).json({ success: false, message: "Informations véhicule manquantes." });
+      }
+
+      const codesText = Array.isArray(dtcCodesDetected) ? dtcCodesDetected.map((c: any) => c.code).filter(Boolean).join(", ") : "";
+      const causesText = Array.isArray(probableCauses) ? probableCauses.join(" ; ") : "";
+
+      let groundedFindings = "";
+      let sources: { title: string; uri: string }[] = [];
+      try {
+        const searchResult = await getAIClient().models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: `Recherche des données techniques FIABLES et VÉRIFIÉES pour réparer ce véhicule : ${brandModelInfo}. Codes défauts concernés : ${codesText || "aucun code précis"}. Causes probables : ${causesText || "non précisées"}. Cherche spécifiquement : le composant exact concerné, son emplacement précis sur ce véhicule, les valeurs de référence multimètre (résistance en ohms, tension d'alimentation) si c'est un capteur/actionneur électrique, le couple de serrage recommandé en Nm si applicable, et tout bulletin technique constructeur pertinent. Utilise des sources fiables (manuels techniques, forums de mécaniciens professionnels reconnus, bulletins constructeur). Sois factuel, ne devine jamais une valeur numérique que tu n'as pas trouvée.`,
+          config: { tools: [{ googleSearch: {} }] },
+        });
+        groundedFindings = searchResult.text || "";
+        sources = extractGroundingSources(searchResult);
+      } catch (searchErr) {
+        console.warn("[Technical Lookup] Recherche web indisponible:", searchErr);
+      }
+
+      if (!groundedFindings) {
+        return res.json({
+          success: true,
+          found: false,
+          message: "Aucune donnée technique fiable trouvée via la recherche web pour ce composant précis.",
+        });
+      }
+
+      const structureResponse = await generateContentWithFallbackAndRetry(
+        `Voici des informations techniques trouvées par recherche web sur : ${brandModelInfo}, codes ${codesText || "N/A"}.\n"""\n${groundedFindings}\n"""\nExtrais et structure ces informations. Si une donnée n'est pas présente dans le texte ci-dessus, réponds EXACTEMENT "Non trouvé dans les sources" pour ce champ précis — n'invente JAMAIS de valeur numérique absente du texte ci-dessus.`,
+        {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              component: { type: Type.STRING, description: "Le composant exact concerné." },
+              location: { type: Type.STRING, description: "Son emplacement précis sur ce véhicule." },
+              resistance: { type: Type.STRING, description: "Valeur de résistance au multimètre en ohms, ou 'Non trouvé dans les sources'." },
+              voltage: { type: Type.STRING, description: "Tension d'alimentation ou de référence, ou 'Non trouvé dans les sources'." },
+              torque: { type: Type.STRING, description: "Couple de serrage recommandé en Nm, ou 'Non trouvé dans les sources'." },
+              bulletin: { type: Type.STRING, description: "Bulletin technique constructeur pertinent, ou 'Non trouvé dans les sources'." },
+            },
+            required: ["component", "location", "resistance", "voltage", "torque", "bulletin"],
+          },
+        }
+      );
+
+      const structured = JSON.parse((structureResponse.text || "{}").trim());
+
+      res.json({
+        success: true,
+        found: true,
+        data: structured,
+        sources,
+      });
+    } catch (error: any) {
+      console.error("Erreur technical-lookup:", error);
+      res.status(500).json({ success: false, message: "Erreur lors de la recherche technique. Veuillez réessayer." });
+    }
+  });
+
   // API Route: Contextual follow-up chat
   app.post("/api/chat", requireAuth, async (req: any, res) => {
     try {

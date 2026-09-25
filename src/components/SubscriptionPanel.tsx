@@ -207,7 +207,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               {currentPlan === "free_expired" && "Votre période d'essai gratuit de 72 heures est terminée. Veuillez prendre un pass 24h à l'usage ou vous abonner pour continuer à diagnostiquer vos pannes."}
               {currentPlan === "payg_active" && "Votre pass d'accès à l'usage de 500 F CFA est actif. Il expirera dans 24 heures."}
               {currentPlan === "lite" && "Vous bénéficiez d'un accès normal illimité à l'analyse de panne standard et aux guides de réparation."}
-              {currentPlan === "premium" && "Accès illimité ! Explications audio TTS de haute qualité et fiches Haynes Pro d'expert incluses."}
+              {currentPlan === "premium" && "Accès illimité ! Explications audio TTS de haute qualité et fiches techniques approfondies incluses."}
             </p>
           </div>
  
@@ -310,7 +310,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               </li>
               <li className="flex items-center gap-2 text-slate-500 line-through">
                 <BookOpen className="w-4 h-4 shrink-0" />
-                <span>Données techniques Haynes Pro</span>
+                <span>Fiche technique approfondie</span>
               </li>
             </ul>
           </div>
@@ -356,7 +356,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               <li className="flex items-center gap-2">
                 <Check className="w-4 h-4 text-red-500 shrink-0" />
                 <span>
-                  Données techniques <strong>Haynes Pro</strong>
+                  <strong>Fiche technique</strong> approfondie
                 </span>
               </li>
               <li className="flex items-center gap-2">

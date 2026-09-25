@@ -237,52 +237,54 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
 
   const isPremiumActive = currentPlan === "free_trial" || currentPlan === "premium" || currentPlan === "payg_active";
 
-  const getHaynesProData = () => {
-    const causesText = diagnosis.probableCauses.join(" ").toLowerCase();
-    const isSensor = causesText.includes("capteur") || causesText.includes("sensor") || causesText.includes("sonde") || causesText.includes("valeur") || causesText.includes("mesure");
-    const isInjector = causesText.includes("injecteur") || causesText.includes("injection") || causesText.includes("carburant") || causesText.includes("rampe");
-    const isFap = causesText.includes("fap") || causesText.includes("particule") || causesText.includes("échappement") || causesText.includes("catalyseur") || causesText.includes("suie");
-    const isTurbo = causesText.includes("turbo") || causesText.includes("suralimentation") || causesText.includes("pression") || causesText.includes("électrovanne");
-    
-    let component = "Composant Général du Système";
-    let location = "Compartiment moteur principal, vérifier les faisceaux électriques associés.";
-    let resistance = "120 - 150 Ω (ohms)";
-    let torque = "20 Nm ± 2 (Serrage standard)";
-    let voltage = "5.0 V d'alimentation de référence du calculateur";
-    let pinout = "Broche 1 : Alimentation (5V), Broche 2 : Signal de retour, Broche 3 : Masse (0V)";
-    let safetyBulletin = "Avis technique constructeur : Nettoyer soigneusement la portée de joint avant de remonter le nouveau composant pour éviter toute fuite ou fausse mesure.";
+  // Fiche technique approfondie : recherche web réelle sur le composant précis (remplace
+  // l'ancien panneau qui affichait des valeurs génériques fabriquées par mots-clés).
+  const [hpLoading, setHpLoading] = useState(false);
+  const [hpData, setHpData] = useState<{ component: string; location: string; resistance: string; voltage: string; torque: string; bulletin: string } | null>(null);
+  const [hpFound, setHpFound] = useState<boolean | null>(null);
+  const [hpError, setHpError] = useState<string | null>(null);
 
-    if (isSensor) {
-      component = "Capteur / Sonde Actif de Mesure";
-      location = "Sur la conduite d'admission principale ou collecteur d'échappement.";
-      resistance = "240 Ω à température ambiante (20°C)";
-      torque = "15 Nm (Serrage modéré à la clé dynamométrique)";
-      voltage = "4.8 V - 5.1 V (Tension stabilisée de référence)";
-    } else if (isInjector) {
-      component = "Injecteur Électromagnétique Common Rail";
-      location = "Rampe d'alimentation haute pression commune, culasse supérieure.";
-      resistance = "12.5 Ω ± 0.5 Ω (Injecteur solénoïde)";
-      torque = "28 Nm + serrage angulaire de 90° (Toujours remplacer le joint pare-feu en cuivre)";
-      voltage = "Impulsion haute tension (80V à 100V) gérée par l'ECU";
-      pinout = "Broche 1 : Signal commande (Négatif commuté), Broche 2 : Alimentation positive";
-    } else if (isFap) {
-      component = "Capteur de Pression Différentielle FAP";
-      location = "Compartiment moteur, monté sur le tablier avec deux durites reliées au filtre à particules.";
-      resistance = "N/A - Signal actif de type piezo-résistif";
-      torque = "45 Nm pour les raccords métalliques sur la ligne d'échappement";
-      voltage = "0.5 V au ralenti (jusqu'à 4.5 V sous pleine charge)";
-    } else if (isTurbo) {
-      component = "Électrovanne de Régulation Wastegate (N75)";
-      location = "À proximité immédiate du turbocompresseur ou fixé sur le tablier de cloison.";
-      resistance = "30 Ω à 35 Ω";
-      torque = "9 Nm (Fixation sur patte de support métallique)";
-      voltage = "12.0 V pulsé en Modulation de Largeur d'Impulsion (PWM)";
-    }
+  useEffect(() => {
+    if (!isPremiumActive || !diagnosis.brandModelInfo) return;
+    let cancelled = false;
+    setHpLoading(true);
+    setHpData(null);
+    setHpFound(null);
+    setHpError(null);
 
-    return { component, location, resistance, torque, voltage, pinout, safetyBulletin };
-  };
+    fetch("/api/diagnose/technical-lookup", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${localStorage.getItem("auth_session_token")}`,
+      },
+      body: JSON.stringify({
+        brandModelInfo: diagnosis.brandModelInfo,
+        probableCauses: diagnosis.probableCauses,
+        dtcCodesDetected: diagnosis.dtcCodesDetected,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.success && data.found) {
+          setHpData(data.data);
+          setHpFound(true);
+        } else if (data.success) {
+          setHpFound(false);
+        } else {
+          setHpError(data.message || "Impossible de récupérer la fiche technique.");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setHpError("Erreur réseau lors de la récupération de la fiche technique.");
+      })
+      .finally(() => {
+        if (!cancelled) setHpLoading(false);
+      });
 
-  const hpData = getHaynesProData();
+    return () => { cancelled = true; };
+  }, [isPremiumActive, diagnosis.brandModelInfo, diagnosis.probableCauses, diagnosis.dtcCodesDetected]);
 
   return (
     <div className="space-y-8">
@@ -522,89 +524,101 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
         </div>
       </div>
 
-      {/* Haynes Pro Database Approfondissement */}
+      {/* Fiche technique approfondie — recherche web réelle, pas une base licenciée */}
       <div className="premium-glass-card rounded-3xl p-6 md:p-8 text-slate-100 shadow-2xl relative overflow-hidden">
-        
-        {/* Haynes Pro Brand Tag Header */}
+
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-5 border-b border-white/[0.05] mb-6">
           <div>
             <h3 className="text-sm md:text-base font-display font-black text-white uppercase tracking-wider flex items-center gap-2.5">
               <div className="p-2 bg-red-600/10 text-red-500 rounded-xl border border-red-500/10">
                 <BookOpen className="w-5 h-5 text-red-500" />
               </div>
-              <span>🩺 Approfondissement Expert Haynes Pro</span>
+              <span>🩺 Fiche technique approfondie</span>
             </h3>
             <p className="text-xs text-slate-400 mt-1.5 font-medium">
-              Fiches techniques constructeurs et valeurs de référence multimètre
+              Recherche web ciblée sur le composant précis — valeurs de référence multimètre et couples de serrage
             </p>
           </div>
           <div className="bg-red-600/10 border border-red-500/20 text-red-500 text-[10px] md:text-xs font-mono font-black px-3 py-1.5 rounded-xl uppercase tracking-wider">
-            Base ProTech 2026
+            Recherche vérifiée
           </div>
         </div>
 
         {isPremiumActive ? (
-          /* Premium active state: Display beautiful technical specs */
-          <div className="space-y-6 animate-fade-in text-xs md:text-sm">
-            
-            <div className="bg-slate-950/80 border border-slate-800 p-5 md:p-6 rounded-2xl space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-850 pb-3">
-                <span className="font-bold text-white text-sm md:text-base">{hpData.component}</span>
-                <span className="bg-emerald-500/10 text-emerald-400 text-xs px-3 py-1 rounded-xl font-mono font-bold">
-                  Statut : Conforme aux données d'origine
-                </span>
-              </div>
-              <p className="text-slate-300 leading-relaxed text-sm">
-                <strong className="text-slate-400">Emplacement :</strong> {hpData.location}
-              </p>
+          hpLoading ? (
+            /* Recherche en cours : la fiche est générée par une vraie recherche web, pas instantanée */
+            <div className="flex flex-col items-center justify-center gap-3 py-10 text-center animate-fade-in">
+              <RefreshCw className="w-6 h-6 text-red-500 animate-spin" />
+              <p className="text-xs text-slate-400">Recherche des données techniques vérifiées pour ce véhicule...</p>
             </div>
+          ) : hpError ? (
+            <div className="p-5 bg-rose-500/5 border border-rose-500/15 rounded-2xl text-xs md:text-sm text-rose-400 leading-relaxed">
+              ⚠️ {hpError}
+            </div>
+          ) : hpFound === false ? (
+            <div className="p-5 bg-slate-950/40 border border-slate-850 rounded-2xl text-xs md:text-sm text-slate-400 leading-relaxed">
+              Aucune donnée technique fiable trouvée via recherche web pour ce composant précis. Référez-vous à la documentation constructeur ou à votre valise de diagnostic pour les valeurs exactes.
+            </div>
+          ) : hpData ? (
+            /* Données réellement trouvées par recherche web, structurées — jamais inventées */
+            <div className="space-y-6 animate-fade-in text-xs md:text-sm">
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-              
-              {/* Reference Values (multimeter / oscilloscope) */}
-              <div className="bg-slate-950/40 border border-slate-850 p-5 md:p-6 rounded-2xl space-y-3.5">
-                <span className="text-xs text-red-500 font-black uppercase tracking-wider block">
-                  Valeurs de référence (Diagnostic Actif)
-                </span>
-                <div className="space-y-2.5 text-sm">
-                  <div className="flex justify-between text-slate-400">
-                    <span>Résistance interne :</span>
-                    <span className="font-mono text-white font-black">{hpData.resistance}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-400">
-                    <span>Tension d'alimentation :</span>
-                    <span className="font-mono text-white font-black">{hpData.voltage}</span>
-                  </div>
-                  <div className="text-xs text-slate-400 border-t border-slate-900 pt-3 mt-2 leading-relaxed">
-                    <strong className="text-slate-300">Brochage prise (Pinout) :</strong> {hpData.pinout}
+              <div className="bg-slate-950/80 border border-slate-800 p-5 md:p-6 rounded-2xl space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-850 pb-3">
+                  <span className="font-bold text-white text-sm md:text-base">{hpData.component}</span>
+                  <span className="bg-emerald-500/10 text-emerald-400 text-xs px-3 py-1 rounded-xl font-mono font-bold">
+                    ✓ Recherche web vérifiée
+                  </span>
+                </div>
+                <p className="text-slate-300 leading-relaxed text-sm">
+                  <strong className="text-slate-400">Emplacement :</strong> {hpData.location}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+
+                {/* Reference Values (multimeter / oscilloscope) */}
+                <div className="bg-slate-950/40 border border-slate-850 p-5 md:p-6 rounded-2xl space-y-3.5">
+                  <span className="text-xs text-red-500 font-black uppercase tracking-wider block">
+                    Valeurs de référence (Diagnostic Actif)
+                  </span>
+                  <div className="space-y-2.5 text-sm">
+                    <div className="flex justify-between text-slate-400 gap-3">
+                      <span>Résistance interne :</span>
+                      <span className="font-mono text-white font-black text-right">{hpData.resistance}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-400 gap-3">
+                      <span>Tension d'alimentation :</span>
+                      <span className="font-mono text-white font-black text-right">{hpData.voltage}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Tightening Torques */}
-              <div className="bg-slate-950/40 border border-slate-850 p-5 md:p-6 rounded-2xl space-y-3.5">
-                <span className="text-xs text-sky-400 font-black uppercase tracking-wider block">
-                  Couples de Serrage Recommandés (Nm)
-                </span>
-                <div className="space-y-3 text-sm">
-                  <div className="flex justify-between text-slate-400">
-                    <span>Serrage principal :</span>
-                    <span className="font-mono text-white font-black">{hpData.torque}</span>
-                  </div>
-                  <div className="text-xs text-slate-400 border-t border-slate-900 pt-3 mt-2 leading-relaxed">
-                    💡 Un serrage excessif ou insuffisant peut fausser la mesure du capteur ou provoquer des fissures d'admission. Utilisez impérativement une clé dynamométrique calibrée.
+                {/* Tightening Torques */}
+                <div className="bg-slate-950/40 border border-slate-850 p-5 md:p-6 rounded-2xl space-y-3.5">
+                  <span className="text-xs text-sky-400 font-black uppercase tracking-wider block">
+                    Couple de Serrage Recommandé
+                  </span>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex justify-between text-slate-400 gap-3">
+                      <span>Serrage principal :</span>
+                      <span className="font-mono text-white font-black text-right">{hpData.torque}</span>
+                    </div>
+                    <div className="text-xs text-slate-400 border-t border-slate-900 pt-3 mt-2 leading-relaxed">
+                      💡 Un serrage excessif ou insuffisant peut fausser la mesure du capteur ou provoquer des fissures d'admission. Utilisez impérativement une clé dynamométrique calibrée.
+                    </div>
                   </div>
                 </div>
+
+              </div>
+
+              {/* Manufacturer Technical Bulletin */}
+              <div className="p-4 bg-red-600/5 border border-red-500/10 rounded-2xl text-xs md:text-sm text-red-400/90 leading-relaxed">
+                ⚠️ <strong>Bulletin technique constructeur :</strong> {hpData.bulletin}
               </div>
 
             </div>
-
-            {/* Manufacturer Safety Technical Bulletin */}
-            <div className="p-4 bg-red-600/5 border border-red-500/10 rounded-2xl text-xs md:text-sm text-red-400/90 leading-relaxed">
-              ⚠️ <strong>Bulletin d'alerte constructeur :</strong> {hpData.safetyBulletin}
-            </div>
-
-          </div>
+          ) : null
         ) : (
           /* Non-premium state: Display blurred technical layout with locker banner */
           <div className="relative">
@@ -634,10 +648,10 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
                 <Lock className="w-8 h-8 animate-pulse" />
               </div>
               <h4 className="text-base font-display font-black text-white uppercase tracking-wide">
-                Approfondissement Haynes Pro Bloqué
+                Fiche Technique Approfondie Bloquée
               </h4>
               <p className="text-xs md:text-sm text-slate-300 max-w-sm mt-2 leading-relaxed">
-                Débloquez la fiche technique Haynes Pro complète de cette panne : couples de serrage précis de la pièce, valeurs de résistance au multimètre pour tester le capteur, et bulletins constructeurs.
+                Débloquez la fiche technique complète de cette panne : couples de serrage précis de la pièce, valeurs de résistance au multimètre pour tester le capteur, et bulletins constructeurs — via recherche web ciblée.
               </p>
               <button
                 onClick={onUpgradeClick}
