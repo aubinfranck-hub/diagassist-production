@@ -23,16 +23,23 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans overflow-x-hidden relative">
       {/* Header */}
-      <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 shrink-0">
           <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg shadow-red-600/20 overflow-hidden">
             <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
           </div>
           <span className="font-display font-black text-lg uppercase tracking-tight block leading-none">DiagAssist</span>
         </div>
+        <nav className="hidden lg:flex items-center gap-6 text-xs font-bold uppercase tracking-wide text-[#94a3b8] whitespace-nowrap">
+          <a href="#comment-ca-marche" className="hover:text-[#f8fafc] transition">Comment ça marche</a>
+          <a href="#fonctionnalites" className="hover:text-[#f8fafc] transition">Fonctionnalités</a>
+          <a href="#tarifs" className="hover:text-[#f8fafc] transition">Tarifs</a>
+          <a href="/blog/" className="hover:text-[#f8fafc] transition">Blog</a>
+          <a href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")} target="_blank" rel="noopener noreferrer" className="hover:text-[#f8fafc] transition">Contact</a>
+        </nav>
         <button
           onClick={onGetStarted}
-          className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider px-5 py-2.5 rounded-xl transition cursor-pointer"
+          className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider px-5 py-2.5 rounded-xl transition cursor-pointer shrink-0"
         >
           Se connecter
         </button>
@@ -78,29 +85,43 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
             </a>
           </div>
 
-          {/* Mockup : démo littérale du mécanisme réel (code → protocole) */}
-          <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 shadow-2xl">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="flex-1 bg-slate-950 border border-white/[0.08] rounded-xl px-4 py-3 font-mono text-sm text-slate-300">
-                P0301
+          {/* Mockup : démo littérale du mécanisme réel (code → protocole), en cadre type navigateur */}
+          <div className="relative">
+            <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl shadow-2xl overflow-hidden">
+              <div className="flex items-center gap-1.5 px-4 py-3 border-b border-white/[0.06] bg-black/20">
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" />
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" />
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" />
               </div>
-              <div className="bg-red-600 text-white text-xs font-black uppercase px-4 py-3 rounded-xl">Analyser</div>
-            </div>
-            <div className="bg-slate-950/60 border border-white/[0.06] rounded-2xl p-4 space-y-3">
-              <p className="text-xs font-bold text-red-400 uppercase tracking-wide">Raté d'allumage — cylindre 1</p>
-              {[
-                "Vérifier l'historique du véhicule sur ce cylindre",
-                "Inspecter visuellement la bobine et le connecteur",
-                "Tester la résistance de la bobine (valeur de référence)",
-                "Permuter la bobine avec un cylindre sain",
-                "Remplacer la pièce confirmée défectueuse",
-                "Effacer le code et vérifier en conduite",
-              ].map((step, i) => (
-                <div key={i} className="flex items-start gap-2.5 text-xs text-slate-300">
-                  <span className="w-4 h-4 rounded-full bg-red-600/15 border border-red-500/30 text-red-400 text-[9px] font-black flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
-                  {step}
+              <div className="p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="flex-1 bg-slate-950 border border-white/[0.08] rounded-xl px-4 py-3 font-mono text-sm text-slate-300">
+                    P0301
+                  </div>
+                  <div className="bg-red-600 text-white text-xs font-black uppercase px-4 py-3 rounded-xl">Analyser</div>
                 </div>
-              ))}
+                <div className="bg-slate-950/60 border border-white/[0.06] rounded-2xl p-4 space-y-3">
+                  <p className="text-xs font-bold text-red-400 uppercase tracking-wide">Raté d'allumage — cylindre 1</p>
+                  {[
+                    "Vérifier l'historique du véhicule sur ce cylindre",
+                    "Inspecter visuellement la bobine et le connecteur",
+                    "Tester la résistance de la bobine (valeur de référence)",
+                    "Permuter la bobine avec un cylindre sain",
+                    "Remplacer la pièce confirmée défectueuse",
+                    "Effacer le code et vérifier en conduite",
+                  ].map((step, i) => (
+                    <div key={i} className="flex items-start gap-2.5 text-xs text-slate-300">
+                      <span className="w-4 h-4 rounded-full bg-red-600/15 border border-red-500/30 text-red-400 text-[9px] font-black flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                      {step}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Accent téléphone avec une vraie capture, visible seulement quand il y a la place (pas sur mobile/tablette) */}
+            <div className="hidden xl:block absolute -bottom-8 -right-8 w-32 rounded-[1.25rem] border-4 border-slate-800 bg-slate-950 shadow-2xl overflow-hidden rotate-3">
+              <img src="/preview/preview-live.png" alt="" className="w-full h-44 object-cover object-top" />
             </div>
           </div>
         </div>
@@ -172,7 +193,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
       </section>
 
       {/* Fonctionnalités, condensé */}
-      <section className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
+      <section id="fonctionnalites" className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
           {[
             { icon: Camera, title: "Photo & son", desc: "Voyant, moteur, écran de valise : envoyez une preuve, DiagAssist l'analyse." },
@@ -192,7 +213,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
       </section>
 
       {/* Forfaits */}
-      <section className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
+      <section id="tarifs" className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
         <h2 className="text-xl md:text-2xl font-display font-black text-center mb-2 uppercase tracking-tight">
           NOS OFFRES
         </h2>
