@@ -25,21 +25,21 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
-  const [step, setStep] = useState<"login" | "success" | "forgot" | "reset" | "register" | "register-otp">("login");
+  const [step, setStep] = useState<"login" | "success" | "forgot" | "reset" | "register">("login");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Création de compte (numéro + mot de passe), validée par un code OTP WhatsApp
+  // Création de compte directe (numéro + mot de passe), protégée par un captcha simple —
+  // aucune dépendance à un envoi SMS/WhatsApp externe.
   const [registerPassword, setRegisterPassword] = useState("");
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
-  const [registerCode, setRegisterCode] = useState("");
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [registerLoading, setRegisterLoading] = useState(false);
-  const [registerInfo, setRegisterInfo] = useState<string | null>(null);
-  // En mode simulation (Twilio non configuré, hors production), le serveur renvoie le code
-  // directement pour ne pas bloquer les tests — jamais en production.
-  const [registerDevCode, setRegisterDevCode] = useState<string | null>(null);
+  const [captchaId, setCaptchaId] = useState<string | null>(null);
+  const [captchaQuestion, setCaptchaQuestion] = useState<string | null>(null);
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const [captchaLoading, setCaptchaLoading] = useState(false);
 
   // Mot de passe oublié
   const [resetEmail, setResetEmail] = useState("");
@@ -150,12 +150,30 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
     }
   };
 
-  // Étape 1 de la création de compte : envoie le code de validation WhatsApp au numéro saisi.
-  const handleStartRegister = async (e: React.FormEvent) => {
+  // Charge une nouvelle question captcha (appelé à l'ouverture de l'écran d'inscription,
+  // et après chaque tentative pour éviter le rejeu de la même réponse).
+  const loadCaptcha = async () => {
+    setCaptchaLoading(true);
+    setCaptchaAnswer("");
+    try {
+      const response = await fetch("/api/auth/captcha", { method: "POST" });
+      const data = await response.json();
+      if (data.success) {
+        setCaptchaId(data.captchaId);
+        setCaptchaQuestion(data.question);
+      }
+    } catch (err) {
+      // Pas grave : l'utilisateur peut réessayer, le bouton "Actualiser" relance loadCaptcha().
+    } finally {
+      setCaptchaLoading(false);
+    }
+  };
+
+  // Création directe du compte (numéro + mot de passe), protégée par le captcha —
+  // aucune attente d'un code envoyé par SMS/WhatsApp.
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegisterError(null);
-    setRegisterInfo(null);
-    setRegisterDevCode(null);
 
     if (!navigator.onLine) {
       setRegisterError("Vous êtes actuellement hors ligne. Veuillez vérifier votre connexion réseau.");
@@ -175,52 +193,22 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
       setRegisterError("Les deux mots de passe ne correspondent pas.");
       return;
     }
-
-    setRegisterLoading(true);
-    try {
-      const response = await fetch("/api/auth/send-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: cleanNumber, countryCode: selectedCountry }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        setRegisterInfo(data.message);
-        if (data.otpCode) {
-          // Uniquement renvoyé par le serveur hors production / mode simulation.
-          setRegisterDevCode(data.otpCode);
-        }
-        setStep("register-otp");
-      } else {
-        setRegisterError(data.message || "Impossible d'envoyer le code de validation.");
-      }
-    } catch (err) {
-      setRegisterError("Erreur réseau lors de l'envoi du code. Veuillez réessayer.");
-    } finally {
-      setRegisterLoading(false);
-    }
-  };
-
-  // Étape 2 : valide le code reçu et crée réellement le compte (numéro + mot de passe choisi).
-  const handleConfirmRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRegisterError(null);
-
-    if (!registerCode || registerCode.trim().length < 4) {
-      setRegisterError("Veuillez saisir le code reçu par WhatsApp.");
+    if (!captchaId || !captchaAnswer) {
+      setRegisterError("Veuillez répondre à la question de vérification.");
       return;
     }
 
     setRegisterLoading(true);
     try {
-      const response = await fetch("/api/auth/verify-otp", {
+      const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phoneNumber: phoneNumber.replace(/\s+/g, ""),
+          phoneNumber: cleanNumber,
           countryCode: selectedCountry,
-          code: registerCode.trim(),
           password: registerPassword,
+          captchaId,
+          captchaAnswer,
         }),
       });
       const data = await response.json();
@@ -234,10 +222,11 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
           onLoginSuccess(fullPhoneNumber);
         }, 1000);
       } else {
-        setRegisterError(data.message || "Code de validation incorrect.");
+        setRegisterError(data.message || "Impossible de créer le compte.");
+        loadCaptcha(); // nouvelle question après un échec
       }
     } catch (err) {
-      setRegisterError("Erreur réseau lors de la validation. Veuillez réessayer.");
+      setRegisterError("Erreur réseau lors de la création du compte. Veuillez réessayer.");
     } finally {
       setRegisterLoading(false);
     }
@@ -373,11 +362,9 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
                 setStep("register");
                 setError(null);
                 setRegisterError(null);
-                setRegisterInfo(null);
-                setRegisterDevCode(null);
                 setRegisterPassword("");
                 setRegisterConfirmPassword("");
-                setRegisterCode("");
+                loadCaptcha();
               }}
               className="w-full text-center py-3 border border-white/[0.08] hover:border-red-500/30 text-slate-300 hover:text-white rounded-2xl text-xs font-bold uppercase tracking-wider transition cursor-pointer"
             >
@@ -393,11 +380,11 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
                 Créer un compte
               </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Choisissez votre numéro et un mot de passe. Un code de validation vous sera envoyé par WhatsApp.
+                Choisissez votre numéro et un mot de passe pour accéder immédiatement à DiagAssist.
               </p>
             </div>
 
-            <form onSubmit={handleStartRegister} className="space-y-5">
+            <form onSubmit={handleRegister} className="space-y-5">
               <div className="space-y-2">
                 <label className="block text-xs text-slate-400 font-extrabold uppercase tracking-wider">
                   Numéro de téléphone
@@ -473,6 +460,31 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
                 />
               </div>
 
+              <div className="space-y-2">
+                <label className="block text-xs text-slate-400 font-extrabold uppercase tracking-wider">
+                  Vérification anti-robot
+                </label>
+                <div className="flex gap-2.5">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    placeholder={captchaLoading ? "Chargement..." : (captchaQuestion || "Chargement...")}
+                    value={captchaAnswer}
+                    onChange={(e) => setCaptchaAnswer(e.target.value)}
+                    className="flex-1 bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
+                  />
+                  <button
+                    type="button"
+                    onClick={loadCaptcha}
+                    title="Nouvelle question"
+                    className="px-4 bg-slate-950/90 border border-white/[0.08] rounded-2xl text-slate-400 hover:text-slate-200 transition cursor-pointer"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${captchaLoading ? "animate-spin" : ""}`} />
+                  </button>
+                </div>
+              </div>
+
               {registerError && (
                 <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs p-3.5 rounded-2xl flex items-start gap-2.5 animate-pulse">
                   <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -488,11 +500,11 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
                 {registerLoading ? (
                   <>
                     <RefreshCw className="w-5 h-5 animate-spin text-white" />
-                    <span>Envoi du code...</span>
+                    <span>Création du compte...</span>
                   </>
                 ) : (
                   <>
-                    <span>Recevoir mon code par WhatsApp</span>
+                    <span>Créer mon compte</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -505,68 +517,6 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
               className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
             >
               ← Retour à la connexion
-            </button>
-          </div>
-        )}
-
-        {step === "register-otp" && (
-          <div className="space-y-6 animate-fade-in relative">
-            <div className="text-center space-y-2.5">
-              <h2 className="text-base font-black text-slate-200 uppercase tracking-wide">
-                Validez votre numéro
-              </h2>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                {registerInfo || `Entrez le code envoyé par WhatsApp au ${selectedCountry} ${phoneNumber}.`}
-              </p>
-              {registerDevCode && (
-                <p className="text-[11px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/20 rounded-xl py-2 px-3">
-                  Mode test (WhatsApp non configuré) — votre code : <strong>{registerDevCode}</strong>
-                </p>
-              )}
-            </div>
-
-            <form onSubmit={handleConfirmRegister} className="space-y-4">
-              <input
-                type="text"
-                required
-                placeholder="Code reçu par WhatsApp (6 chiffres)"
-                value={registerCode}
-                onChange={(e) => setRegisterCode(e.target.value)}
-                className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 font-mono tracking-widest text-center"
-              />
-
-              {registerError && (
-                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs p-3.5 rounded-2xl flex items-start gap-2.5 animate-pulse">
-                  <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                  <span>{registerError}</span>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={registerLoading}
-                className="w-full flex items-center justify-center gap-2.5 py-4.5 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-xs md:text-sm uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20 disabled:opacity-50"
-              >
-                {registerLoading ? (
-                  <>
-                    <RefreshCw className="w-5 h-5 animate-spin text-white" />
-                    <span>Validation...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Valider et créer mon compte</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-            </form>
-
-            <button
-              type="button"
-              onClick={() => { setStep("register"); setRegisterError(null); }}
-              className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
-            >
-              ← Modifier le numéro ou le mot de passe
             </button>
           </div>
         )}

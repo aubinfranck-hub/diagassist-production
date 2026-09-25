@@ -74,7 +74,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             {isOwner ? "🚗 Essai Gratuit Immédiat" : "🔧 Essai Gratuit Immédiat"}
           </span>
 
-          <h1 className="text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl relative">
+          <h1 className="text-[#f8fafc] text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl relative">
             {isOwner ? (
               <>VOTRE VOITURE FAIT UN BRUIT ? <span className="text-red-500">SACHEZ SI C'EST GRAVE</span></>
             ) : (
@@ -82,7 +82,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             )}
           </h1>
 
-          <p className="text-slate-300 text-sm md:text-base max-w-xl mt-4 leading-relaxed relative">
+          <p className="text-[#cbd5e1] text-sm md:text-base max-w-xl mt-4 leading-relaxed relative">
             {isOwner
               ? "Décrivez ce que vous constatez, en mots simples. DiagAssist vous explique ce qui se passe, si vous pouvez rouler, combien ça devrait coûter — et vous oriente vers un mécanicien agréé près de chez vous."
               : "Décrivez le symptôme, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation."}
@@ -101,7 +101,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
                   "Sans engagement, annulez à tout moment",
                 ]
             ).map((t, i) => (
-              <div key={i} className="flex items-center gap-2.5 text-sm text-slate-200">
+              <div key={i} className="flex items-center gap-2.5 text-sm text-[#e2e8f0]">
                 <span className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
                   <Check className="w-3 h-3 text-emerald-400" />
                 </span>

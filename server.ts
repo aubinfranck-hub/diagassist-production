@@ -63,6 +63,16 @@ const mechanics = new Map<string, Mechanic>();
 // Nombre de tentatives de vérification OTP par numéro (anti brute-force)
 const otpAttempts = new Map<string, { count: number; windowStart: number }>();
 
+// Captcha simple (question arithmétique) pour la création de compte directe, sans dépendance
+// à un service SMS/WhatsApp externe. À usage unique, expire après 10 minutes.
+const captchaStorage = new Map<string, { answer: number; expiresAt: number }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, entry] of captchaStorage) {
+    if (now > entry.expiresAt) captchaStorage.delete(id);
+  }
+}, 5 * 60 * 1000).unref();
+
 // --- Forfait persistant PAR NUMÉRO DE TÉLÉPHONE (et non par session) ---
 // BUG CORRIGÉ : avant, le plan était stocké uniquement dans la session en mémoire et
 // réinitialisé à "free_trial" à CHAQUE nouvelle connexion (nouvelle vérification OTP).
@@ -2682,6 +2692,54 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       list = list.filter((m) => m.city.toLowerCase().includes(city) || (m.area || "").toLowerCase().includes(city));
     }
     res.json({ success: true, mechanics: list });
+  });
+
+  // API Route : génère une question captcha simple (anti-bot) pour la création de compte.
+  // Aucune dépendance à un service externe (reCAPTCHA, Twilio...) : juste une question
+  // arithmétique dont la réponse est vérifiée côté serveur.
+  app.post("/api/auth/captcha", authLimiter, (req, res) => {
+    const a = Math.floor(Math.random() * 8) + 2; // 2-9
+    const b = Math.floor(Math.random() * 8) + 2; // 2-9
+    const captchaId = crypto.randomBytes(16).toString("hex");
+    captchaStorage.set(captchaId, { answer: a + b, expiresAt: Date.now() + 10 * 60 * 1000 });
+    res.json({ success: true, captchaId, question: `Combien font ${a} + ${b} ?` });
+  });
+
+  // API Route : création de compte directe (numéro + mot de passe), protégée par le captcha
+  // ci-dessus. Ne dépend d'aucun envoi SMS/WhatsApp — évite les pannes liées à un fournisseur
+  // OTP mal configuré, tout en gardant une protection anti-bot minimale.
+  app.post("/api/auth/register", authLimiter, (req, res) => {
+    const { phoneNumber, countryCode, password, captchaId, captchaAnswer } = req.body;
+    if (!phoneNumber || !password || !captchaId || captchaAnswer === undefined) {
+      return res.status(400).json({ success: false, message: "Données manquantes pour créer le compte." });
+    }
+    if (typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
+    }
+
+    const captcha = captchaStorage.get(captchaId);
+    if (!captcha) {
+      return res.status(400).json({ success: false, message: "Captcha expiré ou invalide. Veuillez réessayer." });
+    }
+    if (Date.now() > captcha.expiresAt) {
+      captchaStorage.delete(captchaId);
+      return res.status(400).json({ success: false, message: "Captcha expiré. Veuillez réessayer." });
+    }
+    if (Number(captchaAnswer) !== captcha.answer) {
+      return res.status(400).json({ success: false, message: "Réponse incorrecte. Veuillez réessayer." });
+    }
+    captchaStorage.delete(captchaId); // usage unique
+
+    const cleanNumber = String(phoneNumber).replace(/\s+/g, "");
+    if (cleanNumber.length < 8) {
+      return res.status(400).json({ success: false, message: "Veuillez saisir un numéro de téléphone valide." });
+    }
+    const fullPhone = `${countryCode || "+225"}${cleanNumber}`;
+
+    createAccount(fullPhone, password);
+    console.log(`[Auth] Compte créé par auto-inscription (captcha) pour ${fullPhone}.`);
+    const token = createSession(fullPhone);
+    res.json({ success: true, message: "Compte créé avec succès.", sessionToken: token });
   });
 
   // API Route : connexion par numéro de téléphone + mot de passe (compte créé par l'admin)
