@@ -25,9 +25,21 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
-  const [step, setStep] = useState<"login" | "success" | "forgot" | "reset">("login");
+  const [step, setStep] = useState<"login" | "success" | "forgot" | "reset" | "register" | "register-otp">("login");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Création de compte (numéro + mot de passe), validée par un code OTP WhatsApp
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
+  const [registerCode, setRegisterCode] = useState("");
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [registerInfo, setRegisterInfo] = useState<string | null>(null);
+  // En mode simulation (Twilio non configuré, hors production), le serveur renvoie le code
+  // directement pour ne pas bloquer les tests — jamais en production.
+  const [registerDevCode, setRegisterDevCode] = useState<string | null>(null);
 
   // Mot de passe oublié
   const [resetEmail, setResetEmail] = useState("");
@@ -138,6 +150,99 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
     }
   };
 
+  // Étape 1 de la création de compte : envoie le code de validation WhatsApp au numéro saisi.
+  const handleStartRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegisterError(null);
+    setRegisterInfo(null);
+    setRegisterDevCode(null);
+
+    if (!navigator.onLine) {
+      setRegisterError("Vous êtes actuellement hors ligne. Veuillez vérifier votre connexion réseau.");
+      return;
+    }
+
+    const cleanNumber = phoneNumber.replace(/\s+/g, "");
+    if (!cleanNumber || cleanNumber.length < 8) {
+      setRegisterError("Veuillez saisir un numéro de téléphone valide.");
+      return;
+    }
+    if (registerPassword.length < 6) {
+      setRegisterError("Le mot de passe doit faire au moins 6 caractères.");
+      return;
+    }
+    if (registerPassword !== registerConfirmPassword) {
+      setRegisterError("Les deux mots de passe ne correspondent pas.");
+      return;
+    }
+
+    setRegisterLoading(true);
+    try {
+      const response = await fetch("/api/auth/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phoneNumber: cleanNumber, countryCode: selectedCountry }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setRegisterInfo(data.message);
+        if (data.otpCode) {
+          // Uniquement renvoyé par le serveur hors production / mode simulation.
+          setRegisterDevCode(data.otpCode);
+        }
+        setStep("register-otp");
+      } else {
+        setRegisterError(data.message || "Impossible d'envoyer le code de validation.");
+      }
+    } catch (err) {
+      setRegisterError("Erreur réseau lors de l'envoi du code. Veuillez réessayer.");
+    } finally {
+      setRegisterLoading(false);
+    }
+  };
+
+  // Étape 2 : valide le code reçu et crée réellement le compte (numéro + mot de passe choisi).
+  const handleConfirmRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegisterError(null);
+
+    if (!registerCode || registerCode.trim().length < 4) {
+      setRegisterError("Veuillez saisir le code reçu par WhatsApp.");
+      return;
+    }
+
+    setRegisterLoading(true);
+    try {
+      const response = await fetch("/api/auth/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phoneNumber: phoneNumber.replace(/\s+/g, ""),
+          countryCode: selectedCountry,
+          code: registerCode.trim(),
+          password: registerPassword,
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        if (data.sessionToken) {
+          localStorage.setItem("auth_session_token", data.sessionToken);
+        }
+        setStep("success");
+        setTimeout(() => {
+          const fullPhoneNumber = `${selectedCountry} ${phoneNumber.trim()}`;
+          onLoginSuccess(fullPhoneNumber);
+        }, 1000);
+      } else {
+        setRegisterError(data.message || "Code de validation incorrect.");
+      }
+    } catch (err) {
+      setRegisterError("Erreur réseau lors de la validation. Veuillez réessayer.");
+    } finally {
+      setRegisterLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-red-600/[0.03] rounded-full blur-3xl pointer-events-none"></div>
@@ -147,7 +252,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
 
         <div className="text-center mb-8 relative">
           <div className="inline-flex items-center justify-center w-14 h-14 bg-white rounded-2xl shadow-lg shadow-red-600/20 border border-white/[0.08] mb-4 overflow-hidden">
-            <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
+            <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
           </div>
           <h1 className="text-xl font-display font-black text-white uppercase tracking-tight">
             DiagAssist <span className="text-red-500">v1</span>
@@ -164,7 +269,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
                 Connexion
               </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Utilisez le numéro de téléphone et le mot de passe qui vous ont été communiqués. Pas de compte ? Contactez-nous.
+                Utilisez votre numéro de téléphone et votre mot de passe.
               </p>
             </div>
 
@@ -260,6 +365,208 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
               className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
             >
               Mot de passe oublié ?
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setStep("register");
+                setError(null);
+                setRegisterError(null);
+                setRegisterInfo(null);
+                setRegisterDevCode(null);
+                setRegisterPassword("");
+                setRegisterConfirmPassword("");
+                setRegisterCode("");
+              }}
+              className="w-full text-center py-3 border border-white/[0.08] hover:border-red-500/30 text-slate-300 hover:text-white rounded-2xl text-xs font-bold uppercase tracking-wider transition cursor-pointer"
+            >
+              Créer un compte
+            </button>
+          </div>
+        )}
+
+        {step === "register" && (
+          <div className="space-y-6 animate-fade-in relative">
+            <div className="text-center space-y-2.5">
+              <h2 className="text-base font-black text-slate-200 uppercase tracking-wide">
+                Créer un compte
+              </h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Choisissez votre numéro et un mot de passe. Un code de validation vous sera envoyé par WhatsApp.
+              </p>
+            </div>
+
+            <form onSubmit={handleStartRegister} className="space-y-5">
+              <div className="space-y-2">
+                <label className="block text-xs text-slate-400 font-extrabold uppercase tracking-wider">
+                  Numéro de téléphone
+                </label>
+                <div className="flex gap-2.5">
+                  <select
+                    value={selectedCountry}
+                    onChange={(e) => setSelectedCountry(e.target.value)}
+                    className="bg-slate-950/90 border border-white/[0.08] text-slate-300 rounded-2xl px-4 py-4 text-sm font-bold focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition max-w-[145px] cursor-pointer"
+                  >
+                    {COUNTRY_CODES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.code} ({c.country.split(" ")[0]})
+                      </option>
+                    ))}
+                  </select>
+                  <div className="relative flex-1">
+                    <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+                      <Phone className="h-5 w-5 text-slate-500" />
+                    </div>
+                    <input
+                      type="tel"
+                      required
+                      placeholder="ex: 07 12 34 56"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl pl-11 pr-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150 font-mono tracking-wider"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-xs text-slate-400 font-extrabold uppercase tracking-wider">
+                  Mot de passe
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-slate-500" />
+                  </div>
+                  <input
+                    type={showRegisterPassword ? "text" : "password"}
+                    required
+                    minLength={6}
+                    placeholder="Min. 6 caractères"
+                    value={registerPassword}
+                    onChange={(e) => setRegisterPassword(e.target.value)}
+                    className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl pl-11 pr-11 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegisterPassword((v) => !v)}
+                    className="absolute inset-y-0 right-4 flex items-center text-slate-500 hover:text-slate-300 cursor-pointer"
+                    title={showRegisterPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                  >
+                    {showRegisterPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-xs text-slate-400 font-extrabold uppercase tracking-wider">
+                  Confirmer le mot de passe
+                </label>
+                <input
+                  type={showRegisterPassword ? "text" : "password"}
+                  required
+                  minLength={6}
+                  placeholder="Retapez le même mot de passe"
+                  value={registerConfirmPassword}
+                  onChange={(e) => setRegisterConfirmPassword(e.target.value)}
+                  className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
+                />
+              </div>
+
+              {registerError && (
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs p-3.5 rounded-2xl flex items-start gap-2.5 animate-pulse">
+                  <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                  <span>{registerError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={registerLoading}
+                className="w-full flex items-center justify-center gap-2.5 py-4.5 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-xs md:text-sm uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20 disabled:opacity-50"
+              >
+                {registerLoading ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin text-white" />
+                    <span>Envoi du code...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Recevoir mon code par WhatsApp</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+
+            <button
+              type="button"
+              onClick={() => { setStep("login"); setRegisterError(null); }}
+              className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
+            >
+              ← Retour à la connexion
+            </button>
+          </div>
+        )}
+
+        {step === "register-otp" && (
+          <div className="space-y-6 animate-fade-in relative">
+            <div className="text-center space-y-2.5">
+              <h2 className="text-base font-black text-slate-200 uppercase tracking-wide">
+                Validez votre numéro
+              </h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                {registerInfo || `Entrez le code envoyé par WhatsApp au ${selectedCountry} ${phoneNumber}.`}
+              </p>
+              {registerDevCode && (
+                <p className="text-[11px] text-amber-400 font-mono bg-amber-500/10 border border-amber-500/20 rounded-xl py-2 px-3">
+                  Mode test (WhatsApp non configuré) — votre code : <strong>{registerDevCode}</strong>
+                </p>
+              )}
+            </div>
+
+            <form onSubmit={handleConfirmRegister} className="space-y-4">
+              <input
+                type="text"
+                required
+                placeholder="Code reçu par WhatsApp (6 chiffres)"
+                value={registerCode}
+                onChange={(e) => setRegisterCode(e.target.value)}
+                className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl px-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 font-mono tracking-widest text-center"
+              />
+
+              {registerError && (
+                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs p-3.5 rounded-2xl flex items-start gap-2.5 animate-pulse">
+                  <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                  <span>{registerError}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={registerLoading}
+                className="w-full flex items-center justify-center gap-2.5 py-4.5 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-xs md:text-sm uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20 disabled:opacity-50"
+              >
+                {registerLoading ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin text-white" />
+                    <span>Validation...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Valider et créer mon compte</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+
+            <button
+              type="button"
+              onClick={() => { setStep("register"); setRegisterError(null); }}
+              className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition cursor-pointer"
+            >
+              ← Modifier le numéro ou le mot de passe
             </button>
           </div>
         )}
