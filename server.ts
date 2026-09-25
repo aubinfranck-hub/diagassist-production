@@ -992,14 +992,41 @@ async function startServer() {
       let groundingSources: { title: string; uri: string }[] = [];
       if (vehicleBrand || textDescription) {
         try {
-          const searchQuery = `${vehicleBrand || ""} ${vehicleModel || ""} ${vehicleYear || ""} panne "${textDescription || ""}" code défaut cause diagnostic automobile`;
-          const searchResult = await getAIClient().models.generateContent({
-            model: "gemini-3.5-flash",
-            contents: `Recherche des informations techniques FIABLES et VÉRIFIÉES (bases de données de codes DTC officielles, forums techniques automobiles reconnus, bulletins constructeur, recalls officiels) sur : ${searchQuery}. Résume en quelques phrases factuelles uniquement ce qui est confirmé par ces sources, sans extrapoler.`,
-            config: { tools: [{ googleSearch: {} }] },
-          });
-          groundedFindings = searchResult.text || null;
-          groundingSources = extractGroundingSources(searchResult);
+          // Recherche CIBLÉE par code défaut quand le texte en contient un (format DTC standard
+          // ou variantes constructeur type "C112A:77-8B") : une requête dédiée par code donne sa
+          // définition officielle et ses causes confirmées PRÉCISES, au lieu d'une seule recherche
+          // générique combinant véhicule + symptôme qui produit un résumé plus flou.
+          const dtcPattern = /\b[PBCU][0-9A-F]{4}(?:[:\-][0-9A-F-]+)?\b/gi;
+          const detectedCodes = Array.from(new Set((textDescription || "").match(dtcPattern) || [])).slice(0, 3);
+
+          if (detectedCodes.length > 0) {
+            const perCodeResults = await Promise.all(detectedCodes.map(async (code) => {
+              try {
+                const searchResult = await getAIClient().models.generateContent({
+                  model: "gemini-3.5-flash",
+                  contents: `Recherche la définition OFFICIELLE du code défaut "${code}" pour un véhicule ${vehicleBrand || ""} ${vehicleModel || ""} ${vehicleYear || ""}, ainsi que ses causes les plus fréquentes CONFIRMÉES par des sources fiables (bases DTC officielles, bulletins constructeur, forums techniques reconnus). Sois factuel, sans extrapoler.`,
+                  config: { tools: [{ googleSearch: {} }] },
+                });
+                return { code, text: searchResult.text || "", sources: extractGroundingSources(searchResult) };
+              } catch {
+                return null;
+              }
+            }));
+            const validResults = perCodeResults.filter((r): r is { code: string; text: string; sources: { title: string; uri: string }[] } => r !== null && Boolean(r.text));
+            if (validResults.length > 0) {
+              groundedFindings = validResults.map(r => `Code ${r.code} : ${r.text}`).join("\n\n");
+              groundingSources = validResults.flatMap(r => r.sources);
+            }
+          } else {
+            const searchQuery = `${vehicleBrand || ""} ${vehicleModel || ""} ${vehicleYear || ""} panne "${textDescription || ""}" code défaut cause diagnostic automobile`;
+            const searchResult = await getAIClient().models.generateContent({
+              model: "gemini-3.5-flash",
+              contents: `Recherche des informations techniques FIABLES et VÉRIFIÉES (bases de données de codes DTC officielles, forums techniques automobiles reconnus, bulletins constructeur, recalls officiels) sur : ${searchQuery}. Résume en quelques phrases factuelles uniquement ce qui est confirmé par ces sources, sans extrapoler.`,
+              config: { tools: [{ googleSearch: {} }] },
+            });
+            groundedFindings = searchResult.text || null;
+            groundingSources = extractGroundingSources(searchResult);
+          }
         } catch (searchErr) {
           console.warn("[Diagnose Grounding] Recherche web indisponible, poursuite sur connaissance générale:", searchErr);
         }
@@ -1021,7 +1048,11 @@ Analyse-les attentivement pour y repérer des voyants, des codes d'erreur DTC te
       }
 
       if (groundedFindings) {
-        promptText += `\n\nINFORMATIONS VÉRIFIÉES VIA RECHERCHE WEB (bases ouvertes, forums techniques, bulletins constructeur — à privilégier sur ta seule mémoire d'entraînement pour ce diagnostic) :\n"""\n${groundedFindings}\n"""\nBase ton diagnostic en priorité sur ces éléments vérifiés quand ils sont pertinents. S'ils ne couvrent pas le cas précis, complète avec ton expertise générale en le signalant implicitement par un ton plus prudent dans "explanationText".`;
+        promptText += `\n\nINFORMATIONS VÉRIFIÉES VIA RECHERCHE WEB (bases ouvertes, forums techniques, bulletins constructeur — à privilégier sur ta seule mémoire d'entraînement pour ce diagnostic) :\n"""\n${groundedFindings}\n"""\nBase ton diagnostic en priorité sur ces éléments vérifiés quand ils sont pertinents.
+
+RÈGLE DE TRANSPARENCE (IMPORTANTE) : Dans "probableCauses" et "explanationText", distingue EXPLICITEMENT ce qui est confirmé par la recherche ci-dessus de ce qui reste ton estimation générale. Préfixe chaque cause selon son statut réel, par exemple : "Confirmé (bulletin constructeur / base DTC) : ..." ou "Cause probable, non confirmée pour ce modèle précis : ...". Ne présente jamais une simple estimation comme un fait établi. Si les informations vérifiées ne couvrent pas le cas précis, dis-le et complète avec ton expertise générale en le signalant clairement.`;
+      } else {
+        promptText += `\n\nAUCUNE RECHERCHE WEB VÉRIFIÉE DISPONIBLE POUR CE DIAGNOSTIC : tu réponds uniquement à partir de ta connaissance générale, potentiellement générique ou datée. Dans "explanationText", précise en une phrase que ce diagnostic n'a pas pu être recoupé avec des sources ouvertes et qu'une confirmation par lecture de codes sur le véhicule reste nécessaire.`;
       }
 
       parts.push({ text: promptText });
@@ -1331,8 +1362,19 @@ factuelle précise à laquelle ta mémoire seule ne suffit pas à répondre avec
 Ne réponds jamais "je ne sais pas" ou une estimation vague à ce type de question sans avoir d'abord cherché.
 Si la recherche ne donne rien de fiable, dis-le clairement plutôt que d'inventer un chiffre.
 
+RÈGLE DE TRANSPARENCE SUR LA CERTITUDE : distingue toujours ce qui est confirmé par la recherche ("Confirmé : ...")
+de ce qui reste une estimation ("Probable mais non confirmé : ..."). Cas particulier du décodage VIN : tu n'as pas
+accès à une base constructeur officielle, seulement à la recherche web — le décodage d'un VIN par ce biais n'est
+jamais garanti fiable à 100%. Dis-le explicitement ("Sous réserve, à vérifier sur la carte grise") plutôt que de
+donner un résultat avec une fausse assurance.
+
 CONTEXTE TECHNIQUE DU VÉHICULE ACTUEL :
 ${JSON.stringify(diagnosticContext || {})}
+
+COHÉRENCE AVEC LE RAPPORT INITIAL : le contexte ci-dessus est le rapport déjà donné au mécanicien. Si une
+nouvelle recherche web que tu effectues dans cette conversation nuance, précise ou contredit un point de ce
+rapport initial, ne l'ignore pas silencieusement : signale-le explicitement ("Pour compléter le rapport initial..."
+ou "À noter, cela nuance ce qui était indiqué plus tôt : ...") avant de donner la nouvelle information.
 
 FORMATAGE CRITIQUE POUR LA VOIX :
 Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de caractères de formatage markdown comme des astérisques (pas de gras, pas d'italique), pas de hashtags, pas de puces avec tirets. Rédige uniquement de simples phrases fluides et naturelles.`;
@@ -3431,6 +3473,10 @@ Si la conversation dérive vers du hors-sujet (rien à voir avec un problème m�
 sans apporter d'élément utile depuis un moment, recentre en UNE phrase courte : "Pour avancer, faites un scan
 avec votre valise ou DiagAssist Scanner, et revenez me donner le résultat — je reprends avec vous." N'insiste pas
 si l'utilisateur revient ensuite sur le sujet.
+
+CERTITUDE DES RÉPONSES : distingue toujours à l'oral ce qui est confirmé de ce qui est une estimation ("c'est
+confirmé" vs "c'est probable mais pas certain"). Pour un décodage VIN, précise que ce n'est pas garanti à 100%
+sans base constructeur officielle, et invite à vérifier sur la carte grise.
 
 FICHE TECHNIQUE ET DIAGNOSTIC ACTUEL DU VÉHICULE :
 ${message.diagnosticContext}
