@@ -26,8 +26,21 @@ import {
   FileCheck2,
   Plus
 } from "lucide-react";
-import { Diagnosis, ChatMessage, DiagnosticLoopState, GeminiLoopTurnResponse, InitialProof } from "../types";
+import { Diagnosis, ChatMessage, DiagnosticLoopState, GeminiLoopTurnResponse, InitialProof, LoopPhase } from "../types";
 import { playMicStartSound, playMicStopSound, playNotificationSound } from "../utils/audioEngine";
+
+const LOOP_PHASE_LABELS: Record<LoopPhase, string> = {
+  action_avant_dtc: "Élimination rapide (avant lecture des codes)",
+  verification_technique: "Vérification technique",
+  validation_post_reparation: "Vérification post-réparation",
+  conclusion: "Conclusion du diagnostic",
+};
+
+const ETAT_VEHICULE_LABELS: Record<"contact_on" | "moteur_tournant" | "moteur_eteint", string> = {
+  contact_on: "contact mis, moteur arrêté",
+  moteur_tournant: "moteur tournant",
+  moteur_eteint: "moteur éteint",
+};
 import { globalAdManager } from "../services/adManager";
 
 
@@ -1064,7 +1077,7 @@ Codes DTC: ${dtcCodes}`;
           {activeTurnResponse && (
             <div style={{ background: T.panel, padding: "8px 12px", borderRadius: 8, fontSize: 11 }}>
               <div style={{ color: T.accent, fontWeight: 600, marginBottom: 2 }}>
-                Phase : {activeTurnResponse.phase_diag || "Élimination rapide"}
+                Phase : {LOOP_PHASE_LABELS[activeTurnResponse.phase] || "Élimination rapide"}
               </div>
               <div style={{ color: T.text, fontWeight: 500 }}>
                 {activeTurnResponse.next_question}
@@ -1073,26 +1086,46 @@ Codes DTC: ${dtcCodes}`;
           )}
 
           {/* Protocole de test physique conseillé */}
-          {activeTurnResponse?.protocole_test && (
-            <div style={{ background: "rgba(62,213,152,0.08)", border: `1px solid ${T.confirm}`, padding: "10px", borderRadius: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.confirm, marginBottom: 4 }}>
+          {activeTurnResponse?.test_protocole && (
+            <div style={{ background: "rgba(62,213,152,0.08)", border: `1px solid ${T.confirm}`, padding: "10px", borderRadius: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.confirm, marginBottom: 2 }}>
                 🛠️ Protocole de test immédiat :
               </div>
-              <div style={{ fontSize: 12, color: T.text }}>
-                {activeTurnResponse.protocole_test.etape}
-              </div>
-              {activeTurnResponse.protocole_test.valeur_attendue && (
-                <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
-                  Valeur cible : <strong style={{ color: T.text }}>{activeTurnResponse.protocole_test.valeur_attendue}</strong>
+              {activeTurnResponse.test_protocole.outil && (
+                <div style={{ fontSize: 12, color: T.text }}>
+                  Outil : <strong>{activeTurnResponse.test_protocole.outil}</strong>
+                </div>
+              )}
+              {activeTurnResponse.test_protocole.emplacement_exact && (
+                <div style={{ fontSize: 12, color: T.text }}>
+                  Emplacement : {activeTurnResponse.test_protocole.emplacement_exact}
+                </div>
+              )}
+              {(activeTurnResponse.test_protocole.etat_vehicule || activeTurnResponse.test_protocole.etat_thermique) && (
+                <div style={{ fontSize: 11, color: T.muted }}>
+                  Conditions : {[
+                    activeTurnResponse.test_protocole.etat_vehicule && ETAT_VEHICULE_LABELS[activeTurnResponse.test_protocole.etat_vehicule],
+                    activeTurnResponse.test_protocole.etat_thermique && (activeTurnResponse.test_protocole.etat_thermique === "froid" ? "moteur froid" : "moteur chaud"),
+                  ].filter(Boolean).join(", ")}
+                </div>
+              )}
+              {activeTurnResponse.test_protocole.valeur_reference_normale && (
+                <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
+                  Valeur cible : <strong style={{ color: T.text }}>{activeTurnResponse.test_protocole.valeur_reference_normale}</strong>
+                </div>
+              )}
+              {activeTurnResponse.test_protocole.alerte_securite && (
+                <div style={{ fontSize: 11, color: "#f87171", marginTop: 2, fontWeight: 600 }}>
+                  ⚠️ {activeTurnResponse.test_protocole.alerte_securite}
                 </div>
               )}
             </div>
           )}
 
-          {/* Chemin Scanner Grounded */}
-          {activeTurnResponse?.chemin_scanner && (
+          {/* Chemin Scanner Grounded (recherche web) */}
+          {activeTurnResponse?.groundedMenuPath && (
             <div style={{ fontSize: 11, background: T.panel, padding: "6px 10px", borderRadius: 6, color: T.muted }}>
-              📟 Scanner : <span style={{ color: T.accent, fontWeight: 600 }}>{activeTurnResponse.chemin_scanner}</span>
+              📟 Scanner : <span style={{ color: T.accent, fontWeight: 600 }}>{activeTurnResponse.groundedMenuPath}</span>
             </div>
           )}
 
