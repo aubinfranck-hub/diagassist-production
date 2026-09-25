@@ -430,15 +430,15 @@ export default function VisualRepairAssistant({ diagnosis, currentPlan, onUpgrad
                 </div>
                 <div>
                   <span className="font-bold text-white block">Pièce défectueuse à remplacer ?</span>
-                  <span className="text-slate-400 text-[11px]">Commandez votre pièce de rechange garantie au <strong>0141116026</strong>.</span>
+                  <span className="text-slate-400 text-[11px]">Commandez votre pièce de rechange garantie au <strong>0707312797</strong>.</span>
                 </div>
               </div>
               <a
-                href="tel:0141116026"
+                href="tel:0707312797"
                 className="w-full sm:w-auto px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg flex items-center justify-center gap-1.5 transition text-[11px] shrink-0"
               >
                 <Phone className="w-3.5 h-3.5" />
-                <span>0141116026</span>
+                <span>0707312797</span>
               </a>
             </div>
           </div>

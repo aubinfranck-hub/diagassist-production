@@ -148,7 +148,7 @@ export default function DiagnosticChat({ diagnosis, chatHistory, onSendMessage, 
   // Suggestions of standard follow-up mechanic questions
   const SUGGESTIONS = [
     "Puis-je rouler jusqu'au garage le plus proche ?",
-    "Comment commander cette pièce au 0141116026 ?",
+    "Comment commander cette pièce au 0707312797 ?",
     "Quels outils spécifiques me faut-il pour réparer ?",
     "Où se trouve cette pièce exactement sur mon véhicule ?",
     "Comment tester si l'actionneur est vraiment mort ?"

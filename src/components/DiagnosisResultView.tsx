@@ -496,21 +496,21 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
                 Besoin de remplacer une pièce défectueuse ?
               </h3>
               <p className="text-xs md:text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
-                Pour toute pièce défectueuse à remplacer ou à commander, contactez-nous directement pour vos achats de pièces d'origine certifiées et garanties au <strong className="text-white font-mono bg-slate-950 px-2 py-0.5 rounded border border-red-500/30">0141116026</strong>.
+                Pour toute pièce défectueuse à remplacer ou à commander, contactez-nous directement pour vos achats de pièces d'origine certifiées et garanties au <strong className="text-white font-mono bg-slate-950 px-2 py-0.5 rounded border border-red-500/30">0707312797</strong>.
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 w-full lg:w-auto shrink-0">
             <a
-              href="tel:0141116026"
+              href="tel:0707312797"
               className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-5 py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs md:text-sm font-black uppercase tracking-wider transition shadow-lg shadow-red-600/30 active:scale-95 text-center"
             >
               <Phone className="w-4 h-4" />
-              <span>Appeler le 0141116026</span>
+              <span>Appeler le 0707312797</span>
             </a>
             <a
-              href="https://wa.me/2250141116026?text=Bonjour,%20j'ai%20besoin%20d'une%20pi%C3%A8ce%20de%20rechange%20pour%20mon%20v%C3%A9hicule."
+              href="https://wa.me/2250707312797?text=Bonjour,%20j'ai%20besoin%20d'une%20pi%C3%A8ce%20de%20rechange%20pour%20mon%20v%C3%A9hicule."
               target="_blank"
               rel="noopener noreferrer"
               className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-5 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs md:text-sm font-black uppercase tracking-wider transition shadow-lg shadow-emerald-600/30 active:scale-95 text-center"

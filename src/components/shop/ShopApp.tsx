@@ -16,7 +16,7 @@ const DIAG = {
   border: "#e4e6e8",
 };
 
-const WHATSAPP = "2250141116026";
+const WHATSAPP = "2250707312797";
 
 interface CartItem {
   product_id: number;
