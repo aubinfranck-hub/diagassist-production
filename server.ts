@@ -84,7 +84,7 @@ const userPlans = new Map<string, { plan: string; activatedAt: number; customDur
 // forfait expire automatiquement et repasse à "free_expired". L'admin peut aussi fixer une durée
 // personnalisée (jour/semaine/mois) au moment de la création du compte, qui prime sur ces valeurs.
 const PLAN_DURATIONS_MS: Record<string, number> = {
-  free_trial: 24 * 60 * 60 * 1000,        // 24h
+  free_trial: 72 * 60 * 60 * 1000,        // 72h
   payg_active: 24 * 60 * 60 * 1000,       // pass 24h (mécaniciens)
   owner_week: 7 * 24 * 60 * 60 * 1000,    // pass semaine 500F (propriétaires de véhicules)
   lite: 30 * 24 * 60 * 60 * 1000,         // 30 jours
@@ -697,13 +697,20 @@ function requireAdminAuth(req: any, res: any, next: any) {
 
 
 const PLAN_LIMITS: Record<string, number> = {
-  free_trial: 3,        // 3 diagnostics gratuits à vie
+  free_trial: 1,         // 1 diagnostic par jour pendant les 72h d'essai
   free_expired: 0,
   payg_active: Infinity, // payé à l'usage, facturé ailleurs
   owner_week: 15,        // Pass Semaine propriétaire (500F) — plafonné pour maîtriser le coût IA
   lite: 30,              // par mois
   premium: Infinity,
 };
+
+// Fenêtre de remise à zéro du quota, par forfait. free_trial se réinitialise chaque JOUR
+// (1 diagnostic/jour) ; les forfaits payants se réinitialisent tous les 30 jours.
+const PLAN_RESET_PERIOD_MS: Record<string, number> = {
+  free_trial: 24 * 60 * 60 * 1000,        // 1 jour
+};
+const DEFAULT_RESET_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 
 // phone -> { diagnosisCount, periodStart }
 const usageTracking = new Map<string, { diagnosisCount: number; periodStart: number }>();
@@ -712,9 +719,8 @@ function checkAndIncrementUsage(phone: string, plan: string): { allowed: boolean
   const limit = PLAN_LIMITS[plan] ?? 0;
   const usage = usageTracking.get(phone) || { diagnosisCount: 0, periodStart: Date.now() };
 
-  // Reset mensuel simple pour lite/premium (30 jours glissants)
-  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-  if (Date.now() - usage.periodStart > THIRTY_DAYS) {
+  const resetPeriod = PLAN_RESET_PERIOD_MS[plan] ?? DEFAULT_RESET_PERIOD_MS;
+  if (Date.now() - usage.periodStart > resetPeriod) {
     usage.diagnosisCount = 0;
     usage.periodStart = Date.now();
   }

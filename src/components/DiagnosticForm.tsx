@@ -476,7 +476,7 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
               type="button"
               onClick={handleSubmit}
               disabled={isLoading}
-              className="w-full flex items-center justify-center gap-3 py-4.5 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 font-black text-white text-sm md:text-base uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20"
+              className="w-full flex items-center justify-center gap-3 py-4.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 font-black text-white text-sm md:text-base uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20"
             >
               {isLoading ? (
                 <div className="flex items-center gap-2.5">
@@ -517,7 +517,7 @@ export default function DiagnosticForm({ onDiagnose, isLoading }: DiagnosticForm
               type="button"
               onClick={goNext}
               disabled={!isOnline}
-              className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 disabled:opacity-40 text-white font-black text-sm uppercase tracking-wider rounded-2xl transition cursor-pointer"
+              className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 disabled:opacity-40 text-white font-black text-sm uppercase tracking-wider rounded-2xl transition cursor-pointer"
             >
               Suivant <ArrowRight className="w-4 h-4" />
             </button>

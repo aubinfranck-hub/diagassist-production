@@ -178,12 +178,12 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               Plan Actuel : 
               {currentPlan === "free_trial" && (
                 <span className="text-red-500 bg-red-600/10 border border-red-500/20 px-4 py-1.5 rounded-xl text-xs md:text-sm font-black uppercase tracking-wider flex items-center gap-1.5">
-                  <ShieldCheck className="w-4.5 h-4.5" /> Essai Gratuit 24h (Premium Actif !)
+                  <ShieldCheck className="w-4.5 h-4.5" /> Essai Gratuit 72h (1 diagnostic/jour)
                 </span>
               )}
               {currentPlan === "free_expired" && (
                 <span className="text-rose-500 bg-rose-500/10 border border-rose-500/20 px-4 py-1.5 rounded-xl text-xs md:text-sm font-black uppercase tracking-wider flex items-center gap-1.5 animate-pulse">
-                  <AlertCircle className="w-4.5 h-4.5" /> Essai de 24h Expiré
+                  <AlertCircle className="w-4.5 h-4.5" /> Essai de 72h Expiré
                 </span>
               )}
               {currentPlan === "payg_active" && (
@@ -203,8 +203,8 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               )}
             </h2>
             <p className="text-sm text-slate-300 mt-3 leading-relaxed">
-              {currentPlan === "free_trial" && "Vous bénéficiez d'un accès complet à toutes les fonctionnalités Premium pendant vos premières 24 heures de test."}
-              {currentPlan === "free_expired" && "Votre période d'essai gratuit de 24 heures est terminée. Veuillez prendre un pass 24h à l'usage ou vous abonner pour continuer à diagnostiquer vos pannes."}
+              {currentPlan === "free_trial" && "Vous bénéficiez d'un diagnostic gratuit par jour pendant vos 72 premières heures de test."}
+              {currentPlan === "free_expired" && "Votre période d'essai gratuit de 72 heures est terminée. Veuillez prendre un pass 24h à l'usage ou vous abonner pour continuer à diagnostiquer vos pannes."}
               {currentPlan === "payg_active" && "Votre pass d'accès à l'usage de 500 F CFA est actif. Il expirera dans 24 heures."}
               {currentPlan === "lite" && "Vous bénéficiez d'un accès normal illimité à l'analyse de panne standard et aux guides de réparation."}
               {currentPlan === "premium" && "Accès illimité ! Explications audio TTS de haute qualité et fiches Haynes Pro d'expert incluses."}
@@ -380,7 +380,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               className={`w-full font-black text-sm py-4 px-4 rounded-xl transition duration-150 flex items-center justify-center gap-2.5 cursor-pointer uppercase tracking-wider ${
                 selectedAmount === 15000
                   ? "bg-red-500 text-white ring-2 ring-red-300 shadow-lg shadow-red-600/20"
-                  : "bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-750 text-white shadow-lg shadow-red-600/10 glow-btn"
+                  : "bg-gradient-to-r from-red-600 to-red-800 hover:from-red-500 hover:to-red-700 text-white shadow-lg shadow-red-600/10 glow-btn"
               }`}
             >
               {selectedAmount === 15000 ? <Check className="w-4 h-4" /> : <Sparkles className="w-4 h-4 fill-current text-white" />}

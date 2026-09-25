@@ -10,7 +10,7 @@ interface LandingPageProps {
   onChangeProfile?: () => void;
 }
 
-const WHATSAPP_NUMBER = "2250141116026";
+const WHATSAPP_NUMBER = "2250707312797";
 const waLink = (message: string) => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
 
 export default function LandingPage({ onGetStarted, isOwner = false, onChangeProfile }: LandingPageProps) {
@@ -70,9 +70,14 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
           <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/80 to-transparent" />
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(220,38,38,0.12),transparent_60%)]" />
 
-          <span className="inline-block bg-red-600/15 border border-red-500/30 text-red-400 text-[11px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 relative">
-            {isOwner ? "🚗 Essai Gratuit Immédiat" : "🔧 Essai Gratuit Immédiat"}
-          </span>
+          <a
+            href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 bg-emerald-600/15 border border-emerald-500/30 text-emerald-400 text-[11px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 relative hover:bg-emerald-600/25 transition cursor-pointer"
+          >
+            <MessageCircle className="w-3 h-3" /> Contactez-nous sur WhatsApp
+          </a>
 
           <h1 className="text-[#f8fafc] text-3xl md:text-5xl font-display font-black leading-tight max-w-3xl relative">
             {isOwner ? (
@@ -113,7 +118,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-8 relative">
             <button
               onClick={onGetStarted}
-              className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
+              className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
             >
               Commencer maintenant <ArrowRight className="w-4 h-4" />
             </button>
@@ -213,12 +218,15 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
         {isOwner ? (
           /* Offres propriétaires : simples, deux choix seulement */
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
-            <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-3 text-center">
+            <div
+              onClick={onGetStarted}
+              className="bg-slate-900/60 border border-white/[0.06] hover:border-sky-500/40 rounded-2xl p-6 space-y-3 text-center cursor-pointer transition"
+            >
               <h3 className="font-bold text-xs text-sky-400 uppercase tracking-wide">Essai Gratuit</h3>
               <p className="text-3xl font-black text-white">0F</p>
-              <p className="text-[11px] text-slate-500">Pour découvrir</p>
+              <p className="text-[11px] text-slate-500">Pendant 72h</p>
               <ul className="text-left space-y-1.5 pt-2">
-                {["3 diagnostics offerts", "Sans carte bancaire", "Accès aux mécaniciens agréés"].map((t, i) => (
+                {["1 diagnostic par jour", "Sans carte bancaire", "Accès aux mécaniciens agréés"].map((t, i) => (
                   <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
                     <Check className="w-3 h-3 text-sky-400 shrink-0 mt-0.5" /> {t}
                   </li>
@@ -243,7 +251,10 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
         ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-5xl mx-auto">
           {/* Forfait Jour — nouveau, mis en avant */}
-          <div className="bg-slate-900/80 border-2 border-emerald-500/40 rounded-2xl p-6 space-y-3 text-center relative overflow-hidden">
+          <div
+            onClick={onGetStarted}
+            className="bg-slate-900/80 border-2 border-emerald-500/40 hover:border-emerald-400/70 rounded-2xl p-6 space-y-3 text-center relative overflow-hidden cursor-pointer transition"
+          >
             <span className="absolute top-3 right-3 text-[9px] bg-emerald-500 text-slate-950 font-black px-2 py-0.5 rounded-full uppercase">Nouveau</span>
             <h3 className="font-bold text-xs text-emerald-400 uppercase tracking-wide">Forfait Jour</h3>
             <p className="text-3xl font-black text-white">500F</p>
@@ -258,12 +269,15 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
           </div>
 
           {/* Essai gratuit */}
-          <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-3 text-center">
+          <div
+            onClick={onGetStarted}
+            className="bg-slate-900/60 border border-white/[0.06] hover:border-sky-500/40 rounded-2xl p-6 space-y-3 text-center cursor-pointer transition"
+          >
             <h3 className="font-bold text-xs text-sky-400 uppercase tracking-wide">Essai Gratuit</h3>
             <p className="text-3xl font-black text-white">0F</p>
-            <p className="text-[11px] text-slate-500">Pendant 24h</p>
+            <p className="text-[11px] text-slate-500">Pendant 72h</p>
             <ul className="text-left space-y-1.5 pt-2">
-              {["3 diagnostics offerts", "Sans carte bancaire", "Activation immédiate"].map((t, i) => (
+              {["1 diagnostic par jour", "Sans carte bancaire", "Activation immédiate"].map((t, i) => (
                 <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-300">
                   <Check className="w-3 h-3 text-sky-400 shrink-0 mt-0.5" /> {t}
                 </li>
@@ -272,7 +286,10 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
           </div>
 
           {/* Lite */}
-          <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-3 text-center">
+          <div
+            onClick={onGetStarted}
+            className="bg-slate-900/60 border border-white/[0.06] hover:border-sky-500/40 rounded-2xl p-6 space-y-3 text-center cursor-pointer transition"
+          >
             <h3 className="font-bold text-xs text-sky-400 uppercase tracking-wide">Lite</h3>
             <p className="text-3xl font-black text-white">6 000F</p>
             <p className="text-[11px] text-slate-500">Par mois</p>
@@ -286,7 +303,10 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
           </div>
 
           {/* Premium */}
-          <div className="bg-slate-900/80 border-2 border-red-500/40 rounded-2xl p-6 space-y-3 text-center relative overflow-hidden">
+          <div
+            onClick={onGetStarted}
+            className="bg-slate-900/80 border-2 border-red-500/40 hover:border-red-400/70 rounded-2xl p-6 space-y-3 text-center relative overflow-hidden cursor-pointer transition"
+          >
             <span className="absolute top-3 right-3 text-[9px] bg-red-600 text-white font-black px-2 py-0.5 rounded-full uppercase">Populaire</span>
             <h3 className="font-bold text-xs text-red-400 uppercase tracking-wide">Premium</h3>
             <p className="text-3xl font-black text-white">15 000F</p>
@@ -320,12 +340,20 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
           {isOwner ? "Prêt à comprendre votre véhicule ?" : "Prêt à diagnostiquer plus vite ?"}
         </h2>
         <p className="text-slate-400 text-sm mb-6">{isOwner ? "Rejoignez les conducteurs qui ne se font plus surprendre par une panne." : "Rejoignez les mécaniciens qui utilisent déjà DiagAssist au quotidien."}</p>
-        <button
-          onClick={onGetStarted}
-          className="inline-flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-8 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
-        >
-          <Sparkles className="w-4 h-4" /> Commencer maintenant
-        </button>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <button
+            onClick={onGetStarted}
+            className="inline-flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-8 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
+          >
+            <Sparkles className="w-4 h-4" /> Commencer maintenant
+          </button>
+          <button
+            onClick={onGetStarted}
+            className="inline-flex items-center gap-2 bg-transparent hover:bg-slate-800/40 border border-slate-700 hover:border-slate-500 text-slate-100 font-bold text-sm uppercase tracking-wider px-8 py-4 rounded-2xl transition cursor-pointer"
+          >
+            Se connecter
+          </button>
+        </div>
       </section>
 
       {/* Footer */}
@@ -334,7 +362,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
           <MapPin className="w-3.5 h-3.5" /> Abidjan, Côte d'Ivoire — NTIC Strategy
         </div>
         <div className="flex items-center gap-2">
-          <Phone className="w-3.5 h-3.5" /> 0141116026
+          <Phone className="w-3.5 h-3.5" /> 0707312797
         </div>
         <a href="/blog/" className="hover:text-slate-300 underline">Guides & conseils</a>
         <div>© {new Date().getFullYear()} DiagAssist. Tous droits réservés.</div>

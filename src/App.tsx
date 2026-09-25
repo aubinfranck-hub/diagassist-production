@@ -451,7 +451,7 @@ export default function App() {
     }
 
     if (currentPlan === "free_expired") {
-      alert("Votre essai gratuit de 24h est expiré ! Veuillez souscrire à une formule (Lite ou Premium) ou recharger un pass 24h à l'usage de 500 F CFA avec Wave dans l'onglet 'Abonnements & Tarifs' pour pouvoir effectuer des diagnostics.");
+      alert("Votre essai gratuit de 72h est expiré ! Veuillez souscrire à une formule (Lite ou Premium) ou recharger un pass 24h à l'usage de 500 F CFA avec Wave dans l'onglet 'Abonnements & Tarifs' pour pouvoir effectuer des diagnostics.");
       return;
     }
 
@@ -1340,7 +1340,7 @@ export default function App() {
                           });
                           setActiveResultTab("report");
                         }}
-                        className="w-full inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-xs uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer shadow-lg shadow-red-600/20 hover:shadow-red-600/30 active:scale-[0.98] glow-btn border border-red-500/20"
+                        className="w-full inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-xs uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer shadow-lg shadow-red-600/20 hover:shadow-red-600/30 active:scale-[0.98] glow-btn border border-red-500/20"
                       >
                         <Sparkles className="w-4 h-4 fill-current text-white" />
                         <span>Lancer la Démo Live & Interactive en 1 Clic !</span>

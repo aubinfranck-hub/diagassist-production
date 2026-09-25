@@ -332,7 +332,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full flex items-center justify-center gap-2.5 py-4.5 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-xs md:text-sm uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20 disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2.5 py-4.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-xs md:text-sm uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20 disabled:opacity-50"
               >
                 {loading ? (
                   <>
@@ -495,7 +495,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
               <button
                 type="submit"
                 disabled={registerLoading}
-                className="w-full flex items-center justify-center gap-2.5 py-4.5 bg-gradient-to-r from-red-600 to-red-750 hover:from-red-700 hover:to-red-800 text-white font-black text-xs md:text-sm uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20 disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2.5 py-4.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-xs md:text-sm uppercase tracking-wider rounded-2xl cursor-pointer hover:shadow-xl hover:shadow-red-600/30 active:scale-[0.99] transition duration-150 glow-btn border border-red-500/20 disabled:opacity-50"
               >
                 {registerLoading ? (
                   <>
@@ -543,7 +543,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
               <button
                 type="submit"
                 disabled={resetLoading}
-                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-750 text-white font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer disabled:opacity-50"
+                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-700 text-white font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer disabled:opacity-50"
               >
                 {resetLoading ? "Envoi..." : "Envoyer le code"}
               </button>
@@ -601,7 +601,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
               <button
                 type="submit"
                 disabled={resetLoading}
-                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-750 text-white font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer disabled:opacity-50"
+                className="w-full py-4 bg-gradient-to-r from-red-600 to-red-700 text-white font-black text-xs uppercase tracking-wider rounded-2xl cursor-pointer disabled:opacity-50"
               >
                 {resetLoading ? "..." : "Réinitialiser le mot de passe"}
               </button>
