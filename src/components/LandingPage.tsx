@@ -141,7 +141,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             DiagAssist, c'est quoi exactement ?
           </h2>
           <p className="text-sm text-slate-400 leading-relaxed">
-            Un assistant de diagnostic automobile propulsé par l'intelligence artificielle. Vous décrivez une panne
+            Un assistant de diagnostic automobile conçu avec des professionnels de la mécanique. Vous décrivez une panne
             — par texte, photo ou son du moteur — et DiagAssist vous renvoie un vrai rapport technique (codes défauts,
             causes probables, guide de réparation, chiffrage), avec un chat de suivi et un copilote vocal en direct
             pour vous accompagner pendant l'intervention.
