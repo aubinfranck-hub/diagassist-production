@@ -134,6 +134,45 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
         </div>
       </main>
 
+      {/* Explication immédiate : ce qu'est concrètement DiagAssist, avant que le visiteur n'aille plus loin */}
+      <section className="w-full max-w-6xl mx-auto px-5 py-10 border-t border-white/[0.05]">
+        <div className="text-center max-w-2xl mx-auto mb-10">
+          <h2 className="text-xl md:text-2xl font-display font-black uppercase tracking-tight mb-3">
+            DiagAssist, c'est quoi exactement ?
+          </h2>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            Un assistant de diagnostic automobile propulsé par l'intelligence artificielle. Vous décrivez une panne
+            — par texte, photo ou son du moteur — et DiagAssist vous renvoie un vrai rapport technique (codes défauts,
+            causes probables, guide de réparation, chiffrage), avec un chat de suivi et un copilote vocal en direct
+            pour vous accompagner pendant l'intervention.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+            <img src="/preview/preview-report.png" alt="Rapport de diagnostic DiagAssist" className="w-full h-48 object-cover object-top" />
+            <div className="p-4">
+              <h3 className="font-bold text-sm text-white">Rapport de diagnostic</h3>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed">Codes défauts, causes probables, guide de réparation étape par étape et chiffrage.</p>
+            </div>
+          </div>
+          <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+            <img src="/preview/preview-chat.png" alt="Chat de suivi DiagAssist" className="w-full h-48 object-cover object-top" />
+            <div className="p-4">
+              <h3 className="font-bold text-sm text-white">Chat de suivi</h3>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed">Posez vos questions par écrit ou à voix haute sur la panne en cours, avec photos à l'appui.</p>
+            </div>
+          </div>
+          <div className="bg-slate-900/60 border border-white/[0.06] rounded-2xl overflow-hidden">
+            <img src="/preview/preview-live.png" alt="Copilote vocal en direct DiagAssist" className="w-full h-48 object-cover object-top" />
+            <div className="p-4">
+              <h3 className="font-bold text-sm text-white">Copilote vocal en direct</h3>
+              <p className="text-xs text-slate-400 mt-1 leading-relaxed">Parlez à DiagAssist les mains libres pendant l'intervention, comme un collègue au téléphone.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Fonctionnalités */}
       <section className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
         <h2 className="text-xl md:text-2xl font-display font-black text-center mb-10 uppercase tracking-tight">
