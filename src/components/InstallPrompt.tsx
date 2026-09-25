@@ -42,7 +42,7 @@ export default function InstallPrompt() {
   return (
     <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 z-50 bg-slate-900 border border-white/[0.08] rounded-2xl p-4 shadow-2xl flex items-center gap-3 animate-fade-in">
       <div className="w-11 h-11 bg-white rounded-xl overflow-hidden shrink-0">
-        <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
+        <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-bold text-white">Installer DiagAssist</p>

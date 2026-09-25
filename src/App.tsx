@@ -3,7 +3,7 @@ import { AnimatePresence } from "motion/react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText, 
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench, Chrome,
-  Sun, Moon, Monitor, Users, Package
+  Sun, Moon, Monitor, Users
 } from "lucide-react";
 
 import DiagnosticForm from "./components/DiagnosticForm";
@@ -17,8 +17,6 @@ import IntegratedVoiceController from "./components/IntegratedVoiceController";
 import PhoneAuth from "./components/PhoneAuth";
 import LandingPage from "./components/LandingPage";
 import InstallPrompt from "./components/InstallPrompt";
-import ProfileChoice from "./components/ProfileChoice";
-import MechanicDirectory from "./components/MechanicDirectory";
 import VisualRepairAssistant from "./components/VisualRepairAssistant";
 import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
@@ -112,12 +110,9 @@ export default function App() {
   // et la présentation du produit aux visiteurs qui n'ont pas encore de compte.
   const [showLandingPage, setShowLandingPage] = useState(true);
 
-  // Type de profil : "mechanic" (professionnel) ou "owner" (propriétaire de véhicule).
-  // Choisi au premier écran après connexion, modifiable ensuite. Conditionne le niveau
-  // technique des diagnostics et l'accès à l'annuaire des mécaniciens agréés.
-  const [accountType, setAccountType] = useState<"mechanic" | "owner" | null>(() => {
-    return (localStorage.getItem("account_type") as "mechanic" | "owner" | null) || null;
-  });
+  // Type de profil : uniquement "mechanic" (professionnel) pour le moment — le profil
+  // "owner" (propriétaire de véhicule) est temporairement désactivé côté produit.
+  const [accountType] = useState<"mechanic" | "owner">("mechanic");
 
   // Connectivity monitoring state
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -217,11 +212,6 @@ export default function App() {
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening">("diagnose");
 
-  const handleChooseProfile = (type: "mechanic" | "owner") => {
-    setAccountType(type);
-    localStorage.setItem("account_type", type);
-    setActiveTab("diagnose");
-  };
   const [activeResultTab, setActiveResultTab] = useState<"report" | "chat" | "visual">("report");
   const [showMobileUserMenu, setShowMobileUserMenu] = useState(false);
 
@@ -742,18 +732,10 @@ export default function App() {
         </div>
       )}
 
-      {/* Parcours : choix du profil EN PREMIER, puis page d'accueil adaptée, puis connexion */}
-      {!showSplash && !loggedInUser && !accountType ? (
-        <ProfileChoice onChoose={handleChooseProfile} />
-      ) : !showSplash && !loggedInUser && showLandingPage ? (
-        <LandingPage
-          onGetStarted={() => setShowLandingPage(false)}
-          isOwner={accountType === "owner"}
-          onChangeProfile={() => {
-            setAccountType(null);
-            localStorage.removeItem("account_type");
-          }}
-        />
+      {/* Parcours : page d'accueil, puis connexion. Le choix de profil (mécanicien /
+          propriétaire) est temporairement désactivé — l'app est mécanicien uniquement. */}
+      {!showSplash && !loggedInUser && showLandingPage ? (
+        <LandingPage onGetStarted={() => setShowLandingPage(false)} />
       ) : !showSplash && !loggedInUser ? (
         <PhoneAuth
           onLoginSuccess={(phone) => {
@@ -761,8 +743,6 @@ export default function App() {
             localStorage.setItem("auth_user_phone", phone);
           }}
         />
-      ) : !showSplash && loggedInUser && !accountType ? (
-        <ProfileChoice onChoose={handleChooseProfile} />
       ) : (
         <div className="min-h-screen bg-slate-950 font-sans text-slate-100 workshop-grid pb-24 lg:pb-0 lg:flex lg:items-stretch">
           
@@ -775,7 +755,7 @@ export default function App() {
                 <div className="relative shrink-0">
                   <div className="w-11 h-11 rounded-xl flex items-center justify-center shadow-lg border border-white/10 relative overflow-hidden group bg-white">
                     <div className="absolute inset-0 bg-white/15 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
+                    <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
                   </div>
                   <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -859,46 +839,6 @@ export default function App() {
                       <span>DiagAssist Scanner</span>
                     </div>
                     {activeTab === "screening" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                  </button>
-                )}
-
-                {accountType === "owner" && (
-                  <button
-                    onClick={() => {
-                      setActiveTab("mechanics");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }}
-                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
-                      activeTab === "mechanics"
-                        ? "bg-sky-600 text-white shadow-lg shadow-sky-600/25 border border-white/10"
-                        : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Wrench className="w-4.5 h-4.5" />
-                      <span>Mécaniciens</span>
-                    </div>
-                    {activeTab === "mechanics" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                  </button>
-                )}
-
-                {accountType === "owner" && (
-                  <button
-                    onClick={() => {
-                      setActiveTab("parts");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }}
-                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
-                      activeTab === "parts"
-                        ? "bg-amber-600 text-white shadow-lg shadow-amber-600/25 border border-white/10"
-                        : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <Package className="w-4.5 h-4.5" />
-                      <span>Pièces détachées</span>
-                    </div>
-                    {activeTab === "parts" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                   </button>
                 )}
 
@@ -1007,16 +947,6 @@ export default function App() {
                 
                 <button
                   onClick={() => {
-                    setAccountType(null);
-                    localStorage.removeItem("account_type");
-                  }}
-                  className="w-full text-center py-1.5 mb-1.5 bg-slate-800/60 hover:bg-slate-700/60 text-slate-300 hover:text-white border border-white/[0.06] rounded-lg text-[10px] font-black uppercase tracking-wider transition cursor-pointer"
-                >
-                  Changer de profil ({accountType === "owner" ? "Propriétaire" : "Mécanicien"})
-                </button>
-
-                <button 
-                  onClick={() => {
                     if (confirm("Voulez-vous vraiment vous déconnecter de votre compte DiagAssist ?")) {
                       setLoggedInUser(null);
                       localStorage.removeItem("auth_user_phone");
@@ -1035,7 +965,7 @@ export default function App() {
           <header className="lg:hidden flex items-center justify-between px-4 py-3.5 bg-slate-950/90 backdrop-blur-md border-b border-white/[0.08] sticky top-0 z-40 select-none">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg flex items-center justify-center shadow-lg border border-white/10 bg-white overflow-hidden">
-                <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
+                <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
               </div>
               <div>
                 <div className="flex items-center gap-1.5">
@@ -1199,40 +1129,6 @@ export default function App() {
               >
                 <Chrome className="w-5 h-5" />
                 <span className="text-[9px] font-black uppercase tracking-wider">Scanner</span>
-              </button>
-            )}
-
-            {accountType === "owner" && (
-              <button
-                onClick={() => {
-                  setActiveTab("mechanics");
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
-                  activeTab === "mechanics"
-                    ? "bg-slate-950 text-sky-400 border border-white/[0.04]"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Wrench className="w-5 h-5" />
-                <span className="text-[9px] font-black uppercase tracking-wider">Méca</span>
-              </button>
-            )}
-
-            {accountType === "owner" && (
-              <button
-                onClick={() => {
-                  setActiveTab("parts");
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
-                  activeTab === "parts"
-                    ? "bg-slate-950 text-amber-400 border border-white/[0.04]"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Package className="w-5 h-5" />
-                <span className="text-[9px] font-black uppercase tracking-wider">Pièces</span>
               </button>
             )}
 
@@ -1504,21 +1400,6 @@ export default function App() {
             setActiveTab={setActiveTab}
           />
         </div>
-
-        {/* TAB 3: Clean Public Subscription Panel */}
-        {/* Annuaire des mécaniciens agréés — réservé aux propriétaires de véhicules */}
-        {activeTab === "mechanics" && accountType === "owner" && (
-          <div className="max-w-4xl mx-auto">
-            <MechanicDirectory />
-          </div>
-        )}
-
-        {/* Annuaire des vendeurs de pièces — réservé aux propriétaires */}
-        {activeTab === "parts" && accountType === "owner" && (
-          <div className="max-w-4xl mx-auto">
-            <MechanicDirectory partnerType="parts_vendor" />
-          </div>
-        )}
 
         {activeTab === "prices" && (
           <div className={isAdminAccount ? "max-w-6xl mx-auto space-y-8 animate-fade-in" : "max-w-3xl mx-auto space-y-8 animate-fade-in"}>

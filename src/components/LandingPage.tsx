@@ -31,7 +31,7 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
       <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg shadow-red-600/20 overflow-hidden">
-            <img src="/icon-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
+            <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
           </div>
           <div>
             <span className="font-display font-black text-lg uppercase tracking-tight block leading-none">DiagAssist</span>

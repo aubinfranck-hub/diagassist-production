@@ -1567,11 +1567,17 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route: Verify SMS OTP
+  // Si un "password" est fourni, ce n'est pas une simple connexion mais une CRÉATION DE COMPTE :
+  // la validation du code OTP prouve que l'appelant contrôle bien ce numéro, ce qui autorise à
+  // créer (ou réinitialiser) le compte associé avec le mot de passe choisi.
   app.post("/api/auth/verify-otp", otpVerifyLimiter, async (req, res) => {
     try {
-      const { phoneNumber, countryCode, code } = req.body;
+      const { phoneNumber, countryCode, code, password } = req.body;
       if (!phoneNumber || !code) {
         return res.status(400).json({ success: false, message: "Données manquantes pour la validation." });
+      }
+      if (password !== undefined && (typeof password !== "string" || password.length < 6)) {
+        return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
       }
 
       const cleanPhone = phoneNumber.replace(/\s+/g, "");
@@ -1592,6 +1598,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       // Dev master OTP check (never active in production unless DEV_MASTER_OTP is explicitly set)
       const DEV_MASTER_OTP = process.env.DEV_MASTER_OTP;
       if (process.env.NODE_ENV !== "production" && DEV_MASTER_OTP && code === DEV_MASTER_OTP) {
+        if (password) {
+          createAccount(fullPhone, password);
+        }
         const token = createSession(fullPhone);
         return res.json({
           success: true,
@@ -1621,11 +1630,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       // Consume OTP
       otpStorage.delete(fullPhone);
       otpAttempts.delete(fullPhone);
- 
+
+      if (password) {
+        createAccount(fullPhone, password);
+        console.log(`[Auth] Compte créé/mis à jour par auto-inscription pour ${fullPhone}.`);
+      }
+
       const token = createSession(fullPhone);
       res.json({
         success: true,
-        message: "Numéro de téléphone validé et authentifié avec succès.",
+        message: password
+          ? "Compte créé et authentifié avec succès."
+          : "Numéro de téléphone validé et authentifié avec succès.",
         sessionToken: token,
       });
     } catch (err: any) {

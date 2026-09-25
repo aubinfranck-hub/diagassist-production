@@ -893,7 +893,7 @@ Codes DTC: ${dtcCodes}`;
             boxShadow: `0 4px 12px ${T.accentDim}`,
           }}
         >
-          <img src="/icon-192.png" alt="DiagAssist" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <img src="/icon-logo-192.png" alt="DiagAssist" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}>
