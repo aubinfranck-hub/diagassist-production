@@ -83,14 +83,14 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             {isOwner ? (
               <>VOTRE VOITURE FAIT UN BRUIT ? <span className="text-red-500">SACHEZ SI C'EST GRAVE</span></>
             ) : (
-              <>NE RATEZ PLUS <span className="text-red-500">AUCUNE PANNE</span></>
+              <>"ÇA FAIT UN BRUIT BIZARRE", DIT LE CLIENT. <span className="text-red-500">VOUS, VOUS TESTEZ QUOI ?</span></>
             )}
           </h1>
 
           <p className="text-[#cbd5e1] text-sm md:text-base max-w-xl mt-4 leading-relaxed relative">
             {isOwner
               ? "Décrivez ce que vous constatez, en mots simples. DiagAssist vous explique ce qui se passe, si vous pouvez rouler, combien ça devrait coûter — et vous oriente vers un mécanicien agréé près de chez vous."
-              : "Décrivez le symptôme, joignez une photo ou un son du moteur, et obtenez un diagnostic guidé étape par étape — jusqu'à la confirmation de la réparation."}
+              : "Pas de code défaut clair, pas envie de changer une pièce au hasard pour voir. Décrivez le symptôme, joignez une photo ou un son du moteur : DiagAssist vous guide test par test jusqu'à la vraie cause, avant de toucher à quoi que ce soit."}
           </p>
 
           <div className="space-y-2.5 mt-6 relative">
@@ -101,9 +101,9 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
                   "Évitez de vous faire surfacturer au garage",
                 ]
               : [
-                  "Diagnostic immédiat, en quelques secondes",
-                  "Activation en moins de 2 minutes",
-                  "Sans engagement, annulez à tout moment",
+                  "Jamais de pièce changée à l'aveugle : un protocole de test avant chaque conclusion",
+                  "Un diagnostic argumenté à montrer au client, pas juste \"il faut changer ça\"",
+                  "Fonctionne avec le matériel que vous avez déjà en atelier",
                 ]
             ).map((t, i) => (
               <div key={i} className="flex items-center gap-2.5 text-sm text-[#e2e8f0]">
@@ -141,10 +141,11 @@ export default function LandingPage({ onGetStarted, isOwner = false, onChangePro
             DiagAssist, c'est quoi exactement ?
           </h2>
           <p className="text-sm text-slate-400 leading-relaxed">
-            Un assistant de diagnostic automobile conçu avec des professionnels de la mécanique. Vous décrivez une panne
-            — par texte, photo ou son du moteur — et DiagAssist vous renvoie un vrai rapport technique (codes défauts,
-            causes probables, guide de réparation, chiffrage), avec un chat de suivi et un copilote vocal en direct
-            pour vous accompagner pendant l'intervention.
+            Un bruit métallique au freinage, un voyant moteur sans code clair, une panne électrique qui va et vient :
+            DiagAssist est un assistant de diagnostic automobile conçu avec des professionnels de la mécanique pour
+            traiter exactement ce genre de cas. Vous décrivez le symptôme — par texte, photo ou son du moteur — et
+            vous recevez un vrai rapport technique (causes probables classées par fréquence, protocole de test,
+            guide de réparation, chiffrage), avec un chat de suivi et un copilote vocal en direct pendant l'intervention.
           </p>
         </div>
 
