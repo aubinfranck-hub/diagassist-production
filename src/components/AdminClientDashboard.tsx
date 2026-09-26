@@ -241,6 +241,14 @@ export default function AdminClientDashboard() {
   const [resetPwdFeedback, setResetPwdFeedback] = useState<{ phone: string; ok: boolean; message: string } | null>(null);
   const [adminToggleBusyPhone, setAdminToggleBusyPhone] = useState<string | null>(null);
 
+  // Relance client : offrir un bonus (forfait + durée personnalisée) directement sur un compte existant
+  const [bonusPhone, setBonusPhone] = useState<string | null>(null);
+  const [bonusPlan, setBonusPlan] = useState("lite");
+  const [bonusDurationValue, setBonusDurationValue] = useState<number>(3);
+  const [bonusDurationUnit, setBonusDurationUnit] = useState("jour");
+  const [bonusBusy, setBonusBusy] = useState(false);
+  const [bonusFeedback, setBonusFeedback] = useState<{ phone: string; ok: boolean; message: string } | null>(null);
+
   const [vehiclesApiCode, setVehiclesApiCode] = useState("");
   const [vehiclesSyncing, setVehiclesSyncing] = useState(false);
   const [vehiclesSyncResult, setVehiclesSyncResult] = useState<string | null>(null);
@@ -563,6 +571,33 @@ export default function AdminClientDashboard() {
       setResetPwdFeedback({ phone, ok: false, message: "Erreur réseau." });
     } finally {
       setResetPwdBusy(false);
+    }
+  };
+
+  const handleGrantBonus = async (phone: string) => {
+    setBonusBusy(true);
+    setBonusFeedback(null);
+    try {
+      const res = await fetch("/api/admin/activate-plan", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          phone,
+          plan: bonusPlan,
+          durationValue: bonusDurationValue,
+          durationUnit: bonusDurationUnit,
+        }),
+      });
+      const data = await res.json();
+      setBonusFeedback({ phone, ok: Boolean(data.success), message: data.message || "Erreur." });
+      if (data.success) {
+        setBonusPhone(null);
+        loadData();
+      }
+    } catch {
+      setBonusFeedback({ phone, ok: false, message: "Erreur réseau." });
+    } finally {
+      setBonusBusy(false);
     }
   };
 
@@ -921,6 +956,7 @@ export default function AdminClientDashboard() {
                 <th className="py-2 pr-3">Rôle</th>
                 <th className="py-2 pr-3">Position</th>
                 <th className="py-2 pr-3">Contact</th>
+                <th className="py-2 pr-3">Relance / Bonus</th>
                 <th className="py-2 pr-3">Mot de passe</th>
               </tr>
             </thead>
@@ -971,6 +1007,68 @@ export default function AdminClientDashboard() {
                     >
                       <MessageCircle className="w-4 h-4" />
                     </a>
+                  </td>
+                  <td className="py-2 pr-3">
+                    {bonusPhone === a.phone ? (
+                      <div className="flex flex-col gap-1 min-w-[180px]">
+                        <div className="flex gap-1">
+                          <select
+                            value={bonusPlan}
+                            onChange={(e) => setBonusPlan(e.target.value)}
+                            className="bg-slate-950 border border-white/[0.08] text-slate-300 rounded-lg px-1.5 py-1 text-[10px] focus:outline-none focus:border-emerald-500 cursor-pointer"
+                          >
+                            <option value="lite">Lite</option>
+                            <option value="premium">Premium</option>
+                            <option value="payg_active">Pass 24h</option>
+                            <option value="owner_week">Pass Semaine</option>
+                          </select>
+                          <input
+                            type="number"
+                            min={1}
+                            value={bonusDurationValue}
+                            onChange={(e) => setBonusDurationValue(Number(e.target.value))}
+                            className="w-12 bg-slate-950 border border-white/[0.08] rounded-lg px-1.5 py-1 text-[10px] text-slate-200 focus:outline-none focus:border-emerald-500"
+                          />
+                          <select
+                            value={bonusDurationUnit}
+                            onChange={(e) => setBonusDurationUnit(e.target.value)}
+                            className="bg-slate-950 border border-white/[0.08] text-slate-300 rounded-lg px-1.5 py-1 text-[10px] focus:outline-none focus:border-emerald-500 cursor-pointer"
+                          >
+                            <option value="jour">Jour(s)</option>
+                            <option value="semaine">Sem.</option>
+                            <option value="mois">Mois</option>
+                          </select>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleGrantBonus(a.phone)}
+                            disabled={bonusBusy}
+                            className="text-emerald-400 hover:text-emerald-300 text-[10px] font-bold uppercase cursor-pointer disabled:opacity-50"
+                          >
+                            Offrir
+                          </button>
+                          <button
+                            onClick={() => setBonusPhone(null)}
+                            className="text-slate-500 hover:text-slate-300 text-[10px] cursor-pointer"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setBonusPhone(a.phone); setBonusFeedback(null); }}
+                        className={`text-[10px] font-bold uppercase cursor-pointer ${remaining.expired ? "text-amber-400 hover:text-amber-300" : "text-sky-400 hover:text-sky-300"}`}
+                        title={remaining.expired ? "Client expiré : offrir un forfait bonus pour le relancer" : "Offrir un forfait/bonus"}
+                      >
+                        {remaining.expired ? "Relancer" : "Bonus"}
+                      </button>
+                    )}
+                    {bonusFeedback && bonusFeedback.phone === a.phone && (
+                      <p className={`text-[10px] mt-0.5 ${bonusFeedback.ok ? "text-emerald-400" : "text-rose-400"}`}>
+                        {bonusFeedback.message}
+                      </p>
+                    )}
                   </td>
                   <td className="py-2 pr-3">
                     {resetPwdPhone === a.phone ? (

@@ -1977,16 +1977,19 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // API Route (ADMIN UNIQUEMENT) : active réellement un forfait pour un numéro, après vérification manuelle du paiement Wave
   app.post("/api/admin/activate-plan", adminLimiter, requireAdminAuth, (req, res) => {
-    const { phone, plan, requestId } = req.body;
+    const { phone, plan, requestId, durationValue, durationUnit } = req.body;
     if (!phone || !plan) {
       return res.status(400).json({ success: false, message: "phone et plan sont requis." });
     }
     if (!(plan in PLAN_LIMITS)) {
       return res.status(400).json({ success: false, message: `Plan inconnu : "${plan}".` });
     }
+    // Durée personnalisée optionnelle (ex: bonus de quelques jours offert à un client relancé),
+    // sinon la durée standard du forfait s'applique (voir PLAN_DURATIONS_MS).
+    const customDurationMs = durationValue ? computeDurationMs(Number(durationValue), durationUnit) : undefined;
     // Persisté par numéro : reste actif même si l'utilisateur se déconnecte/reconnecte,
-    // et expirera automatiquement selon PLAN_DURATIONS_MS (voir getEffectivePlan).
-    setUserPlan(phone, plan);
+    // et expirera automatiquement selon PLAN_DURATIONS_MS ou la durée personnalisée (voir getEffectivePlan).
+    setUserPlan(phone, plan, customDurationMs);
     // BUG CORRIGÉ : le compteur d'usage n'était jamais remis à zéro lors d'une nouvelle activation —
     // un client qui se réabonnait après expiration héritait de son ancien quota déjà consommé.
     usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });
