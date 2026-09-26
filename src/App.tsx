@@ -335,12 +335,25 @@ export default function App() {
     return () => clearInterval(statusInterval);
   }, [loggedInUser]);
 
-  // Signale la position GPS au serveur (avec le consentement du navigateur) pour le tableau de
-  // bord admin. Échoue silencieusement si l'utilisateur refuse ou si la géolocalisation est indisponible.
+  // Signale la position au serveur pour le tableau de bord admin : position précise (GPS
+  // navigateur, avec consentement) si possible, sinon repli sur une estimation par IP côté
+  // serveur (précision ville) pour ne jamais laisser un client sans position du tout.
   useEffect(() => {
-    if (!loggedInUser || !navigator.geolocation) return;
+    if (!loggedInUser) return;
     const token = localStorage.getItem("auth_session_token");
     if (!token) return;
+
+    const reportIpFallback = () => {
+      fetch("/api/user/report-location-ip", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${token}` },
+      }).catch(() => {});
+    };
+
+    if (!navigator.geolocation) {
+      reportIpFallback();
+      return;
+    }
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -358,7 +371,9 @@ export default function App() {
         }).catch(() => {});
       },
       () => {
-        // L'utilisateur a refusé ou la géolocalisation a échoué — on n'insiste pas.
+        // L'utilisateur a refusé ou le GPS a échoué : on retombe sur l'estimation IP plutôt
+        // que de n'avoir aucune position pour ce client dans le tableau de bord admin.
+        reportIpFallback();
       },
       { timeout: 15000, enableHighAccuracy: true, maximumAge: 60000 }
     );

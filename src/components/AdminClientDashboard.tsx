@@ -3,6 +3,8 @@ import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, M
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
+type ClientLocation = { latitude: number; longitude: number; accuracy?: number; updatedAt: number; source?: "gps" | "ip" };
+
 interface Account {
   phone: string;
   createdAt: number;
@@ -11,7 +13,7 @@ interface Account {
   isAdmin: boolean;
   email: string | null;
   name: string | null;
-  location: { latitude: number; longitude: number; accuracy?: number; updatedAt: number } | null;
+  location: ClientLocation | null;
 }
 
 interface SessionInfo {
@@ -19,7 +21,7 @@ interface SessionInfo {
   phone: string;
   plan: string;
   createdAt: number;
-  location: { latitude: number; longitude: number; accuracy?: number; updatedAt: number } | null;
+  location: ClientLocation | null;
 }
 
 interface HistoryEntry {
@@ -77,6 +79,11 @@ const PLAN_LABELS: Record<string, string> = {
 
 const formatDate = (ts: number) => new Date(ts).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
+// Échappe le texte inséré dans le HTML des popups Leaflet (construit via bindPopup en chaîne
+// brute) — sans ça, un nom de compte contenant des balises serait interprété comme du HTML.
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+
 // Affiche le temps restant avant expiration du forfait, ou son absence pour les forfaits sans durée
 function formatRemainingTime(expiresAt: number | null, plan: string): { text: string; expired: boolean } {
   if (plan === "free_expired") return { text: "Expiré", expired: true };
@@ -94,10 +101,11 @@ function formatRemainingTime(expiresAt: number | null, plan: string): { text: st
 const toWaMeNumber = (phone: string) => phone.replace(/[^0-9]/g, "");
 
 // Carte intégrée avec un vrai repère à la position exacte, dépliable au clic
-function LocationMapPreview({ location }: { location: { latitude: number; longitude: number; accuracy?: number; updatedAt: number } }) {
+function LocationMapPreview({ location }: { location: ClientLocation }) {
   const [expanded, setExpanded] = useState(false);
   const embedUrl = `https://www.google.com/maps?q=${location.latitude},${location.longitude}&z=15&output=embed`;
   const fullMapUrl = `https://www.google.com/maps?q=${location.latitude},${location.longitude}`;
+  const isIpEstimate = location.source === "ip";
 
   return (
     <div className="space-y-1.5">
@@ -111,11 +119,16 @@ function LocationMapPreview({ location }: { location: { latitude: number; longit
         ({location.latitude.toFixed(4)}, {location.longitude.toFixed(4)})
         <span className="text-slate-500">— maj {formatDate(location.updatedAt)}</span>
       </button>
-      {typeof location.accuracy === "number" && (
-        <p className={`text-[10px] flex items-center gap-1 ${location.accuracy > 1000 ? "text-amber-400" : "text-slate-500"}`}>
-          {location.accuracy > 1000 ? "⚠️" : "🎯"} Précision : ± {location.accuracy < 1000 ? `${Math.round(location.accuracy)} m` : `${(location.accuracy / 1000).toFixed(1)} km`}
-          {location.accuracy > 1000 && " — position approximative (WiFi/IP), pas de GPS précis sur cet appareil"}
-        </p>
+      <p className={`text-[10px] flex items-center gap-1 ${isIpEstimate ? "text-amber-400" : "text-emerald-500"}`}>
+        {isIpEstimate ? "🌐 Estimation par IP (précision ville)" : "🎯 Position GPS précise"}
+        {typeof location.accuracy === "number" && !isIpEstimate && (
+          <span className="text-slate-500">
+            {" "}(± {location.accuracy < 1000 ? `${Math.round(location.accuracy)} m` : `${(location.accuracy / 1000).toFixed(1)} km`})
+          </span>
+        )}
+      </p>
+      {!isIpEstimate && typeof location.accuracy === "number" && location.accuracy > 1000 && (
+        <p className="text-[10px] text-amber-400">⚠️ Pas de GPS précis sur cet appareil — position approximative (WiFi/réseau)</p>
       )}
       {expanded && (
         <div className="rounded-xl overflow-hidden border border-white/[0.08]">
@@ -187,10 +200,11 @@ function ClientsMap({ accounts }: { accounts: Account[] }) {
     located.forEach((a) => {
       const loc = a.location!;
       points.push([loc.latitude, loc.longitude]);
-      const label = a.name || a.phone;
+      const label = escapeHtml(a.name || a.phone);
+      const sourceLabel = loc.source === "ip" ? "🌐 Estimation IP" : "🎯 GPS précis";
       L.marker([loc.latitude, loc.longitude], { icon: clientMarkerIcon })
         .bindPopup(
-          `<b>${label}</b><br/>${a.phone}<br/>${PLAN_LABELS[a.plan] || a.plan}<br/><span style="color:#94a3b8">maj ${formatDate(loc.updatedAt)}</span>`
+          `<b>${label}</b><br/>${escapeHtml(a.phone)}<br/>${escapeHtml(PLAN_LABELS[a.plan] || a.plan)}<br/>${sourceLabel}<br/><span style="color:#94a3b8">maj ${escapeHtml(formatDate(loc.updatedAt))}</span>`
         )
         .addTo(layer);
     });
@@ -905,8 +919,8 @@ export default function AdminClientDashboard() {
                     {a.location ? (
                       <button
                         onClick={() => setMapModalLocation(a.location)}
-                        className="text-emerald-400 hover:text-emerald-300 cursor-pointer"
-                        title="Voir le point exact sur la carte"
+                        className={`cursor-pointer ${a.location.source === "ip" ? "text-amber-400 hover:text-amber-300" : "text-emerald-400 hover:text-emerald-300"}`}
+                        title={a.location.source === "ip" ? "Position estimée par IP (approximative) — cliquer pour voir" : "Position GPS précise — cliquer pour voir"}
                       >
                         <MapPin className="w-4 h-4" />
                       </button>

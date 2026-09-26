@@ -22,8 +22,9 @@ const otpStorage = new Map<string, { code: string; expiresAt: number }>();
 // Sessions actives : token -> { phone, plan, createdAt }
 const sessions = new Map<string, { phone: string; plan: string; createdAt: number }>();
 
-// Dernière position GPS connue par numéro (signalée par le client avec son consentement navigateur)
-const lastKnownLocation = new Map<string, { latitude: number; longitude: number; accuracy?: number; updatedAt: number }>();
+// Dernière position connue par numéro : soit précise (GPS navigateur, avec consentement),
+// soit estimative (dérivée de l'IP côté serveur quand le client refuse/échoue le GPS).
+const lastKnownLocation = new Map<string, { latitude: number; longitude: number; accuracy?: number; updatedAt: number; source: "gps" | "ip" }>();
 
 // Historique des connexions (login réussis), limité aux 500 dernières entrées pour éviter une fuite mémoire
 const connectionHistory: { phone: string; timestamp: number }[] = [];
@@ -2142,8 +2143,43 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (typeof latitude !== "number" || typeof longitude !== "number") {
       return res.status(400).json({ success: false, message: "Coordonnées invalides." });
     }
-    lastKnownLocation.set(req.session.phone, { latitude, longitude, accuracy, updatedAt: Date.now() });
+    lastKnownLocation.set(req.session.phone, { latitude, longitude, accuracy, updatedAt: Date.now(), source: "gps" });
     res.json({ success: true });
+  });
+
+  // API Route : repli quand le client refuse ou ne peut pas fournir sa position GPS —
+  // le serveur estime une position approximative (précision ville, quelques km) à partir
+  // de l'adresse IP de la requête, via un service public de géolocalisation IP (aucune clé
+  // requise). Ne remplace jamais une position GPS déjà connue par une estimation IP moins
+  // précise si l'une existe déjà et est récente.
+  app.post("/api/user/report-location-ip", authLimiter, requireAuth, async (req: any, res) => {
+    const phone = req.session.phone;
+    const existing = lastKnownLocation.get(phone);
+    if (existing && existing.source === "gps" && Date.now() - existing.updatedAt < 24 * 60 * 60 * 1000) {
+      return res.json({ success: true, skipped: true, message: "Position GPS déjà connue et récente." });
+    }
+    const ip = (req.ip || "").replace("::ffff:", "");
+    if (!ip || ip === "127.0.0.1" || ip === "::1") {
+      return res.json({ success: false, message: "Adresse IP non exploitable (environnement local)." });
+    }
+    try {
+      const geoRes = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`);
+      const geo: any = await geoRes.json();
+      if (!geo.success || typeof geo.latitude !== "number" || typeof geo.longitude !== "number") {
+        return res.json({ success: false, message: "Estimation IP indisponible pour cette adresse." });
+      }
+      lastKnownLocation.set(phone, {
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        accuracy: 5000, // précision ville, non un vrai rayon GPS — juste une estimation
+        updatedAt: Date.now(),
+        source: "ip",
+      });
+      res.json({ success: true, city: geo.city || null });
+    } catch (err: any) {
+      console.error("[report-location-ip] Échec de la géolocalisation IP:", err.message);
+      res.json({ success: false, message: "Erreur du service de géolocalisation IP." });
+    }
   });
 
   // API Route (ADMIN UNIQUEMENT) : historique des connexions (les 500 dernières)
