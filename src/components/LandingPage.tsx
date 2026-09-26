@@ -381,7 +381,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           onClick={onGetStarted}
           className="inline-flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-8 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
         >
-          Essayer DiagAssist <ArrowRight className="w-4 h-4" />
+          Essayer DiagAssist à partir de 500F <ArrowRight className="w-4 h-4" />
         </button>
       </section>
 
