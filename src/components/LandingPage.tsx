@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  Wrench, Camera, Mic, MessageCircle, ShieldCheck, Smartphone, Clock, ArrowRight, MapPin, Phone, Search, ListChecks, FlaskConical, Stethoscope, CheckCircle2, Menu, X, FileSearch, Play
+  Wrench, Camera, Mic, MessageCircle, ShieldCheck, Smartphone, Clock, ArrowRight, MapPin, Phone, Search, ListChecks, FlaskConical, Stethoscope, CheckCircle2, Menu, X, FileSearch, Play, Sun, Moon
 } from "lucide-react";
 
 interface LandingPageProps {
@@ -41,9 +41,21 @@ const TRUST_BADGES = [
 
 export default function LandingPage({ onGetStarted }: LandingPageProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [lightMode, setLightMode] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("diagassist-theme");
+    const prefersLight = window.matchMedia("(prefers-color-scheme: light)").matches;
+    setLightMode(saved ? saved === "light" : prefersLight);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", lightMode);
+    localStorage.setItem("diagassist-theme", lightMode ? "light" : "dark");
+  }, [lightMode]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans overflow-x-hidden relative">
+    <div className={`min-h-screen font-sans overflow-x-hidden relative diagassist-landing ${lightMode ? "diagassist-light bg-slate-50 text-slate-900" : "bg-slate-950 text-slate-100"}`}>
       {/* Header */}
       <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between gap-4 relative">
         <button
@@ -66,12 +78,22 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           <a href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")} target="_blank" rel="noopener noreferrer" className="hover:text-[#f8fafc] transition">Contact</a>
         </nav>
 
-        <button
-          onClick={onGetStarted}
-          className="bg-red-600 hover:bg-red-700 text-white text-[11px] sm:text-xs font-bold uppercase tracking-wider px-3.5 sm:px-5 py-2.5 rounded-xl transition cursor-pointer shrink-0 whitespace-nowrap"
-        >
-          Se connecter
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setLightMode((v) => !v)}
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition ${lightMode ? "bg-white border-slate-300 text-slate-700" : "bg-slate-900/70 border-white/15 text-yellow-300"}`}
+            aria-label={lightMode ? "Activer le mode nuit" : "Activer le mode jour"}
+            title={lightMode ? "Mode nuit" : "Mode jour"}
+          >
+            {lightMode ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+          </button>
+          <button
+            onClick={onGetStarted}
+            className="bg-red-600 hover:bg-red-700 text-white text-[11px] sm:text-xs font-bold uppercase tracking-wider px-3.5 sm:px-5 py-2.5 rounded-xl transition cursor-pointer shrink-0 whitespace-nowrap"
+          >
+            Se connecter
+          </button>
+        </div>
 
         {/* Menu mobile déroulant */}
         {menuOpen && (
