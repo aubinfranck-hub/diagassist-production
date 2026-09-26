@@ -132,6 +132,71 @@
   left: 100%;
 }
 
+/* DiagAssist landing: DAY mode — high readability */
+.diagassist-light {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+}
+.diagassist-light header {
+  background: #ffffff !important;
+  border-bottom: 1px solid #e2e8f0;
+}
+.diagassist-light main section {
+  background: #f8fafc !important;
+}
+.diagassist-light h1,
+.diagassist-light h2,
+.diagassist-light h3,
+.diagassist-light .text-white {
+  color: #0f172a !important;
+}
+.diagassist-light .text-slate-100,
+.diagassist-light .text-slate-200,
+.diagassist-light .text-slate-300 {
+  color: #334155 !important;
+}
+.diagassist-light .text-slate-400,
+.diagassist-light .text-slate-500 {
+  color: #64748b !important;
+}
+.diagassist-light [class*="bg-[#020817]"] {
+  background: #f8fafc !important;
+}
+.diagassist-light [class*="bg-[#071326]"] {
+  background: #ffffff !important;
+}
+.diagassist-light [class*="bg-slate-900/70"] {
+  background: #ffffff !important;
+}
+.diagassist-light [class*="bg-gradient-to-br"] {
+  background: linear-gradient(135deg,#e2e8f0,#ffffff) !important;
+}
+.diagassist-light [class*="border-white/15"],
+.diagassist-light [class*="border-white/10"],
+.diagassist-light [class*="border-white/5"] {
+  border-color: #cbd5e1 !important;
+}
+.diagassist-light [class*="bg-[linear-gradient"] {
+  background: linear-gradient(90deg,rgba(248,250,252,.96),rgba(248,250,252,.82),rgba(248,250,252,.55)) !important;
+}
+.diagassist-light .shadow-2xl {
+  box-shadow: 0 12px 35px rgba(15,23,42,.10) !important;
+}
+.diagassist-light .bg-red-600,
+.diagassist-light .bg-red-700,
+.diagassist-light [class*="from-red-500"] {
+  color: #ffffff !important;
+}
+.diagassist-light a.border,
+.diagassist-light button.border {
+  color: #0f172a;
+}
+.diagassist-light .diagassist-day-card {
+  background: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
 /* DiagAssist landing: force correct contrast in NIGHT mode.
    This is scoped so the global light-theme rules cannot turn dark-mode text/cards white-on-white. */
 html.light .diagassist-landing:not(.diagassist-light) .text-white {
