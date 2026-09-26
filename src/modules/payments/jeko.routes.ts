@@ -271,7 +271,9 @@ export function registerJekoPayments(
     // Le corps est la transaction elle-même, sans enveloppe (sauf variante "event"/"payload"
     // pour d'autres types de notification que nous n'utilisons pas ici).
     const body = req.body || {};
-    const reference = String(body.reference || "");
+    // Jèko envoie la référence dans transactionDetails.reference pour les webhooks
+    // TRANSACTION_COMPLETED (la réponse de création, elle, expose reference à la racine).
+    const reference = String(body?.transactionDetails?.reference || body?.reference || "");
     const status = String(body.status || "").toLowerCase();
     if (!reference) return res.status(200).end();
 
@@ -284,6 +286,22 @@ export function registerJekoPayments(
     if (record.status !== "pending") {
       // Déjà traité (webhook potentiellement renvoyé jusqu'à 3 fois par Jèko) : ne pas
       // ré-activer/compter deux fois.
+      return res.status(200).end();
+    }
+
+    // Vérifications métier supplémentaires : même avec une signature HMAC valide,
+    // le webhook doit correspondre au paiement Jèko que nous avons créé.
+    if (body.transactionType && String(body.transactionType) !== "PaymentRequest") {
+      console.warn(`[JEKO][Webhook] Type de transaction inattendu : ${body.transactionType}`);
+      return res.status(200).end();
+    }
+    if (record.jekoId && body?.transactionDetails?.id && String(body.transactionDetails.id) !== String(record.jekoId)) {
+      console.warn(`[JEKO][Webhook] ID Jèko différent pour la référence ${reference}.`);
+      return res.status(200).end();
+    }
+    const webhookAmount = Number(body?.amount?.amount);
+    if (Number.isFinite(webhookAmount) && webhookAmount !== record.amountCents) {
+      console.warn(`[JEKO][Webhook] Montant différent pour ${reference} : reçu=${webhookAmount}, attendu=${record.amountCents}.`);
       return res.status(200).end();
     }
 
