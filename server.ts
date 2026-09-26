@@ -1975,6 +1975,24 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, message: `Compte créé pour ${phone}. Communiquez-lui le mot de passe directement.` });
   });
 
+  // API Route (ADMIN UNIQUEMENT) : réinitialise directement le mot de passe d'un client existant,
+  // sans passer par le formulaire de création (qui redemande aussi forfait/durée, inutile ici) et
+  // sans connaître l'ancien mot de passe. Préserve le rôle admin et l'email existants du compte.
+  app.post("/api/admin/accounts/:phone/set-password", adminLimiter, requireAdminAuth, (req, res) => {
+    const phone = req.params.phone;
+    const { password } = req.body;
+    if (typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
+    }
+    const existing = userAccounts.get(phone);
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Compte introuvable." });
+    }
+    createAccount(phone, password, existing.isAdmin, existing.email);
+    console.log(`[Admin] Mot de passe réinitialisé pour ${phone}.`);
+    res.json({ success: true, message: `Mot de passe mis à jour pour ${phone}.` });
+  });
+
   // API Route: l'utilisateur connecté change lui-même son mot de passe
   app.post("/api/user/change-password", authLimiter, requireAuth, (req: any, res) => {
     const { currentPassword, newPassword } = req.body;

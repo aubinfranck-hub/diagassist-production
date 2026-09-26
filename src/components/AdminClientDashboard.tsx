@@ -145,6 +145,10 @@ export default function AdminClientDashboard() {
   const [bannerList, setBannerList] = useState<Banner[]>([]);
   const [jekoPayments, setJekoPayments] = useState<JekoPayment[]>([]);
   const [reconcilingRef, setReconcilingRef] = useState<string | null>(null);
+  const [resetPwdPhone, setResetPwdPhone] = useState<string | null>(null);
+  const [resetPwdValue, setResetPwdValue] = useState("");
+  const [resetPwdBusy, setResetPwdBusy] = useState(false);
+  const [resetPwdFeedback, setResetPwdFeedback] = useState<{ phone: string; ok: boolean; message: string } | null>(null);
   const [loadingList, setLoadingList] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [logoutBusyPhone, setLogoutBusyPhone] = useState<string | null>(null);
@@ -382,6 +386,31 @@ export default function AdminClientDashboard() {
       setBannerError("Erreur réseau.");
     } finally {
       setBannerCreating(false);
+    }
+  };
+
+  const handleSetPassword = async (phone: string) => {
+    if (resetPwdValue.length < 6) {
+      setResetPwdFeedback({ phone, ok: false, message: "6 caractères minimum." });
+      return;
+    }
+    setResetPwdBusy(true);
+    try {
+      const res = await fetch(`/api/admin/accounts/${encodeURIComponent(phone)}/set-password`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ password: resetPwdValue }),
+      });
+      const data = await res.json();
+      setResetPwdFeedback({ phone, ok: Boolean(data.success), message: data.message || "Erreur." });
+      if (data.success) {
+        setResetPwdPhone(null);
+        setResetPwdValue("");
+      }
+    } catch {
+      setResetPwdFeedback({ phone, ok: false, message: "Erreur réseau." });
+    } finally {
+      setResetPwdBusy(false);
     }
   };
 
@@ -695,6 +724,7 @@ export default function AdminClientDashboard() {
                 <th className="py-2 pr-3">Rôle</th>
                 <th className="py-2 pr-3">Position</th>
                 <th className="py-2 pr-3">Contact</th>
+                <th className="py-2 pr-3">Mot de passe</th>
               </tr>
             </thead>
             <tbody>
@@ -741,6 +771,45 @@ export default function AdminClientDashboard() {
                     >
                       <MessageCircle className="w-4 h-4" />
                     </a>
+                  </td>
+                  <td className="py-2 pr-3">
+                    {resetPwdPhone === a.phone ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          autoFocus
+                          placeholder="Nouveau mdp"
+                          value={resetPwdValue}
+                          onChange={(e) => setResetPwdValue(e.target.value)}
+                          className="w-24 bg-slate-950 border border-white/[0.08] rounded-lg px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-emerald-500"
+                        />
+                        <button
+                          onClick={() => handleSetPassword(a.phone)}
+                          disabled={resetPwdBusy}
+                          className="text-emerald-400 hover:text-emerald-300 text-[10px] font-bold uppercase cursor-pointer disabled:opacity-50"
+                        >
+                          OK
+                        </button>
+                        <button
+                          onClick={() => { setResetPwdPhone(null); setResetPwdValue(""); }}
+                          className="text-slate-500 hover:text-slate-300 text-[10px] cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setResetPwdPhone(a.phone); setResetPwdValue(""); setResetPwdFeedback(null); }}
+                        className="text-sky-400 hover:text-sky-300 text-[10px] font-bold uppercase cursor-pointer"
+                      >
+                        Réinitialiser
+                      </button>
+                    )}
+                    {resetPwdFeedback && resetPwdFeedback.phone === a.phone && (
+                      <p className={`text-[10px] mt-0.5 ${resetPwdFeedback.ok ? "text-emerald-400" : "text-rose-400"}`}>
+                        {resetPwdFeedback.message}
+                      </p>
+                    )}
                   </td>
                 </tr>
                 );
