@@ -117,7 +117,12 @@ function computeDurationMs(value: number, unit: string): number | undefined {
 
 // Renvoie le forfait EFFECTIF et à jour d'un numéro : initialise l'essai gratuit à la première
 // connexion, et rétrograde automatiquement vers "free_expired" si la durée du forfait est dépassée.
+// Un compte admin est toujours traité comme "premium" (accès illimité, sans expiration ni minuterie),
+// quel que soit le forfait éventuellement attribué par ailleurs (ex: pass 24h après un paiement test).
 function getEffectivePlan(phone: string): string {
+  if (userAccounts.get(phone)?.isAdmin) {
+    return "premium";
+  }
   let record = userPlans.get(phone);
   if (!record) {
     record = { plan: "free_trial", activatedAt: Date.now() };
@@ -640,6 +645,16 @@ function getNameInstruction(phone?: string): string {
   return name
     ? `\nLe mécanicien s'appelle ${name}. Appelle-le par son prénom quand c'est naturel, sans le forcer à chaque phrase.\n`
     : "";
+}
+
+// Change uniquement le rôle admin d'un compte existant, sans toucher au mot de passe déjà en
+// place (on ne connaît que son hash, pas sa valeur en clair, donc createAccount ne convient pas ici).
+function setAccountAdmin(phone: string, isAdmin: boolean): boolean {
+  const existing = userAccounts.get(phone);
+  if (!existing) return false;
+  userAccounts.set(phone, { ...existing, isAdmin });
+  persistAccount(phone).catch(() => {});
+  return true;
 }
 
 function verifyAccountPassword(phone: string, password: string): boolean {
@@ -1912,13 +1927,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const { phone, plan } = req.session;
     const usage = usageTracking.get(phone) || { diagnosisCount: 0 };
     const limit = PLAN_LIMITS[plan] ?? 0;
+    const account = userAccounts.get(phone);
+    const isAdmin = account?.isAdmin ?? false;
     const planRecord = userPlans.get(phone);
     const duration = planRecord ? PLAN_DURATIONS_MS[planRecord.plan] : undefined;
     // expiresAt calculé côté serveur (source de vérité) — le client ne doit plus deviner
-    // une échéance à partir d'une horloge locale non fiable (bug corrigé).
-    const expiresAt = planRecord && duration ? planRecord.activatedAt + duration : null;
-    const account = userAccounts.get(phone);
-    const isAdmin = account?.isAdmin ?? false;
+    // une échéance à partir d'une horloge locale non fiable (bug corrigé). Un admin n'a jamais
+    // d'échéance, quel que soit le forfait resté enregistré en base (ex: pass 24h d'un ancien test).
+    const expiresAt = isAdmin ? null : planRecord && duration ? planRecord.activatedAt + duration : null;
     res.json({
       success: true,
       plan,
@@ -2030,6 +2046,23 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, message: `Mot de passe mis à jour pour ${phone}.` });
   });
 
+  // API Route (ADMIN UNIQUEMENT) : promeut ou rétrograde un compte client EXISTANT en/depuis
+  // administrateur, sans passer par le formulaire de création (qui redemande un nouveau mot de
+  // passe, inutile ici puisque le compte existe déjà avec son propre mot de passe).
+  app.post("/api/admin/accounts/:phone/set-admin", adminLimiter, requireAdminAuth, (req, res) => {
+    const phone = req.params.phone;
+    const { isAdmin } = req.body;
+    if (typeof isAdmin !== "boolean") {
+      return res.status(400).json({ success: false, message: "isAdmin (booléen) est requis." });
+    }
+    const ok = setAccountAdmin(phone, isAdmin);
+    if (!ok) {
+      return res.status(404).json({ success: false, message: "Compte introuvable." });
+    }
+    console.log(`[Admin] ${phone} ${isAdmin ? "promu administrateur" : "rétrogradé en client"}.`);
+    res.json({ success: true, message: `${phone} est maintenant ${isAdmin ? "administrateur" : "un client normal"}.` });
+  });
+
   // API Route: l'utilisateur connecté change lui-même son mot de passe
   app.post("/api/user/change-password", authLimiter, requireAuth, (req: any, res) => {
     const { currentPassword, newPassword } = req.body;
@@ -2109,9 +2142,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.get("/api/admin/accounts", adminLimiter, requireAdminAuth, (req, res) => {
     const accounts = Array.from(userAccounts.entries()).map(([phone, acc]) => {
       const planRecord = userPlans.get(phone);
-      const plan = planRecord?.plan || "free_trial";
-      const duration = planRecord ? (planRecord.customDurationMs ?? PLAN_DURATIONS_MS[plan]) : undefined;
-      const expiresAt = planRecord && duration ? planRecord.activatedAt + duration : null;
+      const rawPlan = planRecord?.plan || "free_trial";
+      const duration = planRecord ? (planRecord.customDurationMs ?? PLAN_DURATIONS_MS[rawPlan]) : undefined;
+      // Un admin est toujours "premium" sans échéance, quel que soit le forfait resté en base
+      // (ex: pass 24h d'un ancien test) — voir getEffectivePlan pour la même règle côté session.
+      const plan = acc.isAdmin ? "premium" : rawPlan;
+      const expiresAt = acc.isAdmin ? null : planRecord && duration ? planRecord.activatedAt + duration : null;
       return {
         phone,
         createdAt: acc.createdAt,

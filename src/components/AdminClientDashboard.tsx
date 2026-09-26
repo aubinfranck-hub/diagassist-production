@@ -239,6 +239,7 @@ export default function AdminClientDashboard() {
   const [resetPwdValue, setResetPwdValue] = useState("");
   const [resetPwdBusy, setResetPwdBusy] = useState(false);
   const [resetPwdFeedback, setResetPwdFeedback] = useState<{ phone: string; ok: boolean; message: string } | null>(null);
+  const [adminToggleBusyPhone, setAdminToggleBusyPhone] = useState<string | null>(null);
 
   const [vehiclesApiCode, setVehiclesApiCode] = useState("");
   const [vehiclesSyncing, setVehiclesSyncing] = useState(false);
@@ -489,6 +490,29 @@ export default function AdminClientDashboard() {
       setLogoutFeedback({ phone: targetPhone, ok: false, message: "Erreur réseau — la requête n'a pas atteint le serveur." });
     } finally {
       setLogoutBusyPhone(null);
+    }
+  };
+
+  const handleToggleAdmin = async (targetPhone: string, nextIsAdmin: boolean) => {
+    const verb = nextIsAdmin ? "promouvoir administrateur" : "rétrograder en client normal";
+    if (!confirm(`Confirmer : ${verb} le compte ${targetPhone} ?`)) return;
+    setAdminToggleBusyPhone(targetPhone);
+    try {
+      const res = await fetch(`/api/admin/accounts/${encodeURIComponent(targetPhone)}/set-admin`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ isAdmin: nextIsAdmin }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        loadData();
+      } else {
+        alert(data.message || "Échec de la mise à jour du rôle.");
+      }
+    } catch {
+      alert("Erreur réseau — la requête n'a pas atteint le serveur.");
+    } finally {
+      setAdminToggleBusyPhone(null);
     }
   };
 
@@ -912,13 +936,15 @@ export default function AdminClientDashboard() {
                   <td className="py-2 pr-3 text-slate-400">{a.email || "—"}</td>
                   <td className="py-2 pr-3 text-slate-500">{formatDate(a.createdAt)}</td>
                   <td className="py-2 pr-3">
-                    {a.isAdmin ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-400 font-bold">
-                        <Shield className="w-3 h-3" /> Admin
-                      </span>
-                    ) : (
-                      <span className="text-slate-500">Client</span>
-                    )}
+                    <button
+                      onClick={() => handleToggleAdmin(a.phone, !a.isAdmin)}
+                      disabled={adminToggleBusyPhone === a.phone}
+                      className={`inline-flex items-center gap-1 cursor-pointer disabled:opacity-40 ${a.isAdmin ? "text-emerald-400 font-bold hover:text-emerald-300" : "text-slate-500 hover:text-slate-300"}`}
+                      title={a.isAdmin ? "Cliquer pour rétrograder en client normal" : "Cliquer pour promouvoir administrateur"}
+                    >
+                      {a.isAdmin ? <Shield className="w-3 h-3" /> : null}
+                      {adminToggleBusyPhone === a.phone ? "..." : a.isAdmin ? "Admin" : "Client"}
+                    </button>
                   </td>
                   <td className="py-2 pr-3">
                     {a.location ? (
