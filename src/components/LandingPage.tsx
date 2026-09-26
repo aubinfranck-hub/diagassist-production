@@ -57,19 +57,19 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
   return (
     <div className={`min-h-screen font-sans overflow-x-hidden relative diagassist-landing ${lightMode ? "diagassist-light bg-slate-50 text-slate-900" : "bg-slate-950 text-slate-100"}`}>
       {/* Header */}
-      <header className="w-full border-b border-slate-200/80 dark:border-white/5 bg-white/95 dark:bg-[#020817]/95 backdrop-blur-xl relative z-50">
+      <header className={`w-full border-b backdrop-blur-xl relative z-50 ${lightMode ? "bg-white border-slate-200" : "bg-[#020817] border-white/5"}`}>
         <div className="max-w-7xl mx-auto h-[72px] sm:h-[78px] px-3 sm:px-5 lg:px-8 flex items-center gap-2 sm:gap-4">
           <button
             onClick={() => setMenuOpen((v) => !v)}
-            className="lg:hidden shrink-0 w-11 h-11 rounded-xl flex items-center justify-center text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-white/10 transition cursor-pointer"
+            className={`lg:hidden shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition cursor-pointer ${lightMode ? "text-slate-800 hover:bg-slate-100" : "text-white hover:bg-white/10"}`}
             aria-label={menuOpen ? "Fermer le menu" : "Ouvrir le menu"}
           >
             {menuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 lg:flex-none">
-            <img src="/icon-logo-512.png" alt="DiagAssist" className="w-10 h-10 sm:w-12 sm:h-12 object-contain shrink-0 drop-shadow-[0_5px_18px_rgba(239,68,68,.18)]" />
-            <span className="font-display font-black text-[18px] sm:text-2xl tracking-tight leading-none text-slate-900 dark:text-white whitespace-nowrap"><span>Diag</span><span className="text-red-500">Assist</span></span>
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 lg:flex-none overflow-hidden">
+            <img src="/icon-logo-512.png" alt="DiagAssist" className="w-9 h-9 sm:w-12 sm:h-12 object-contain shrink-0 drop-shadow-[0_5px_18px_rgba(239,68,68,.18)]" />
+            <span className={`font-display font-black text-[18px] sm:text-2xl tracking-tight leading-none whitespace-nowrap ${lightMode ? "text-slate-900" : "text-white"}`}><span>Diag</span><span className="text-red-500">Assist</span></span>
           </div>
 
           <nav className="hidden lg:flex items-center gap-6 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 whitespace-nowrap">
@@ -89,7 +89,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         <div className="flex items-center gap-2 shrink-0 ml-auto">
           <button
             onClick={() => setLightMode((v) => !v)}
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border flex items-center justify-center transition ${lightMode ? "bg-white border-slate-300 text-slate-700" : "bg-slate-900/70 border-white/15 text-yellow-300"}`}
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border flex items-center justify-center transition shrink-0 ${lightMode ? "bg-white border-slate-300 text-slate-700" : "bg-slate-900/70 border-white/15 text-yellow-300"}`}
             aria-label={lightMode ? "Activer le mode nuit" : "Activer le mode jour"}
             title={lightMode ? "Mode nuit" : "Mode jour"}
           >
@@ -97,7 +97,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           </button>
           <button
             onClick={onGetStarted}
-            className="bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs font-bold uppercase tracking-wide px-3 sm:px-5 py-3 rounded-xl transition cursor-pointer shrink-0 whitespace-nowrap"
+            className="bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs font-bold uppercase tracking-wide px-2.5 sm:px-5 py-3 rounded-xl transition cursor-pointer shrink-0 whitespace-nowrap max-w-[145px] sm:max-w-none overflow-hidden"
           >
             Se connecter
           </button>
@@ -105,13 +105,13 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
 
         {/* Menu mobile déroulant */}
         {menuOpen && (
-          <div className="lg:hidden absolute top-[72px] sm:top-[78px] left-3 right-3 bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden z-[60]">
+          <div className={`lg:hidden absolute top-[72px] sm:top-[78px] left-3 right-3 rounded-2xl shadow-2xl overflow-hidden z-[60] border ${lightMode ? "bg-white border-slate-200" : "bg-[#0f172a] border-white/[0.08]"}`}>
             {NAV_LINKS.map((l) => (
               <a
                 key={l.label}
                 href={l.href}
                 onClick={() => setMenuOpen(false)}
-                className="block px-5 py-3.5 text-sm font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-white/[0.06] border-b border-slate-200 dark:border-white/[0.05] transition"
+                className={`block px-5 py-3.5 text-sm font-bold transition border-b ${lightMode ? "text-slate-800 hover:bg-slate-100 border-slate-200" : "text-slate-100 hover:bg-white/[0.06] border-white/[0.05]"}`}
               >
                 {l.label}
               </a>
@@ -121,7 +121,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setMenuOpen(false)}
-              className="block px-5 py-3.5 text-sm font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-white/[0.06] transition"
+              className={`block px-5 py-3.5 text-sm font-bold transition ${lightMode ? "text-slate-800 hover:bg-slate-100" : "text-slate-100 hover:bg-white/[0.06]"}`}
             >
               Contact
             </a>
