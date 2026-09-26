@@ -372,8 +372,11 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
         </div>
  
         {/* Tier 3: Premium */}
-        <div className={`premium-glass-card rounded-3xl p-6 md:p-8 flex flex-col justify-between shadow-2xl relative overflow-hidden transition-all duration-300 ${selectedAmount === 15000 ? "border-2 border-red-500 bg-slate-900/85" : "border-2 border-red-600/40"}`}>
-          <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-black px-4.5 py-1.5 rounded-full uppercase tracking-widest border border-red-500/20">
+        {/* Pas de overflow-hidden ici (contrairement aux deux autres cartes) : le badge "Recommandé"
+            dépasse volontairement en haut de la carte (-top-3) pour rester lisible — avec
+            overflow-hidden, ce badge était rogné/coupé par le bord arrondi de la carte. */}
+        <div className={`premium-glass-card rounded-3xl p-6 md:p-8 flex flex-col justify-between shadow-2xl relative transition-all duration-300 ${selectedAmount === 15000 ? "border-2 border-red-500 bg-slate-900/85" : "border-2 border-red-600/40"}`}>
+          <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-black px-4.5 py-1.5 rounded-full uppercase tracking-widest border border-red-500/20 shadow-lg">
             Recommandé
           </div>
  
