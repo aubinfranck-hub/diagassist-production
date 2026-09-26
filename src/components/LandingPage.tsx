@@ -95,10 +95,18 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
               </div>
               <div className="p-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="flex-1 bg-slate-950 border border-white/[0.08] rounded-xl px-4 py-3 font-mono text-sm text-slate-300">
+                  <button
+                    onClick={onGetStarted}
+                    className="flex-1 text-left bg-slate-950 hover:bg-slate-900 border border-white/[0.08] rounded-xl px-4 py-3 font-mono text-sm text-slate-300 transition cursor-pointer"
+                  >
                     P0301
-                  </div>
-                  <div className="bg-red-600 text-white text-xs font-black uppercase px-4 py-3 rounded-xl">Analyser</div>
+                  </button>
+                  <button
+                    onClick={onGetStarted}
+                    className="bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase px-4 py-3 rounded-xl transition cursor-pointer"
+                  >
+                    Analyser
+                  </button>
                 </div>
                 <div className="bg-slate-950/60 border border-white/[0.06] rounded-2xl p-4 space-y-3">
                   <p className="text-xs font-bold text-red-400 uppercase tracking-wide">Raté d'allumage — cylindre 1</p>
