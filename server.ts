@@ -1063,6 +1063,96 @@ const SCANNER_GUIDES: Array<{ family: string; aliases: string[]; capabilities: s
   { family:"Carista", aliases:["carista","carista obd"], capabilities:["OBD","Live Data","DTC","Coding/Customizations selon véhicule"], menu:["Diagnostics > ECU > Faults / Live Data","Service / Customize / Coding selon véhicule"], actions:["Sauvegarder les réglages avant personnalisation.","Ne pas appliquer une adaptation sans connaître son effet."], bench:false, note:"Fonctions selon véhicule et abonnement." },
   { family:"FIXD", aliases:["fixd","fixd sensor"], capabilities:["OBD-II","DTC","Live Data selon application","Maintenance"], menu:["Vehicle > Scan > Codes / Live Data / Maintenance"], actions:["Traiter les codes comme point de départ ; confirmer par tests physiques.","Un lecteur OBD générique ne remplace pas un diagnostic tous systèmes."], bench:false, note:"Orientation OBD grand public." }
 ];
+
+// === AGENT CENTRAL DE DIAGNOSTIC : état léger et local, sans appel IA supplémentaire ===
+type LiveAgentPhase = "historique" | "symptome" | "inspection" | "outils" | "tests" | "validation" | "conclusion";
+interface LiveAgentState {
+  sessionId: string;
+  phase: LiveAgentPhase;
+  tour: number;
+  vehicle: string;
+  symptom: string;
+  dtcs: string[];
+  evidence: string[];
+  hypotheses: string[];
+  testsDone: string[];
+  currentTest: string | null;
+  repaired: boolean;
+  concluded: boolean;
+}
+const liveAgentStates = new Map<string, LiveAgentState>();
+
+function createLiveAgentState(sessionId: string, context = ""): LiveAgentState {
+  const text = String(context || "");
+  const dtcs = Array.from(text.matchAll(/\\b[PBCU][0-9]{4}\\b/gi)).map(m => m[0].toUpperCase()).filter((v,i,a)=>a.indexOf(v)===i);
+  const state: LiveAgentState = {
+    sessionId, phase: "historique", tour: 0, vehicle: "", symptom: text.slice(0, 500),
+    dtcs, evidence: [], hypotheses: [], testsDone: [], currentTest: null,
+    repaired: false, concluded: false,
+  };
+  liveAgentStates.set(sessionId, state);
+  return state;
+}
+
+function liveAgentNextStep(state: LiveAgentState): string {
+  if (state.concluded) return "CONCLUSION: diagnostic clôturé. Si une réparation a été faite, confirmer l'essai final et l'absence de nouveau DTC.";
+  if (!state.vehicle) return "IDENTIFICATION: demander marque, modèle, année et motorisation avant de condamner une pièce.";
+  if (!state.symptom) return "SYMPTÔME: faire décrire le symptôme et ses conditions d'apparition.";
+  if (state.phase === "historique") return "HISTORIQUE: vérifier intervention récente, batterie, pièce remplacée, câblage ou événement déclencheur.";
+  if (state.phase === "symptome") return "VÉRIFICATION: reproduire le symptôme et préciser froid/chaud, charge, régime ou conditions d'apparition.";
+  if (state.phase === "inspection") return "INSPECTION: contrôler visuellement fusibles, connecteurs, faisceaux, fuites et niveaux avant un démontage.";
+  if (state.phase === "outils") return "OUTILS: utiliser le scanner et relever DTC, freeze frame et uniquement les données utiles.";
+  if (state.phase === "tests") return state.currentTest
+    ? `TEST EN COURS: ${state.currentTest}. Attendre le résultat avant de proposer une autre action.`
+    : "TEST: choisir UN SEUL test discriminant, expliquer pourquoi, puis attendre son résultat.";
+  if (state.phase === "validation") return state.repaired
+    ? "VALIDATION: effectuer l'essai final, vérifier le symptôme initial et rescanner les DTC avant de conclure."
+    : "VALIDATION: ne pas condamner la pièce sans preuve ; confirmer la cause par une mesure ou un test.";
+  return "CONCLUSION: résumer cause confirmée ou probable, preuve obtenue, réparation et contrôle post-réparation.";
+}
+
+function pilotLiveDiagnostic(args: any, state: LiveAgentState): string {
+  const event = String(args?.event || "").trim().toLowerCase();
+  const vehicle = String(args?.vehicule || "").trim();
+  const symptom = String(args?.symptome || "").trim();
+  const evidence = String(args?.preuve || "").trim();
+  const test = String(args?.test || "").trim();
+  const result = String(args?.resultat || "").trim();
+  const hypothesis = String(args?.hypothese || "").trim();
+
+  if (vehicle) state.vehicle = vehicle;
+  if (symptom) state.symptom = symptom;
+  if (hypothesis && !state.hypotheses.includes(hypothesis)) state.hypotheses.push(hypothesis);
+  if (evidence) state.evidence.push(evidence);
+  if (test && !state.testsDone.includes(test) && result) state.testsDone.push(test + " => " + result);
+  if (test && !result) state.currentTest = test;
+
+  if (event === "historique") state.phase = "historique";
+  else if (event === "symptome") state.phase = "symptome";
+  else if (event === "inspection") state.phase = "inspection";
+  else if (event === "scan") state.phase = "outils";
+  else if (event === "test") { state.phase = "tests"; if (result) state.currentTest = null; }
+  else if (event === "reparation") { state.repaired = true; state.phase = "validation"; state.currentTest = null; }
+  else if (event === "validation") { state.phase = "validation"; state.repaired = true; }
+  else if (event === "conclusion") { state.phase = "conclusion"; state.concluded = true; state.currentTest = null; }
+
+  state.tour++;
+  return JSON.stringify({
+    agent: "DiagAssist Agent",
+    session_id: state.sessionId,
+    phase: state.phase,
+    tour: state.tour,
+    vehicule: state.vehicle || null,
+    dtcs: state.dtcs,
+    hypotheses: state.hypotheses.slice(-5),
+    preuves: state.evidence.slice(-5),
+    tests_realises: state.testsDone.slice(-5),
+    test_en_cours: state.currentTest,
+    prochaine_etape: liveAgentNextStep(state),
+    regle: "Une seule action/test à la fois. Aucun remplacement de pièce sans preuve."
+  });
+}
+
 const scannerGuideCache = new Map<string,string>();
 function liveToolGetScannerGuide(scanner: string): string {
   const key = scanner.toLowerCase().trim();
@@ -1077,6 +1167,23 @@ function liveToolGetScannerGuide(scanner: string): string {
 }
 
 const LIVE_AGENT_TOOL_DECLARATIONS = [
+  {
+    name: "piloter_diagnostic",
+    description: "Pilote l'état local de l'Agent DiagAssist sans appel réseau. À utiliser après un symptôme, une observation, un résultat de test, une réparation ou une validation pour garder une session structurée et déterminer la prochaine étape. Une seule action/test à la fois.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        event: { type: Type.STRING, description: "historique | symptome | inspection | scan | test | reparation | validation | conclusion" },
+        vehicule: { type: Type.STRING, description: "Véhicule exact si connu." },
+        symptome: { type: Type.STRING, description: "Symptôme initial ou actuel." },
+        preuve: { type: Type.STRING, description: "Observation, mesure, photo décrite ou résultat objectif." },
+        test: { type: Type.STRING, description: "Test unique réalisé ou proposé." },
+        resultat: { type: Type.STRING, description: "Résultat du test, si disponible." },
+        hypothese: { type: Type.STRING, description: "Hypothèse actuelle, clairement présentée comme probable tant qu'elle n'est pas confirmée." }
+      },
+      required: ["event"],
+    },
+  },
   {
     name: "consulter_guide_scanner",
     description: "Consulte instantanément l'index local des guides de scanners. À utiliser seulement lorsqu'un scanner précis est cité et qu'un chemin de menu ou une action de test est nécessaire. Aucun appel réseau.",
@@ -1548,6 +1655,16 @@ COURTOISIE ET TON OBLIGATOIRES (EN TOUTE CIRCONSTANCE) :
 - Tu commences toujours la première interaction par une salutation chaleureuse et professionnelle : "Bonjour, je suis DiagAssist, votre assistant de diagnostic. Je vais vous accompagner étape par étape pour trouver la cause de votre problème."
 - Tu vouvoies TOUJOURS l'utilisateur avec respect et bienveillance, même s'il est bref, impatient ou frustré.
 - Ton calme, professionnel et bienveillant (sans pour autant remercier à chaque phrase).
+
+ARCHITECTURE AGENT (OBLIGATOIRE) :
+- Tu es un AGENT DE DIAGNOSTIC, pas un simple assistant conversationnel.
+- Une session possède un état de diagnostic persistant pendant l'appel : véhicule, symptôme, DTC, preuves, hypothèses, tests, réparation et validation.
+- Après toute information substantielle (symptôme, observation, DTC, résultat de mesure/test, réparation), utilise l'outil local piloter_diagnostic pour mettre à jour cet état. Cet outil est local et instantané : ne fais pas attendre l'utilisateur.
+- L'outil te donne la prochaine étape. Suis-la, mais garde ton jugement technique.
+- Ne lance jamais plusieurs tests à la fois. Pose la question, propose le test, attends le résultat, puis avance.
+- Le Live vocal est la voix de l'agent ; ne crée pas une deuxième conversation IA concurrente pour chaque tour.
+- N'utilise rechercher_fiche_technique que lorsqu'une donnée technique précise manque réellement. Les guides scanners locaux doivent être privilégiés pour les menus.
+- Quand la cause est confirmée, passe en réparation puis validation post-réparation avant conclusion.
 
 RÈGLE D'OR (NON NÉGOCIABLE) :
 NE JAMAIS SAUTER DIRECTEMENT D'UN CODE DÉFAUT OU D'UN SYMPTÔME À UNE PIÈCE À REMPLACER.
@@ -4157,6 +4274,8 @@ Directives pour ce tour :
     console.log("[WebSocket] Client connected to real-time voice bridge.");
     let geminiSession: any = null;
     let isClosed = false;
+    const liveAgentSessionId = crypto.randomBytes(12).toString("hex");
+    let liveAgentState: LiveAgentState | null = null;
 
     clientWs.on("message", async (data) => {
       try {
@@ -4164,6 +4283,8 @@ Directives pour ce tour :
 
         if (message.type === "start") {
           console.log("[WebSocket] Starting Gemini Live Session with context...");
+          liveAgentState = createLiveAgentState(liveAgentSessionId, String(message.diagnosticContext || ""));
+          clientWs.send(JSON.stringify({ type: "agentState", sessionId: liveAgentSessionId, phase: liveAgentState.phase }));
           const liveNameInstruction = getNameInstruction((clientWs as any)._authPhone);
           const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
 ${liveNameInstruction}
@@ -4302,7 +4423,11 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                           clientWs.send(JSON.stringify({ type: "toolCall", name: fc.name }));
                           let result: string;
                           try {
-                            if (fc.name === "consulter_guide_scanner") {
+                            if (fc.name === "piloter_diagnostic") {
+                              if (!liveAgentState) liveAgentState = createLiveAgentState(liveAgentSessionId, String(message.diagnosticContext || ""));
+                              result = pilotLiveDiagnostic(fc.args || {}, liveAgentState);
+                              clientWs.send(JSON.stringify({ type: "agentState", state: JSON.parse(result) }));
+                            } else if (fc.name === "consulter_guide_scanner") {
                               result = liveToolGetScannerGuide(String(fc.args?.scanner || ""));
                             } else if (fc.name === "rechercher_fiche_technique") {
                               result = await liveToolSearchTechnicalInfo(String(fc.args?.requete || ""));
