@@ -267,7 +267,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
       {/* Le problème du mécanicien */}
       <section className="w-full max-w-4xl mx-auto px-5 py-14 border-t border-white/[0.05] text-center">
         <h2 className="text-xl md:text-2xl font-display font-black uppercase tracking-tight mb-4">
-          Le code, ce n'est jamais le problème
+          Un code défaut n'est pas encore un diagnostic.
         </h2>
         <p className="text-sm text-slate-400 leading-relaxed max-w-2xl mx-auto">
           P0301, P0171, P0420... votre scanner identifie le défaut. Le vrai travail commence ensuite :
