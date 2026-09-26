@@ -97,6 +97,17 @@ function formatRemainingTime(expiresAt: number | null, plan: string): { text: st
   return { text: `${hours}h ${minutes}m`, expired: false };
 }
 
+const EXPIRING_SOON_MS = 3 * 24 * 60 * 60 * 1000; // seuil "expire bientôt" : 3 jours
+
+// Catégorise un compte pour le filtre/tri de "Tous les comptes" : expiré (le plus urgent à
+// relancer) > expire sous 3 jours > actif sans échéance proche > pas d'échéance (illimité/admin).
+function getAccountUrgency(a: Account): { category: "expired" | "expiring_soon" | "active"; sortKey: number } {
+  const remaining = formatRemainingTime(a.expiresAt, a.plan);
+  if (remaining.expired) return { category: "expired", sortKey: a.expiresAt ?? 0 };
+  if (a.expiresAt && a.expiresAt - Date.now() <= EXPIRING_SOON_MS) return { category: "expiring_soon", sortKey: a.expiresAt };
+  return { category: "active", sortKey: a.expiresAt ?? Infinity };
+}
+
 // Numéro au format international -> format attendu par wa.me (chiffres uniquement)
 const toWaMeNumber = (phone: string) => phone.replace(/[^0-9]/g, "");
 
@@ -230,6 +241,7 @@ function ClientsMap({ accounts }: { accounts: Account[] }) {
 
 export default function AdminClientDashboard() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountFilter, setAccountFilter] = useState<"all" | "expired" | "expiring_soon" | "active">("all");
   const [activeSessions, setActiveSessions] = useState<SessionInfo[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [bannerList, setBannerList] = useState<Banner[]>([]);
@@ -960,6 +972,26 @@ export default function AdminClientDashboard() {
           <Key className="w-4 h-4 text-slate-400" />
           Tous les comptes ({accounts.length})
         </h3>
+        <div className="flex flex-wrap gap-2">
+          {([
+            { key: "all", label: `Tous (${accounts.length})` },
+            { key: "expired", label: `Expirés (${accounts.filter((a) => getAccountUrgency(a).category === "expired").length})` },
+            { key: "expiring_soon", label: `Expire < 3j (${accounts.filter((a) => getAccountUrgency(a).category === "expiring_soon").length})` },
+            { key: "active", label: `Actifs (${accounts.filter((a) => getAccountUrgency(a).category === "active").length})` },
+          ] as const).map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setAccountFilter(f.key)}
+              className={`px-3 py-1.5 rounded-xl text-[11px] font-bold uppercase tracking-wide cursor-pointer transition border ${
+                accountFilter === f.key
+                  ? "bg-emerald-600 border-emerald-500 text-white"
+                  : "bg-slate-950 border-white/[0.08] text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -978,7 +1010,16 @@ export default function AdminClientDashboard() {
               </tr>
             </thead>
             <tbody>
-              {accounts.map((a) => {
+              {accounts
+                .filter((a) => accountFilter === "all" || getAccountUrgency(a).category === accountFilter)
+                .sort((a, b) => {
+                  const ua = getAccountUrgency(a);
+                  const ub = getAccountUrgency(b);
+                  const rank = { expired: 0, expiring_soon: 1, active: 2 };
+                  if (rank[ua.category] !== rank[ub.category]) return rank[ua.category] - rank[ub.category];
+                  return ua.sortKey - ub.sortKey;
+                })
+                .map((a) => {
                 const remaining = formatRemainingTime(a.expiresAt, a.plan);
                 return (
                 <tr key={a.phone} className="border-b border-slate-800/50">
