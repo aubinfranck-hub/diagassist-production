@@ -79,14 +79,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
             <a href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")} target="_blank" rel="noopener noreferrer" className="hover:text-slate-900 dark:hover:text-white transition">Contact</a>
           </nav>
 
-        <nav className="hidden lg:flex items-center gap-6 text-xs font-bold uppercase tracking-wide text-[#94a3b8] whitespace-nowrap">
-          {NAV_LINKS.map((l) => (
-            <a key={l.label} href={l.href} className="hover:text-[#f8fafc] transition">{l.label}</a>
-          ))}
-          <a href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")} target="_blank" rel="noopener noreferrer" className="hover:text-[#f8fafc] transition">Contact</a>
-        </nav>
-
-        <div className="flex items-center gap-2 shrink-0 ml-auto">
+          <div className="flex items-center gap-2 shrink-0 ml-auto">
           <button
             onClick={() => setLightMode((v) => !v)}
             className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border flex items-center justify-center transition shrink-0 ${lightMode ? "bg-white border-slate-300 text-slate-700" : "bg-slate-900/70 border-white/15 text-yellow-300"}`}
@@ -127,6 +120,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
             </a>
           </div>
         )}
+        </div>
       </header>
 
       {/* Hero — design mobile fidèle à la maquette */}
