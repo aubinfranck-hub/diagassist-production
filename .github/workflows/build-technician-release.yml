@@ -79,13 +79,17 @@ jobs:
           test -n "$apk_path"
           cp "$apk_path" public/downloads/diagassist-scanner.apk
 
-          if git diff --quiet -- public/downloads/diagassist-scanner.apk; then
+          git config user.name "diagassist-bot"
+          git config user.email "diagassist-bot@users.noreply.github.com"
+          git add public/downloads/diagassist-scanner.apk
+
+          # git diff (sans --cached) ne détecte rien pour un fichier tout juste ajouté à
+          # l'index (jamais suivi auparavant) : il faut comparer l'index à HEAD, pas le
+          # working tree à l'index.
+          if git diff --cached --quiet; then
             echo "APK inchangé, rien à publier."
             exit 0
           fi
 
-          git config user.name "diagassist-bot"
-          git config user.email "diagassist-bot@users.noreply.github.com"
-          git add public/downloads/diagassist-scanner.apk
           git commit -m "chore: publier le dernier APK DiagAssist Scanner"
           git push origin HEAD:main
