@@ -866,6 +866,87 @@ function extractGroundingSources(response: any): { title: string; uri: string }[
   return sources.slice(0, 6);
 }
 
+// --- Outils de l'agent vocal live (function calling Gemini Live) ---
+// Gardés volontairement en LECTURE SEULE : le live ne doit jamais pouvoir déclencher une action
+// qui touche l'argent ou les comptes clients (bonus, mot de passe, etc.) de façon autonome à la
+// voix — seulement chercher de l'information pour répondre au mécanicien plus vite/mieux.
+
+// Recherche technique concise pour l'agent vocal — une seule requête (pas de second appel de
+// structuration JSON comme /api/diagnose/technical-lookup) pour limiter la latence perçue à l'oral.
+async function liveToolSearchTechnicalInfo(query: string): Promise<string> {
+  try {
+    const searchResult = await getAIClient().models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: `Recherche des données techniques fiables et vérifiées pour : ${query}. Cherche l'emplacement précis du composant, les valeurs de référence multimètre (résistance en ohms, tension) si c'est électrique, le couple de serrage en Nm si applicable, et tout bulletin technique constructeur pertinent. Réponds en 2-3 phrases courtes et factuelles, adaptées à être lues à voix haute. Ne devine JAMAIS une valeur que tu n'as pas trouvée — dis-le clairement si l'info n'est pas disponible.`,
+      config: { tools: [{ googleSearch: {} }] },
+    });
+    return searchResult.text?.trim() || "Aucune information technique fiable trouvée pour cette recherche.";
+  } catch (err) {
+    console.warn("[Live Tool] Recherche technique indisponible:", err);
+    return "La recherche technique est momentanément indisponible.";
+  }
+}
+
+// Consulte la base véhicules locale (Auto-Data.net synchronisée par l'admin) — sans marque+modèle,
+// liste les modèles connus de la marque ; avec les deux, détaille motorisations/générations.
+async function liveToolCheckVehicleDatabase(brand: string, model?: string): Promise<string> {
+  if (!dbPool) return "La base véhicules n'est pas configurée sur ce serveur.";
+  try {
+    if (!model) {
+      const { rows } = await dbPool.query(
+        "SELECT DISTINCT model FROM vehicles WHERE brand ILIKE $1 ORDER BY model ASC LIMIT 15",
+        [brand]
+      );
+      if (rows.length === 0) return `Aucun modèle trouvé dans la base pour la marque "${brand}".`;
+      return `Modèles disponibles pour ${brand} dans la base : ${rows.map((r: any) => r.model).join(", ")}.`;
+    }
+    const { rows } = await dbPool.query(
+      `SELECT DISTINCT generation, engine_code, engine_displacement, power_hp, fuel_system, year_start, year_stop
+       FROM vehicles WHERE brand ILIKE $1 AND model ILIKE $2
+       ORDER BY year_start DESC NULLS LAST LIMIT 8`,
+      [brand, `%${model}%`]
+    );
+    if (rows.length === 0) return `Aucune motorisation trouvée dans la base pour "${brand} ${model}".`;
+    const lines = rows.map((r: any) => {
+      const period = `${r.year_start || "?"}-${r.year_stop || "présent"}`;
+      const engine = [r.engine_code, r.engine_displacement ? `${r.engine_displacement}cc` : null, r.power_hp ? `${r.power_hp}ch` : null, r.fuel_system]
+        .filter(Boolean)
+        .join(" ");
+      return `${r.generation || "génération inconnue"} (${period}) : ${engine || "détails moteur non renseignés"}`;
+    });
+    return `Motorisations trouvées pour ${brand} ${model} : ${lines.join(" | ")}.`;
+  } catch (err) {
+    console.warn("[Live Tool] Erreur requête base véhicules:", err);
+    return "Erreur lors de la consultation de la base véhicules.";
+  }
+}
+
+const LIVE_AGENT_TOOL_DECLARATIONS = [
+  {
+    name: "rechercher_fiche_technique",
+    description: "Recherche sur le web des données techniques fiables (emplacement d'un composant, valeurs multimètre, couple de serrage, bulletin constructeur) pour aider au diagnostic ou à la réparation. À utiliser quand le mécanicien demande une valeur précise que tu n'es pas certain de connaître.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        requete: { type: Type.STRING, description: "Ce qu'il faut chercher, incluant marque/modèle/année et le composant ou problème précis, ex: 'Toyota Corolla 2015 résistance capteur PMH'." },
+      },
+      required: ["requete"],
+    },
+  },
+  {
+    name: "verifier_base_vehicules",
+    description: "Consulte la base véhicules locale de DiagAssist pour vérifier les modèles ou motorisations disponibles d'une marque. À utiliser pour confirmer un modèle/génération/motorisation exact avant de donner un diagnostic technique.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        marque: { type: Type.STRING, description: "Marque du véhicule, ex: 'Toyota'." },
+        modele: { type: Type.STRING, description: "Modèle du véhicule, ex: 'Corolla'. Omettre pour lister tous les modèles connus de la marque." },
+      },
+      required: ["marque"],
+    },
+  },
+];
+
 async function generateContentWithFallbackAndRetry(
   contents: any,
   config: any,
@@ -3771,6 +3852,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                   voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } }, // 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
                 },
                 systemInstruction: systemInstruction,
+                tools: [{ functionDeclarations: LIVE_AGENT_TOOL_DECLARATIONS }],
                 outputAudioTranscription: {},
                 inputAudioTranscription: {},
                 // AMÉLIORATION : détection de voix (VAD) plus sensible et plus rapide, pour que
@@ -3826,6 +3908,36 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                   // Handle Turn Complete (end of AI output turn)
                   if (msg.serverContent?.turnComplete) {
                     clientWs.send(JSON.stringify({ type: "turnComplete" }));
+                  }
+
+                  // Handle Tool Calls (function calling) : exécute les outils en lecture seule
+                  // déclarés dans LIVE_AGENT_TOOL_DECLARATIONS et renvoie le résultat au modèle.
+                  const functionCalls = msg.toolCall?.functionCalls;
+                  if (Array.isArray(functionCalls) && functionCalls.length > 0) {
+                    (async () => {
+                      const functionResponses = await Promise.all(
+                        functionCalls.map(async (fc: any) => {
+                          clientWs.send(JSON.stringify({ type: "toolCall", name: fc.name }));
+                          let result: string;
+                          try {
+                            if (fc.name === "rechercher_fiche_technique") {
+                              result = await liveToolSearchTechnicalInfo(String(fc.args?.requete || ""));
+                            } else if (fc.name === "verifier_base_vehicules") {
+                              result = await liveToolCheckVehicleDatabase(String(fc.args?.marque || ""), fc.args?.modele ? String(fc.args.modele) : undefined);
+                            } else {
+                              result = `Outil "${fc.name}" inconnu.`;
+                            }
+                          } catch (err) {
+                            console.error(`[Live Tool] Erreur lors de l'exécution de ${fc.name}:`, err);
+                            result = "Une erreur est survenue lors de l'exécution de cet outil.";
+                          }
+                          return { id: fc.id, name: fc.name, response: { result } };
+                        })
+                      );
+                      if (!isClosed && geminiSession) {
+                        geminiSession.sendToolResponse({ functionResponses });
+                      }
+                    })();
                   }
                 },
                 onclose: () => {
