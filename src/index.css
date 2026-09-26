@@ -132,6 +132,32 @@
   left: 100%;
 }
 
+/* DiagAssist landing: force correct contrast in NIGHT mode.
+   This is scoped so the global light-theme rules cannot turn dark-mode text/cards white-on-white. */
+html.light .diagassist-landing:not(.diagassist-light) .text-white {
+  color: #f8fafc !important;
+}
+html.light .diagassist-landing:not(.diagassist-light) [class*="text-slate-100"],
+html.light .diagassist-landing:not(.diagassist-light) [class*="text-slate-200"],
+html.light .diagassist-landing:not(.diagassist-light) [class*="text-slate-300"] {
+  color: #cbd5e1 !important;
+}
+html.light .diagassist-landing:not(.diagassist-light) [class*="text-slate-400"] {
+  color: #94a3b8 !important;
+}
+html.light .diagassist-landing:not(.diagassist-light) [class*="text-slate-500"] {
+  color: #64748b !important;
+}
+html.light .diagassist-landing:not(.diagassist-light) [class*="bg-slate-900"] {
+  background-color: rgba(15,23,42,.92) !important;
+}
+html.light .diagassist-landing:not(.diagassist-light) [class*="bg-[#071326]"] {
+  background-color: rgba(7,19,38,.96) !important;
+}
+html.light .diagassist-landing:not(.diagassist-light) [class*="border-white"] {
+  border-color: rgba(255,255,255,.15) !important;
+}
+
 /* DiagAssist landing: readable day mode */
 .diagassist-light {
   background: #f8fafc !important;
