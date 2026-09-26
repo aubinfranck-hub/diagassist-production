@@ -184,6 +184,14 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
               </div>
             </div>
 
+            <div className="relative z-40 flex items-center justify-center mb-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm sm:text-base font-black text-white shadow-lg">
+                <span className="text-red-400">DIAGNOSTIC</span>
+                <span className="text-white">À PARTIR DE</span>
+                <span className="text-red-500 text-lg sm:text-xl">500 F</span>
+              </div>
+            </div>
+
             <div className="relative z-40 flex flex-col sm:flex-row gap-3 justify-center mt-5">
               <button
                 onClick={onGetStarted}
