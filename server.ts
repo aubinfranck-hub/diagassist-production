@@ -26,11 +26,18 @@ const sessions = new Map<string, { phone: string; plan: string; createdAt: numbe
 // soit estimative (dérivée de l'IP côté serveur quand le client refuse/échoue le GPS).
 const lastKnownLocation = new Map<string, { latitude: number; longitude: number; accuracy?: number; updatedAt: number; source: "gps" | "ip" }>();
 
-// Historique des connexions (login réussis), limité aux 500 dernières entrées pour éviter une fuite mémoire
+// Historique des connexions (login réussis), limité aux 500 dernières entrées pour éviter une fuite mémoire.
+// Persisté en base (voir loadPersistedData) pour ne pas être perdu à chaque redéploiement du serveur.
 const connectionHistory: { phone: string; timestamp: number }[] = [];
 function logConnectionEvent(phone: string): void {
-  connectionHistory.push({ phone, timestamp: Date.now() });
+  const entry = { phone, timestamp: Date.now() };
+  connectionHistory.push(entry);
   if (connectionHistory.length > 500) connectionHistory.shift();
+  if (dbPool) {
+    dbPool
+      .query("INSERT INTO connection_history (phone, timestamp) VALUES ($1, $2)", [entry.phone, entry.timestamp])
+      .catch((err: any) => console.error("[DB] Échec de l'enregistrement de l'historique de connexion:", err.message));
+  }
 }
 
 // Bannières / publicités configurées par l'admin, affichées côté client
@@ -187,6 +194,12 @@ async function initDatabase(): Promise<void> {
       plan TEXT NOT NULL,
       created_at BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS connection_history (
+      id SERIAL PRIMARY KEY,
+      phone TEXT NOT NULL,
+      timestamp BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_connection_history_timestamp ON connection_history (timestamp DESC);
     CREATE TABLE IF NOT EXISTS mechanics (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -436,7 +449,14 @@ async function loadPersistedData(): Promise<void> {
       loadedSessions++;
     }
   }
-  console.log(`[DB] Données rechargées : ${accountsRes.rows.length} compte(s), ${plansRes.rows.length} forfait(s), ${bannersRes.rows.length} bannière(s), ${loadedSessions} session(s).`);
+
+  const historyRes = await dbPool.query("SELECT phone, timestamp FROM connection_history ORDER BY timestamp DESC LIMIT 500");
+  // Réinséré du plus ancien au plus récent pour respecter l'ordre chronologique attendu par logConnectionEvent (push en fin de tableau)
+  for (const row of [...historyRes.rows].reverse()) {
+    connectionHistory.push({ phone: row.phone, timestamp: Number(row.timestamp) });
+  }
+
+  console.log(`[DB] Données rechargées : ${accountsRes.rows.length} compte(s), ${plansRes.rows.length} forfait(s), ${bannersRes.rows.length} bannière(s), ${loadedSessions} session(s), ${historyRes.rows.length} historique(s) de connexion.`);
 }
 
 // --- Synchronisation base véhicules depuis l'API Auto-Data.net ---
