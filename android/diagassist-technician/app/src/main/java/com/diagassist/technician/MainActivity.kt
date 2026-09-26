@@ -8,6 +8,8 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
@@ -310,7 +312,12 @@ class MainActivity : ComponentActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        finish()
+        // Ne pas fermer l'activité tout de suite : sur certains appareils/versions Android, le
+        // jeton MediaProjection reste lié au cycle de vie de l'activité qui l'a demandé. La
+        // détruire immédiatement (finish()) pouvait invalider la capture dans le service avant
+        // même qu'elle ait eu le temps de démarrer, refermant tout juste après la sélection de
+        // l'app dans le sélecteur Android.
+        Handler(Looper.getMainLooper()).postDelayed({ finish() }, 1500)
     }
 
     private fun isAccessibilityEnabled(): Boolean {

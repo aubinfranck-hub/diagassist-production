@@ -61,7 +61,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
         <div className="premium-glass-card rounded-2xl border border-emerald-400/20 bg-slate-950/80 p-4">
           <div className="flex items-center justify-between gap-3 mb-3">
             <div className="text-xs font-black uppercase tracking-widest text-emerald-400">Session DiagAssist active</div>
-            <span className="text-[11px] text-slate-500">QR valable 10 min</span>
+            <span className="text-[11px] text-slate-500">QR valable 30 min</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4 items-center">

@@ -7,7 +7,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 const sessions = new Map<string, any>();
 const clients = new Map<string, Set<any>>();
 const attempts = new Map<string, number>();
-const PAIRING_TTL = 10 * 60 * 1000;
+const PAIRING_TTL = 30 * 60 * 1000;
 const SESSION_TTL = 60 * 60 * 1000;
 const MAX_FRAME_BYTES = 2_500_000;
 const MAX_VISION_IMAGE_BYTES = 2_500_000;

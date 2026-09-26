@@ -65,6 +65,13 @@ class ScreenCaptureService : Service() {
 
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
         projection = manager.getMediaProjection(code, data)
+        // Démarrer la capture tout de suite : sur certains appareils/versions Android, le
+        // jeton MediaProjection est invalidé si trop de temps s'écoule (ou si l'activité qui
+        // l'a demandé est détruite) avant qu'un VirtualDisplay ne soit réellement créé.
+        // Attendre l'aller-retour réseau de l'appairage avant de capturer provoquait
+        // exactement ce symptôme : le sélecteur Android s'affiche, l'utilisateur choisit
+        // l'app, puis la capture (et donc le service) se referme aussitôt.
+        startCapture()
         connect()
         return START_STICKY
     }
