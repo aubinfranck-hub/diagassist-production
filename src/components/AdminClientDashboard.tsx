@@ -577,6 +577,11 @@ export default function AdminClientDashboard() {
   const handleGrantBonus = async (phone: string) => {
     setBonusBusy(true);
     setBonusFeedback(null);
+    // Ouvert de façon SYNCHRONE (avant tout await) pour éviter le blocage de popup des navigateurs,
+    // qui n'autorisent window.open() que dans le prolongement direct du clic utilisateur.
+    // Le client n'est jamais informé automatiquement d'un bonus attribué côté serveur : on lui
+    // envoie systématiquement un message WhatsApp prérempli plutôt que de le laisser deviner.
+    const waTab = window.open("about:blank", "_blank");
     try {
       const res = await fetch("/api/admin/activate-plan", {
         method: "POST",
@@ -593,9 +598,21 @@ export default function AdminClientDashboard() {
       if (data.success) {
         setBonusPhone(null);
         loadData();
+        const durationLabel = `${bonusDurationValue} ${bonusDurationUnit}${bonusDurationValue > 1 ? "s" : ""}`;
+        const planLabel = PLAN_LABELS[bonusPlan] || bonusPlan;
+        const message = `Bonjour ! DiagAssist vous offre un bonus : forfait "${planLabel}" activé sur votre compte pour ${durationLabel}. Profitez-en dès maintenant 🚗🔧`;
+        const waUrl = `https://wa.me/${toWaMeNumber(phone)}?text=${encodeURIComponent(message)}`;
+        if (waTab) {
+          waTab.location.href = waUrl;
+        } else {
+          window.open(waUrl, "_blank");
+        }
+      } else if (waTab) {
+        waTab.close();
       }
     } catch {
       setBonusFeedback({ phone, ok: false, message: "Erreur réseau." });
+      waTab?.close();
     } finally {
       setBonusBusy(false);
     }
