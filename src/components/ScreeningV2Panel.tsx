@@ -66,8 +66,15 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
 
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4 items-center">
             <div>
-              <div className="text-sm font-black text-white">1. Ouvrez DiagAssist Technician sur la tablette du scanner</div>
-              <div className="text-sm text-slate-400 mt-1">2. Scannez ce QR code avec la caméra de la tablette.</div>
+              <div className="text-sm font-black text-white">1. Installez DiagAssist Technician sur la tablette du scanner</div>
+              <a
+                href="/downloads/diagassist-scanner.apk"
+                download
+                className="inline-flex items-center gap-1.5 mt-1 text-xs font-bold text-emerald-400 underline underline-offset-2"
+              >
+                Télécharger l'application (.apk)
+              </a>
+              <div className="text-sm text-slate-400 mt-2">2. Scannez ce QR code avec la caméra de la tablette.</div>
               <div className="text-sm text-slate-400 mt-1">3. Autorisez la capture d’écran puis le contrôle à distance lorsque Android le demande.</div>
 
               <div className="mt-4 rounded-xl bg-black/30 border border-white/10 p-3">

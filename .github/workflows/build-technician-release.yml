@@ -8,6 +8,9 @@ on:
       - "android/diagassist-technician/**"
       - ".github/workflows/build-technician-release.yml"
 
+permissions:
+  contents: write
+
 jobs:
   build-release:
     runs-on: ubuntu-latest
@@ -66,3 +69,23 @@ jobs:
       - name: Remove keystore
         if: always()
         run: rm -f diagassist-release.keystore
+
+      - name: Publish APK for direct download on diagassist.app
+        working-directory: .
+        run: |
+          set -e
+          mkdir -p public/downloads
+          apk_path=$(find android/diagassist-technician/app/build/outputs/apk/release -name '*.apk' | head -n1)
+          test -n "$apk_path"
+          cp "$apk_path" public/downloads/diagassist-scanner.apk
+
+          if git diff --quiet -- public/downloads/diagassist-scanner.apk; then
+            echo "APK inchangé, rien à publier."
+            exit 0
+          fi
+
+          git config user.name "diagassist-bot"
+          git config user.email "diagassist-bot@users.noreply.github.com"
+          git add public/downloads/diagassist-scanner.apk
+          git commit -m "chore: publier le dernier APK DiagAssist Scanner"
+          git push origin HEAD:main
