@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight, Wrench, Upload, Car } from "lucide-react";
+import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight, Wrench, Upload, Car, Cpu, CheckCircle2, XCircle } from "lucide-react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -269,6 +269,13 @@ export default function AdminClientDashboard() {
   const [vehiclesSyncing, setVehiclesSyncing] = useState(false);
   const [vehiclesSyncResult, setVehiclesSyncResult] = useState<string | null>(null);
   const [vehiclesCount, setVehiclesCount] = useState<{ count: number; brands: number } | null>(null);
+
+  // État IA (Gemini / DeepSeek)
+  const [aiStatus, setAiStatus] = useState<{
+    gemini: { keysConfigured: number; activeKeyIndex: number; test: { ok: boolean; message: string } };
+    deepseek: { configured: boolean; test: { ok: boolean; message: string } };
+  } | null>(null);
+  const [aiStatusLoading, setAiStatusLoading] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [logoutBusyPhone, setLogoutBusyPhone] = useState<string | null>(null);
@@ -451,6 +458,21 @@ export default function AdminClientDashboard() {
       setVehiclesSyncResult("Erreur réseau.");
     } finally {
       setVehiclesSyncing(false);
+    }
+  };
+
+  const handleCheckAiStatus = async () => {
+    setAiStatusLoading(true);
+    try {
+      const res = await fetch("/api/admin/ai-status", { headers: authHeaders() });
+      const data = await res.json();
+      if (data.success) {
+        setAiStatus({ gemini: data.gemini, deepseek: data.deepseek });
+      }
+    } catch {
+      // silencieux — l'admin peut réessayer via le bouton
+    } finally {
+      setAiStatusLoading(false);
     }
   };
 
@@ -942,6 +964,64 @@ export default function AdminClientDashboard() {
           </button>
         </div>
         {vehiclesSyncResult && <p className="text-xs text-slate-400">{vehiclesSyncResult}</p>}
+      </div>
+
+      {/* État IA (Gemini / DeepSeek) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-sky-400" />
+            État IA (Gemini / DeepSeek)
+          </h3>
+          <button
+            onClick={handleCheckAiStatus}
+            disabled={aiStatusLoading}
+            className="text-slate-400 hover:text-white transition cursor-pointer disabled:opacity-50"
+            title="Tester Gemini et DeepSeek maintenant"
+          >
+            <RefreshCw className={`w-4 h-4 ${aiStatusLoading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+        {!aiStatus && !aiStatusLoading && (
+          <p className="text-xs text-slate-500">Clique sur l'icône de rafraîchissement pour tester Gemini et DeepSeek.</p>
+        )}
+        {aiStatus && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="bg-slate-950 border border-white/[0.08] rounded-xl p-3.5 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-300">Gemini</span>
+                {aiStatus.gemini.test.ok ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <XCircle className="w-4 h-4 text-rose-400" />
+                )}
+              </div>
+              <p className="text-[10px] text-slate-500">
+                {aiStatus.gemini.keysConfigured} clé(s) configurée(s)
+                {aiStatus.gemini.keysConfigured > 0 && ` — clé active : #${aiStatus.gemini.activeKeyIndex}`}
+              </p>
+              <p className={`text-[10px] ${aiStatus.gemini.test.ok ? "text-emerald-400" : "text-rose-400"}`}>
+                {aiStatus.gemini.test.message}
+              </p>
+            </div>
+            <div className="bg-slate-950 border border-white/[0.08] rounded-xl p-3.5 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-300">DeepSeek (repli)</span>
+                {aiStatus.deepseek.test.ok ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <XCircle className="w-4 h-4 text-rose-400" />
+                )}
+              </div>
+              <p className="text-[10px] text-slate-500">
+                {aiStatus.deepseek.configured ? "Clé configurée" : "Aucune clé configurée"}
+              </p>
+              <p className={`text-[10px] ${aiStatus.deepseek.test.ok ? "text-emerald-400" : "text-rose-400"}`}>
+                {aiStatus.deepseek.test.message}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Historique des connexions */}

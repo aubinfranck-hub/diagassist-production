@@ -806,25 +806,57 @@ function checkAndIncrementUsage(phone: string, plan: string): { allowed: boolean
   return { allowed: true };
 }
 
-// Lazy-initialize the GoogleGenAI client with key and telemetry header
-let aiInstance: GoogleGenAI | null = null;
+// Support de plusieurs clés Gemini (rotation automatique en cas de quota dépassé sur l'une
+// d'elles) : GEMINI_API_KEY peut contenir une seule clé, ou plusieurs séparées par des virgules ;
+// GEMINI_API_KEY_2 est acceptée en plus pour plus de clarté côté variables d'environnement Render.
+function getGeminiKeys(): string[] {
+  const raw = [process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_2]
+    .filter(Boolean)
+    .flatMap((v) => String(v).split(","))
+    .map((k) => k.trim())
+    .filter(Boolean);
+  return Array.from(new Set(raw));
+}
+
+let currentGeminiKeyIndex = 0;
+const aiInstancesByKey = new Map<string, GoogleGenAI>();
 
 function getAIClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const keys = getGeminiKeys();
+  if (keys.length === 0) {
     throw new Error("La clé API Gemini (GEMINI_API_KEY) n'est pas configurée. Veuillez l'ajouter dans les Paramètres d'AI Studio pour activer le diagnostic IA.");
   }
-  if (!aiInstance) {
-    aiInstance = new GoogleGenAI({
-      apiKey: apiKey,
+  const apiKey = keys[currentGeminiKeyIndex % keys.length];
+  let instance = aiInstancesByKey.get(apiKey);
+  if (!instance) {
+    instance = new GoogleGenAI({
+      apiKey,
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build",
         },
       },
     });
+    aiInstancesByKey.set(apiKey, instance);
   }
-  return aiInstance;
+  return instance;
+}
+
+// Fait passer à la clé Gemini suivante (round-robin) — appelé quand la clé active renvoie une
+// erreur de quota/rate-limit. Renvoie false s'il n'y a qu'une seule clé (rien à changer).
+function rotateGeminiKey(): boolean {
+  const keys = getGeminiKeys();
+  if (keys.length <= 1) return false;
+  currentGeminiKeyIndex = (currentGeminiKeyIndex + 1) % keys.length;
+  console.warn(`[Gemini API] Rotation vers la clé #${currentGeminiKeyIndex + 1}/${keys.length} (quota dépassé sur la précédente).`);
+  return true;
+}
+
+function isGeminiQuotaError(error: any): boolean {
+  if (!error) return false;
+  if (error.status === 429) return true;
+  const msg = String(error.message || "").toLowerCase();
+  return msg.includes("quota") || msg.includes("resource_exhausted") || msg.includes("rate limit");
 }
 
 /**
@@ -1168,26 +1200,38 @@ async function generateContentWithFallbackAndRetry(
   let lastError: any = null;
 
   for (const modelName of modelsToTry) {
-    try {
-      console.log(`[Gemini API] Attempting generation with model: ${modelName}`);
-      const result: any = await retryWithBackoff(async () => {
-        return await getAIClient().models.generateContent({
-          model: modelName,
-          contents,
-          config,
-        });
-      }, 3, 1000);
+    // Une erreur de quota sur ce modèle avec la clé active fait tourner vers la clé suivante et
+    // retente le MÊME modèle (le quota dépend de la clé/projet, pas du modèle) avant de passer
+    // au modèle suivant — jusqu'à épuiser toutes les clés disponibles.
+    let keyRotations = 0;
+    const maxKeyRotations = getGeminiKeys().length;
+    while (true) {
+      try {
+        console.log(`[Gemini API] Attempting generation with model: ${modelName} (clé #${currentGeminiKeyIndex + 1})`);
+        const result: any = await retryWithBackoff(async () => {
+          return await getAIClient().models.generateContent({
+            model: modelName,
+            contents,
+            config,
+          });
+        }, 3, 1000);
 
-      if (result) {
-        result.modelUsedForGeneration = modelName;
-      }
-      return result;
-    } catch (error: any) {
-      console.error(`[Gemini API] Failed with model ${modelName}:`, error.message || error);
-      lastError = error;
-      // If it's 400 Bad Request or 401/403, do not try other models as it's a client configuration/syntax error
-      if (error.status === 400 || error.status === 401 || error.status === 403) {
-        throw error;
+        if (result) {
+          result.modelUsedForGeneration = modelName;
+        }
+        return result;
+      } catch (error: any) {
+        console.error(`[Gemini API] Failed with model ${modelName}:`, error.message || error);
+        lastError = error;
+        // If it's 400 Bad Request or 401/403, do not try other models as it's a client configuration/syntax error
+        if (error.status === 400 || error.status === 401 || error.status === 403) {
+          throw error;
+        }
+        if (isGeminiQuotaError(error) && keyRotations < maxKeyRotations && rotateGeminiKey()) {
+          keyRotations++;
+          continue;
+        }
+        break;
       }
     }
   }
@@ -2667,6 +2711,60 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!dbPool) return res.json({ success: true, count: 0, brands: 0 });
     const { rows } = await dbPool.query("SELECT COUNT(*) AS total, COUNT(DISTINCT brand) AS brands FROM vehicles");
     res.json({ success: true, count: Number(rows[0].total), brands: Number(rows[0].brands) });
+  });
+
+  // API Route (ADMIN UNIQUEMENT) : état réel de Gemini (nombre de clés, clé active, test d'appel
+  // effectif) et de DeepSeek (clé configurée ou non, test d'appel effectif) — pour diagnostiquer
+  // sans avoir à fouiller les logs si l'IA ne répond plus.
+  app.get("/api/admin/ai-status", adminLimiter, requireAdminAuth, async (req, res) => {
+    const geminiKeys = getGeminiKeys();
+    let geminiTest: { ok: boolean; message: string } = { ok: false, message: "Aucune clé configurée." };
+    if (geminiKeys.length > 0) {
+      try {
+        const r = await getAIClient().models.generateContent({
+          model: "gemini-flash-latest",
+          contents: "Réponds juste \"ok\".",
+        });
+        geminiTest = { ok: true, message: r.text?.trim() ? `Réponse reçue (${r.text.trim().slice(0, 40)})` : "Réponse vide mais appel réussi." };
+      } catch (err: any) {
+        geminiTest = { ok: false, message: err.message || "Échec de l'appel de test." };
+      }
+    }
+
+    const deepseekKey = (process.env.DEEPSEEK_API_KEY || "").trim();
+    let deepseekTest: { ok: boolean; message: string } = { ok: false, message: "Aucune clé configurée." };
+    if (deepseekKey) {
+      try {
+        const dsRes = await fetch("https://api.deepseek.com/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${deepseekKey}` },
+          body: JSON.stringify({ model: "deepseek-flash", messages: [{ role: "user", content: "Réponds juste \"ok\"." }], max_tokens: 10 }),
+        });
+        if (!dsRes.ok) {
+          const errText = await dsRes.text().catch(() => "");
+          deepseekTest = { ok: false, message: `Erreur ${dsRes.status} : ${errText.slice(0, 150)}` };
+        } else {
+          const data: any = await dsRes.json();
+          const text = data?.choices?.[0]?.message?.content?.trim();
+          deepseekTest = { ok: true, message: text ? `Réponse reçue (${text.slice(0, 40)})` : "Réponse vide mais appel réussi." };
+        }
+      } catch (err: any) {
+        deepseekTest = { ok: false, message: err.message || "Échec de l'appel de test." };
+      }
+    }
+
+    res.json({
+      success: true,
+      gemini: {
+        keysConfigured: geminiKeys.length,
+        activeKeyIndex: geminiKeys.length > 0 ? (currentGeminiKeyIndex % geminiKeys.length) + 1 : 0,
+        test: geminiTest,
+      },
+      deepseek: {
+        configured: Boolean(deepseekKey),
+        test: deepseekTest,
+      },
+    });
   });
 
   // API Routes (utilisateur connecté) : menus en cascade marque > modèle > génération > moteur
