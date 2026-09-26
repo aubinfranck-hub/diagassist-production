@@ -205,6 +205,18 @@ async function initDatabase(): Promise<void> {
       timestamp BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_connection_history_timestamp ON connection_history (timestamp DESC);
+    CREATE TABLE IF NOT EXISTS live_diagnostics (
+      id SERIAL PRIMARY KEY,
+      phone TEXT NOT NULL,
+      vehicle_summary TEXT,
+      symptom TEXT,
+      probable_cause TEXT,
+      recommended_action TEXT,
+      whatsapp_sent BOOLEAN NOT NULL DEFAULT false,
+      created_at BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_live_diagnostics_phone ON live_diagnostics (phone);
+    CREATE INDEX IF NOT EXISTS idx_live_diagnostics_created ON live_diagnostics (created_at DESC);
     CREATE TABLE IF NOT EXISTS mechanics (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -958,6 +970,63 @@ async function liveToolCheckPartAvailability(query: string): Promise<string> {
   }
 }
 
+// Envoi WhatsApp réel (indépendant de sendShopWhatsApp, définie plus bas dans une autre portée) —
+// nécessite TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN configurés côté serveur, sinon échoue proprement.
+async function sendTwilioWhatsApp(phone: string, message: string): Promise<void> {
+  const sid = (process.env.TWILIO_ACCOUNT_SID || "").trim();
+  const token = (process.env.TWILIO_AUTH_TOKEN || "").trim();
+  if (!sid || !token) throw new Error("TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN manquants");
+
+  const client = twilio(sid, token);
+  const sender = (process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886").trim();
+  const fromNumber = sender.startsWith("whatsapp:") ? sender : `whatsapp:${sender}`;
+  const toNumber = phone.startsWith("whatsapp:") ? phone : `whatsapp:${phone}`;
+  const contentSid = (process.env.TWILIO_WHATSAPP_CONTENT_SID || "").trim();
+
+  if (contentSid) {
+    await client.messages.create({ from: fromNumber, to: toNumber, contentSid, contentVariables: JSON.stringify({ "1": message }) });
+  } else {
+    await client.messages.create({ from: fromNumber, to: toNumber, body: message });
+  }
+}
+
+// Enregistre le diagnostic établi pendant l'appel live, et envoie automatiquement un récapitulatif
+// par WhatsApp au client — SANS relecture humaine avant envoi (assumé explicitement par l'utilisateur).
+async function liveToolSaveDiagnostic(
+  phone: string,
+  vehicule: string,
+  symptome: string,
+  causeProbable: string,
+  actionRecommandee: string
+): Promise<string> {
+  const message = `Bonjour, voici le récapitulatif de votre diagnostic DiagAssist :\n\nVéhicule : ${vehicule}\nSymptôme : ${symptome}\nCause probable : ${causeProbable}\nAction recommandée : ${actionRecommandee}\n\n— L'équipe DiagAssist 🚗🔧\nhttps://www.diagassist.app`;
+
+  let whatsappSent = false;
+  let whatsappNote = "";
+  try {
+    await sendTwilioWhatsApp(phone, message);
+    whatsappSent = true;
+  } catch (err: any) {
+    console.warn("[Live Tool] Échec de l'envoi WhatsApp du récapitulatif:", err.message || err);
+    whatsappNote = " (échec de l'envoi WhatsApp — Twilio non configuré ou indisponible, informe le mécanicien qu'il devra transmettre le récapitulatif lui-même)";
+  }
+
+  if (dbPool) {
+    try {
+      await dbPool.query(
+        `INSERT INTO live_diagnostics (phone, vehicle_summary, symptom, probable_cause, recommended_action, whatsapp_sent, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [phone, vehicule, symptome, causeProbable, actionRecommandee, whatsappSent, Date.now()]
+      );
+    } catch (err) {
+      console.warn("[Live Tool] Échec de l'enregistrement du diagnostic:", err);
+      return `Le diagnostic n'a pas pu être enregistré en base (erreur serveur)${whatsappNote}.`;
+    }
+  }
+
+  return `Diagnostic enregistré${whatsappSent ? " et récapitulatif envoyé par WhatsApp au client" : whatsappNote}.`;
+}
+
 const LIVE_AGENT_TOOL_DECLARATIONS = [
   {
     name: "rechercher_fiche_technique",
@@ -1003,6 +1072,20 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
         piece: { type: Type.STRING, description: "Nom de la pièce recherchée, ex: 'capteur PMH' ou 'plaquettes de frein'." },
       },
       required: ["piece"],
+    },
+  },
+  {
+    name: "enregistrer_diagnostic",
+    description: "Enregistre le diagnostic établi pendant cet appel et envoie automatiquement un récapitulatif par WhatsApp au client. À utiliser UNE SEULE FOIS, vers la fin de la conversation, une fois qu'un diagnostic clair a été établi (pas pour une simple question technique ponctuelle).",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        vehicule: { type: Type.STRING, description: "Marque, modèle et année du véhicule, ex: 'Toyota Corolla 2015'." },
+        symptome: { type: Type.STRING, description: "Le symptôme ou code défaut initial rapporté." },
+        cause_probable: { type: Type.STRING, description: "La cause probable identifiée pendant l'appel." },
+        action_recommandee: { type: Type.STRING, description: "L'action recommandée au mécanicien (vérification, réparation, pièce à changer...)." },
+      },
+      required: ["vehicule", "symptome", "cause_probable", "action_recommandee"],
     },
   },
 ];
@@ -3901,6 +3984,12 @@ sans base constructeur officielle, et invite à vérifier sur la carte grise.
 FICHE TECHNIQUE ET DIAGNOSTIC ACTUEL DU VÉHICULE :
 ${message.diagnosticContext}
 
+ENREGISTREMENT DU DIAGNOSTIC (OBLIGATOIRE) : dès qu'un diagnostic clair se dégage (cause probable
+identifiée et action recommandée établie), appelle l'outil enregistrer_diagnostic UNE SEULE FOIS pour
+le sauvegarder et envoyer automatiquement un récapitulatif WhatsApp au client — préviens-le à l'oral
+juste avant ("je vous envoie le récapitulatif par WhatsApp"). Ne le fais pas pour une simple question
+technique ponctuelle sans diagnostic global établi.
+
 FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisques, pas de hashtags, pas de puces). Rédige uniquement de simples phrases fluides et naturelles.`;
 
           try {
@@ -3989,6 +4078,19 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               result = liveToolFindMechanic(String(fc.args?.ville || ""), t === "mechanic" || t === "parts_vendor" ? t : undefined);
                             } else if (fc.name === "verifier_disponibilite_piece") {
                               result = await liveToolCheckPartAvailability(String(fc.args?.piece || ""));
+                            } else if (fc.name === "enregistrer_diagnostic") {
+                              const authPhone = (clientWs as any)._authPhone;
+                              if (!authPhone) {
+                                result = "Impossible d'enregistrer le diagnostic : numéro du client introuvable.";
+                              } else {
+                                result = await liveToolSaveDiagnostic(
+                                  authPhone,
+                                  String(fc.args?.vehicule || ""),
+                                  String(fc.args?.symptome || ""),
+                                  String(fc.args?.cause_probable || ""),
+                                  String(fc.args?.action_recommandee || "")
+                                );
+                              }
                             } else {
                               result = `Outil "${fc.name}" inconnu.`;
                             }
