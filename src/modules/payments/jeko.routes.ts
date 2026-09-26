@@ -38,11 +38,18 @@ export function registerJekoPayments(
   const apiKey = process.env.JEKO_API_KEY;
   const apiKeyId = process.env.JEKO_API_KEY_ID;
   const storeId = process.env.JEKO_STORE_ID;
-  const webhookSecret = process.env.JEKO_WEBHOOK_SECRET;
+  // Jèko permet un webhook "business" global ET un webhook par magasin, chacun avec son propre
+  // secret. Plutôt que de deviner lequel est réellement actif, on accepte les deux : n'importe
+  // quel secret listé ici valide la signature reçue. JEKO_WEBHOOK_SECRETS accepte une liste
+  // séparée par des virgules (JEKO_WEBHOOK_SECRET reste supporté seul, pour un unique secret).
+  const webhookSecrets = (process.env.JEKO_WEBHOOK_SECRETS || process.env.JEKO_WEBHOOK_SECRET || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-  const isConfigured = () => Boolean(apiKey && apiKeyId && storeId && webhookSecret);
+  const isConfigured = () => Boolean(apiKey && apiKeyId && storeId && webhookSecrets.length > 0);
   if (!isConfigured()) {
-    console.warn("[JEKO] Variables JEKO_API_KEY / JEKO_API_KEY_ID / JEKO_STORE_ID / JEKO_WEBHOOK_SECRET manquantes — paiements en ligne désactivés.");
+    console.warn("[JEKO] Variables JEKO_API_KEY / JEKO_API_KEY_ID / JEKO_STORE_ID / JEKO_WEBHOOK_SECRET(S) manquantes — paiements en ligne désactivés.");
   }
 
   const persistPayment = async (reference: string, p: PendingPayment) => {
@@ -181,10 +188,11 @@ export function registerJekoPayments(
       return res.status(400).end();
     }
 
-    const computed = crypto.createHmac("sha256", webhookSecret!).update(rawBody).digest("hex");
-    const valid =
-      computed.length === signature.length &&
-      crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(signature.toLowerCase()));
+    const providedSig = signature.toLowerCase();
+    const valid = webhookSecrets.some((secret) => {
+      const computed = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+      return computed.length === providedSig.length && crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(providedSig));
+    });
     if (!valid) {
       console.warn("[JEKO][Webhook] Signature invalide.");
       return res.status(401).end();
