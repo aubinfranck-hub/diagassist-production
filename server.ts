@@ -1086,27 +1086,39 @@ function schemaToPromptHint(schema: any, indent = ""): string {
   return `"<${type.toLowerCase() || "string"}>"`;
 }
 
-// Repli DeepSeek quand TOUS les modèles Gemini ont échoué (texte uniquement — DeepSeek ne traite
-// ni image ni audio, contrairement à Gemini). Nécessite DEEPSEEK_API_KEY ; échoue proprement sinon,
-// pour que l'appelant retombe sur l'erreur Gemini d'origine plutôt qu'un plantage différent.
-async function callDeepSeekFallback(promptText: string, config: any): Promise<any> {
+// Repli DeepSeek quand TOUS les modèles Gemini ont échoué. Depuis DeepSeek-V4.1-Flash (modèle
+// "deepseek-flash"), l'API accepte aussi des images (format vision compatible OpenAI) — donc un
+// diagnostic avec photo jointe peut désormais aussi basculer sur ce repli, pas seulement le texte.
+// NB : "deepseek-chat"/"deepseek-reasoner" sont des noms hérités en cours de dépréciation, on utilise
+// directement "deepseek-flash". Nécessite DEEPSEEK_API_KEY ; échoue proprement sinon, pour que
+// l'appelant retombe sur l'erreur Gemini d'origine plutôt qu'un plantage différent.
+async function callDeepSeekFallback(userContent: string | any[], config: any): Promise<any> {
   const apiKey = (process.env.DEEPSEEK_API_KEY || "").trim();
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY non configuré.");
 
-  let userContent = promptText;
+  const schemaHintText = config?.responseSchema
+    ? `\n\nRéponds STRICTEMENT avec un unique objet JSON valide (rien avant, rien après) respectant exactement cette forme :\n${schemaToPromptHint(config.responseSchema)}`
+    : "";
+
+  let finalContent: string | any[];
+  if (typeof userContent === "string") {
+    finalContent = userContent + schemaHintText;
+  } else {
+    finalContent = schemaHintText ? [...userContent, { type: "text", text: schemaHintText }] : userContent;
+  }
+
+  const messages: any[] = [];
   if (config?.systemInstruction) {
-    userContent = `${config.systemInstruction}\n\n${userContent}`;
+    messages.push({ role: "system", content: String(config.systemInstruction) });
   }
-  if (config?.responseSchema) {
-    userContent += `\n\nRéponds STRICTEMENT avec un unique objet JSON valide (rien avant, rien après) respectant exactement cette forme :\n${schemaToPromptHint(config.responseSchema)}`;
-  }
+  messages.push({ role: "user", content: finalContent });
 
   const res = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: "deepseek-chat",
-      messages: [{ role: "user", content: userContent }],
+      model: "deepseek-flash",
+      messages,
       response_format: config?.responseSchema ? { type: "json_object" } : undefined,
       temperature: 0.3,
     }),
@@ -1118,20 +1130,33 @@ async function callDeepSeekFallback(promptText: string, config: any): Promise<an
   const data: any = await res.json();
   const text = data?.choices?.[0]?.message?.content || "";
   if (!text) throw new Error("Réponse DeepSeek vide.");
-  return { text, modelUsedForGeneration: "deepseek-chat (repli)" };
+  return { text, modelUsedForGeneration: "deepseek-flash (repli)" };
 }
 
-// Extrait un texte simple depuis `contents` pour le repli DeepSeek — renvoie null si le contenu
-// est multimédia (image/audio/vidéo joints) ou d'une forme trop complexe (historique de chat en
-// tableau de tours), que DeepSeek ne peut de toute façon pas traiter correctement.
-function extractTextOnlyContent(contents: any): string | null {
+// Construit le contenu du repli DeepSeek depuis `contents` (format Gemini) : texte simple, ou
+// tableau de parts façon vision OpenAI (texte + images en data URL base64). Renvoie null si le
+// contenu comprend de l'audio/vidéo (non supporté par DeepSeek) ou une forme trop complexe
+// (historique de chat en tableau de tours), pour que l'appelant abandonne proprement le repli.
+function buildDeepSeekContent(contents: any): string | any[] | null {
   if (typeof contents === "string") return contents;
-  if (contents && Array.isArray(contents.parts)) {
-    if (contents.parts.some((p: any) => p.inlineData)) return null;
-    const text = contents.parts.map((p: any) => p.text).filter(Boolean).join("\n\n");
-    return text || null;
+  if (!contents || !Array.isArray(contents.parts)) return null;
+
+  const hasUnsupportedMedia = contents.parts.some(
+    (p: any) => p.inlineData && !String(p.inlineData.mimeType || "").startsWith("image/")
+  );
+  if (hasUnsupportedMedia) return null;
+
+  const outParts: any[] = [];
+  for (const p of contents.parts) {
+    if (p.text) {
+      outParts.push({ type: "text", text: p.text });
+    } else if (p.inlineData && String(p.inlineData.mimeType || "").startsWith("image/")) {
+      outParts.push({ type: "image_url", image_url: { url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}` } });
+    }
   }
-  return null;
+  if (outParts.length === 0) return null;
+  if (outParts.length === 1 && outParts[0].type === "text") return outParts[0].text;
+  return outParts;
 }
 
 async function generateContentWithFallbackAndRetry(
@@ -1168,12 +1193,12 @@ async function generateContentWithFallbackAndRetry(
   }
 
   // Tous les modèles Gemini ont échoué : dernier recours DeepSeek si une clé est configurée et que
-  // le contenu est du texte simple (voir extractTextOnlyContent).
-  const textOnly = extractTextOnlyContent(contents);
-  if (textOnly && process.env.DEEPSEEK_API_KEY) {
+  // le contenu est compatible (texte, ou texte+images — voir buildDeepSeekContent).
+  const deepSeekContent = buildDeepSeekContent(contents);
+  if (deepSeekContent && process.env.DEEPSEEK_API_KEY) {
     try {
       console.warn("[Fallback] Tous les modèles Gemini ont échoué, tentative de repli avec DeepSeek...");
-      return await callDeepSeekFallback(textOnly, config);
+      return await callDeepSeekFallback(deepSeekContent, config);
     } catch (dsErr: any) {
       console.error("[DeepSeek Fallback] Échec:", dsErr.message || dsErr);
     }
