@@ -111,6 +111,10 @@ function getAccountUrgency(a: Account): { category: "expired" | "expiring_soon" 
 // Numéro au format international -> format attendu par wa.me (chiffres uniquement)
 const toWaMeNumber = (phone: string) => phone.replace(/[^0-9]/g, "");
 
+// Signature ajoutée à la fin de chaque message WhatsApp envoyé par l'admin à un client, pour
+// qu'il identifie clairement l'expéditeur (nom + site) plutôt qu'un message WhatsApp anonyme.
+const WHATSAPP_SIGNATURE = "\n\n— L'équipe DiagAssist 🚗🔧\nhttps://www.diagassist.app";
+
 // Carte intégrée avec un vrai repère à la position exacte, dépliable au clic
 function LocationMapPreview({ location }: { location: ClientLocation }) {
   const [expanded, setExpanded] = useState(false);
@@ -612,7 +616,7 @@ export default function AdminClientDashboard() {
         loadData();
         const durationLabel = `${bonusDurationValue} ${bonusDurationUnit}${bonusDurationValue > 1 ? "s" : ""}`;
         const planLabel = PLAN_LABELS[bonusPlan] || bonusPlan;
-        const message = `Bonjour ! DiagAssist vous offre un bonus : forfait "${planLabel}" activé sur votre compte pour ${durationLabel}. Profitez-en dès maintenant 🚗🔧`;
+        const message = `Bonjour ! DiagAssist vous offre un bonus : forfait "${planLabel}" activé sur votre compte pour ${durationLabel}. Profitez-en dès maintenant !${WHATSAPP_SIGNATURE}`;
         const waUrl = `https://wa.me/${toWaMeNumber(phone)}?text=${encodeURIComponent(message)}`;
         if (waTab) {
           waTab.location.href = waUrl;
@@ -768,7 +772,7 @@ export default function AdminClientDashboard() {
             <p className="text-[10px] text-emerald-400/70">⚠️ Ce mot de passe ne sera plus jamais affiché ici.</p>
             <a
               href={`https://wa.me/${createdAccount.phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
-                `Bonjour, voici vos identifiants DiagAssist :\n\nNuméro : ${createdAccount.phone}\nMot de passe : ${createdAccount.password}\n\nConnectez-vous sur https://www.diagassist.app pour commencer.`
+                `Bonjour, voici vos identifiants DiagAssist :\n\nNuméro : ${createdAccount.phone}\nMot de passe : ${createdAccount.password}\n\nConnectez-vous pour commencer.${WHATSAPP_SIGNATURE}`
               )}`}
               target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 mt-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-lg"
