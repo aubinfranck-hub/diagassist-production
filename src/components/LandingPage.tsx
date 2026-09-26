@@ -101,179 +101,128 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         )}
       </header>
 
-      {/* Hero — démonstration concrète du produit : un code DTC entre, un protocole sort */}
-      <main className="w-full max-w-6xl mx-auto px-5 pt-8 pb-16 relative">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-red-600/[0.08] rounded-full blur-3xl pointer-events-none" />
+      {/* Hero — refonte premium mobile/desktop */}
+      <main className="w-full relative">
+        <section className="relative overflow-hidden min-h-[760px] md:min-h-[720px] bg-[#020817]">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_35%,rgba(239,68,68,.18),transparent_30%),radial-gradient(circle_at_20%_60%,rgba(15,23,42,.9),transparent_55%)]" />
+          <div className="absolute inset-0 opacity-25 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,.03)_48%,transparent_49%)]" />
 
-        {/* Hero mobile/tablette : mascotte, parcours en 4 étapes, badges de confiance */}
-        <div className="lg:hidden relative bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 overflow-hidden">
-          <div className="absolute -top-10 -right-10 w-52 h-52 bg-red-600/[0.12] rounded-full blur-3xl pointer-events-none" />
-
-          <span className="inline-flex items-center gap-1.5 bg-red-600/15 border border-red-500/30 text-red-400 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full relative">
-            <Wrench className="w-3 h-3" /> Pour les mécaniciens
-          </span>
-
-          <h1 className="text-[#f8fafc] text-3xl font-display font-black leading-tight mt-4 relative">
-            VOTRE VOITURE AFFICHE UN CODE DÉFAUT ? <span className="text-red-500">DIAGASSIST VOUS GUIDE POUR TROUVER LA PANNE.</span>
-          </h1>
-          <p className="text-[#cbd5e1] text-sm mt-3 leading-relaxed relative">
-            Entrez le code défaut affiché par votre scanner OBD ou décrivez le symptôme. DiagAssist vous guide
-            étape par étape pour identifier les contrôles à effectuer.
-          </p>
-
-          <div className="relative flex justify-center my-5">
-            <div className="absolute w-44 h-44 bg-red-600/20 rounded-full blur-3xl" />
-            <div className="relative w-52 h-52 rounded-[2rem] border border-red-500/20 bg-gradient-to-br from-red-600/10 to-slate-950/80 shadow-2xl shadow-red-900/20 flex items-center justify-center overflow-hidden">
-              <img src="/icon-512.png" alt="Assistant DiagAssist" className="w-full h-full object-contain scale-110" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-4 gap-1.5 relative">
-            {MOBILE_STEPS.map((s, i) => (
-              <div key={i} className="flex flex-col items-center text-center gap-1.5">
-                <div className={`w-9 h-9 rounded-full ${s.color} flex items-center justify-center shrink-0`}>
-                  <s.icon className="w-4 h-4 text-white" />
+          <div className="relative w-full max-w-7xl mx-auto px-5 sm:px-7 lg:px-10 pt-10 md:pt-14 pb-8">
+            <div className="grid lg:grid-cols-[1.02fr_.98fr] gap-4 lg:gap-0 items-center">
+              <div className="relative z-20 max-w-2xl">
+                <div className="inline-flex items-center gap-2 border border-red-500/70 bg-black/30 text-white rounded-full px-4 py-2 text-xs md:text-sm font-black uppercase tracking-wide shadow-[0_0_25px_rgba(239,68,68,.12)]">
+                  <Wrench className="w-4 h-4 text-red-500" /> Pour les mécaniciens
                 </div>
-                <span className="text-[9px] font-bold text-[#cbd5e1] leading-tight">{s.label}</span>
+
+                <h1 className="mt-7 text-[2.55rem] sm:text-5xl md:text-6xl lg:text-[4.15rem] font-display font-black leading-[.98] tracking-tight text-white uppercase">
+                  VOTRE VOITURE<br />
+                  AFFICHE UN<br />
+                  <span className="text-red-500">CODE DÉFAUT ?</span>
+                </h1>
+
+                <div className="mt-5 text-[1.55rem] sm:text-3xl md:text-4xl font-display font-black leading-tight uppercase">
+                  <span className="text-red-500">DIAGASSIST</span>{" "}
+                  <span className="text-white">VOUS GUIDE</span><br className="hidden sm:block" />
+                  <span className="text-white"> POUR TROUVER LA PANNE.</span>
+                </div>
+
+                <p className="mt-5 max-w-xl text-base md:text-lg leading-relaxed text-slate-300">
+                  Entrez le code défaut affiché par votre scanner OBD ou décrivez le symptôme.
+                  DiagAssist vous guide étape par étape pour identifier les contrôles à effectuer.
+                </p>
               </div>
-            ))}
-          </div>
 
-          <div className="flex flex-col gap-3 mt-6 relative">
-            <button
-              onClick={onGetStarted}
-              className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
-            >
-              Essayer DiagAssist <ArrowRight className="w-4 h-4" />
-            </button>
-            <a
-              href="#comment-ca-marche"
-              className="flex items-center justify-center gap-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.12] text-[#f8fafc] font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
-            >
-              <Play className="w-4 h-4" /> Voir comment ça marche
-            </a>
-
-            <div className="flex items-center gap-3 my-1">
-              <div className="flex-1 h-px bg-white/[0.08]" />
-              <span className="text-[10px] text-[#64748b] font-bold uppercase">Ou</span>
-              <div className="flex-1 h-px bg-white/[0.08]" />
+              <div className="relative min-h-[300px] md:min-h-[420px] lg:min-h-[570px] flex items-end justify-center lg:justify-end -mt-2 lg:mt-0">
+                <div className="absolute right-0 bottom-8 w-[92%] h-[72%] rounded-[3rem] bg-gradient-to-br from-slate-800/70 via-slate-900/40 to-red-950/30 border border-white/5 blur-[1px]" />
+                <div className="absolute right-[-15%] bottom-0 w-[90%] h-48 bg-red-600/20 blur-3xl rounded-full" />
+                <img
+                  src="/icon-512.png"
+                  alt="Assistant DiagAssist"
+                  className="relative z-10 w-[320px] sm:w-[390px] md:w-[470px] lg:w-[540px] max-w-none object-contain drop-shadow-[0_25px_45px_rgba(0,0,0,.65)]"
+                />
+              </div>
             </div>
 
-            <a
-              href={waLink("Bonjour, je voudrais essayer DiagAssist !")}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/30 text-emerald-400 font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
-            >
-              <MessageCircle className="w-4 h-4" /> Contactez-nous sur WhatsApp
-            </a>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6 pt-6 border-t border-white/[0.06] relative">
-            {TRUST_BADGES.map((b, i) => (
-              <div key={i} className="flex items-center gap-2 text-center sm:flex-col sm:text-center">
-                <b.icon className="w-4 h-4 text-red-500 shrink-0" />
-                <span className="text-[10px] text-[#94a3b8] font-medium leading-tight">{b.label}</span>
+            <div className="relative z-30 -mt-2 lg:-mt-14 rounded-2xl border border-white/15 bg-[#071326]/95 backdrop-blur-xl shadow-2xl shadow-black/40 overflow-hidden">
+              <div className="grid grid-cols-2 md:grid-cols-4">
+                [
+                  { icon: FileSearch, title: "1. CODE DÉFAUT", desc: "Entrez le code ou un symptôme", color: "text-red-400", bg: "bg-red-500" },
+                  { icon: Search, title: "2. ANALYSE", desc: "Recherche des informations", color: "text-sky-400", bg: "bg-sky-500" },
+                  { icon: Wrench, title: "3. CONTRÔLES", desc: "Tests et vérifications à effectuer", color: "text-emerald-400", bg: "bg-emerald-500" },
+                  { icon: CheckCircle2, title: "4. DIAGNOSTIC", desc: "Résultat clair et structuré", color: "text-violet-400", bg: "bg-violet-500" },
+                ].map((step, i) => (
+                  <div key={i} className="relative p-5 md:p-6 flex items-center md:items-start gap-4 md:gap-3 md:flex-col">
+                    {i < 3 && <div className="hidden md:block absolute right-0 top-8 w-px h-24 bg-white/10" />}
+                    <div className={`w-12 h-12 md:w-14 md:h-14 rounded-full ${step.bg} flex items-center justify-center text-white shadow-lg shrink-0`}>
+                      <step.icon className="w-6 h-6 md:w-7 md:h-7" />
+                    </div>
+                    <div>
+                      <h3 className={`text-sm md:text-base font-black uppercase ${step.color}`}>{step.title}</h3>
+                      <p className="text-xs md:text-sm text-slate-400 mt-1 leading-snug">{step.desc}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
 
-        <div className="hidden lg:grid grid-cols-1 lg:grid-cols-2 gap-10 items-center relative">
-          <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 md:p-8">
-            <h1 className="text-[#f8fafc] text-3xl md:text-5xl font-display font-black leading-tight">
-              VOTRE VOITURE AFFICHE UN CODE DÉFAUT ? <span className="text-red-500">DIAGASSIST VOUS GUIDE POUR TROUVER LA PANNE.</span>
-            </h1>
-            <p className="text-[#cbd5e1] text-sm md:text-base max-w-xl mt-4 leading-relaxed">
-              Votre scanner OBD vous donne un code, mais pas toujours la cause ni l'ordre des contrôles. Entrez le code défaut,
-              décrivez le symptôme ou ajoutez une photo. DiagAssist vous guide étape par étape dans le diagnostic.
-            </p>
-
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-8">
+            <div className="relative z-30 flex flex-col sm:flex-row gap-3 justify-center mt-5">
               <button
                 onClick={onGetStarted}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
+                className="flex-1 sm:flex-none sm:min-w-[330px] flex items-center justify-center gap-3 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-black text-base md:text-lg uppercase px-8 py-4 rounded-2xl shadow-[0_10px_35px_rgba(239,68,68,.28)] transition"
               >
-                Essayer DiagAssist <ArrowRight className="w-4 h-4" />
+                <span className="text-xl">🤖</span> Essayer DiagAssist <ArrowRight className="w-5 h-5" />
               </button>
               <a
                 href="#comment-ca-marche"
-                className="flex items-center justify-center gap-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.12] hover:border-white/[0.2] text-[#f8fafc] font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
+                className="flex-1 sm:flex-none sm:min-w-[300px] flex items-center justify-center gap-3 border border-slate-500 bg-slate-900/70 hover:bg-slate-800 text-white font-black text-sm md:text-base uppercase px-8 py-4 rounded-2xl transition"
               >
-                Voir comment ça fonctionne
+                <Play className="w-5 h-5 fill-white" /> Voir comment ça marche
               </a>
+            </div>
+
+            <div className="flex items-center gap-4 max-w-xl mx-auto my-5 text-slate-500 text-xs uppercase font-bold">
+              <div className="h-px bg-slate-700 flex-1" /> OU <div className="h-px bg-slate-700 flex-1" />
             </div>
 
             <a
               href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-[#94a3b8] hover:text-emerald-400 text-xs font-medium mt-5 transition"
+              className="relative z-30 flex items-center justify-center gap-3 max-w-2xl mx-auto border border-emerald-400/90 bg-emerald-500/5 hover:bg-emerald-500/10 text-white font-black text-sm md:text-base px-7 py-4 rounded-2xl transition"
             >
-              <MessageCircle className="w-3.5 h-3.5" /> Ou contactez-nous sur WhatsApp
+              <MessageCircle className="w-6 h-6 text-emerald-400" /> Contactez-nous sur WhatsApp
             </a>
-          </div>
 
-          {/* Mockup : démo littérale du mécanisme réel (code → protocole), en cadre type navigateur */}
-          <div className="relative">
-            <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl shadow-2xl overflow-hidden">
-              <div className="flex items-center gap-1.5 px-4 py-3 border-b border-white/[0.06] bg-black/20">
-                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" />
-                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" />
-                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" />
-              </div>
-              <div className="p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <button
-                    onClick={onGetStarted}
-                    className="flex-1 text-left bg-slate-950 hover:bg-slate-900 border border-white/[0.08] rounded-xl px-4 py-3 font-mono text-sm text-slate-300 transition cursor-pointer"
-                  >
-                    P0301
-                  </button>
-                  <button
-                    onClick={onGetStarted}
-                    className="bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase px-4 py-3 rounded-xl transition cursor-pointer"
-                  >
-                    Analyser
-                  </button>
-                </div>
-                <div className="bg-slate-950/60 border border-white/[0.06] rounded-2xl p-4 space-y-3">
-                  <p className="text-xs font-bold text-red-400 uppercase tracking-wide">Raté d'allumage — cylindre 1</p>
-                  {[
-                    "Vérifier l'historique du véhicule sur ce cylindre",
-                    "Inspecter visuellement la bobine et le connecteur",
-                    "Tester la résistance de la bobine (valeur de référence)",
-                    "Permuter la bobine avec un cylindre sain",
-                    "Remplacer la pièce confirmée défectueuse",
-                    "Effacer le code et vérifier en conduite",
-                  ].map((step, i) => (
-                    <div key={i} className="flex items-start gap-2.5 text-xs text-slate-300">
-                      <span className="w-4 h-4 rounded-full bg-red-600/15 border border-red-500/30 text-red-400 text-[9px] font-black flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
-                      {step}
-                    </div>
-                  ))}
-                </div>
-              </div>
+            <div className="grid grid-cols-3 gap-3 max-w-3xl mx-auto mt-7 pt-5 border-t border-white/10">
+              <div className="text-center"><FileSearch className="w-6 h-6 mx-auto text-red-500" /><p className="text-xs md:text-sm text-slate-300 mt-2">Codes défauts<br/>de toutes marques</p></div>
+              <div className="text-center border-x border-white/10"><Wrench className="w-6 h-6 mx-auto text-white" /><p className="text-xs md:text-sm text-slate-300 mt-2">Guides de diagnostic<br/>étape par étape</p></div>
+              <div className="text-center"><ShieldCheck className="w-6 h-6 mx-auto text-white" /><p className="text-xs md:text-sm text-slate-300 mt-2">Conçu pour<br/>les mécaniciens</p></div>
             </div>
+          </div>
+        </section>
+      </main>
 
-            {/* Accent téléphone avec une vraie capture, visible seulement quand il y a la place (pas sur mobile/tablette) */}
-            <div className="hidden xl:block absolute -bottom-8 -right-8 w-32 rounded-[1.25rem] border-4 border-slate-800 bg-slate-950 shadow-2xl overflow-hidden rotate-3">
-              <img src="/preview/preview-live.png" alt="" className="w-full h-44 object-cover object-top" />
+      {/* Le problème */}
+      <section className="w-full bg-[#06101f] border-t border-white/5">
+        <div className="max-w-6xl mx-auto px-5 md:px-8 py-14 md:py-20">
+          <div className="grid md:grid-cols-2 gap-8 md:gap-12 items-center">
+            <div className="rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-slate-900">
+              <img src="/preview/preview-report.png" alt="Diagnostic DiagAssist" className="w-full h-[260px] md:h-[340px] object-cover object-top" />
+            </div>
+            <div>
+              <div className="flex items-center gap-3 text-red-500 text-xs font-black uppercase tracking-widest">
+                <span className="w-10 h-1 bg-red-500 rounded-full" /> Le problème
+              </div>
+              <h2 className="mt-4 text-3xl md:text-5xl font-display font-black uppercase leading-tight text-white">
+                Un code défaut<br/>sur votre voiture ?
+              </h2>
+              <p className="mt-5 text-slate-300 text-base md:text-lg leading-relaxed">
+                DiagAssist vous aide à comprendre la cause du défaut et à savoir quoi contrôler,
+                avant de remplacer une pièce.
+              </p>
             </div>
           </div>
         </div>
-      </main>
-
-      {/* Le problème du mécanicien */}
-      <section className="w-full max-w-4xl mx-auto px-5 py-14 border-t border-white/[0.05] text-center">
-        <h2 className="text-xl md:text-2xl font-display font-black uppercase tracking-tight mb-4">
-          Un code défaut n'est pas encore un diagnostic.
-        </h2>
-        <p className="text-sm text-slate-400 leading-relaxed max-w-2xl mx-auto">
-          P0301, P0171, P0420... votre scanner identifie le défaut. Le vrai travail commence ensuite :
-          comprendre la cause, choisir les bons contrôles et vérifier avant de remplacer une pièce.
-          DiagAssist structure cette démarche avec vous, étape par étape.
-        </p>
       </section>
 
       {/* Méthodologie réelle */}
