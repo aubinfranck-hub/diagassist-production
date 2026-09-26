@@ -8,6 +8,7 @@ interface Account {
   expiresAt: number | null;
   isAdmin: boolean;
   email: string | null;
+  name: string | null;
   location: { latitude: number; longitude: number; accuracy?: number; updatedAt: number } | null;
 }
 
@@ -163,6 +164,7 @@ export default function AdminClientDashboard() {
   // Création de compte
   const [phone, setPhone] = useState("");
   const [countryCode, setCountryCode] = useState("+225");
+  const [accountName, setAccountName] = useState("");
   const [email, setEmail] = useState("");
   const [plan, setPlan] = useState("");
   const [durationValue, setDurationValue] = useState<number>(30);
@@ -356,6 +358,7 @@ export default function AdminClientDashboard() {
           plan: plan || undefined,
           isAdmin: asAdmin,
           email: email || undefined,
+          name: accountName.trim() || undefined,
           durationValue: plan ? durationValue : undefined,
           durationUnit: plan ? durationUnit : undefined,
         }),
@@ -365,6 +368,7 @@ export default function AdminClientDashboard() {
         setCreatedAccount({ phone: fullPhone, password: generatedPassword });
         setPhone("");
         setEmail("");
+        setAccountName("");
         loadData();
       } else {
         setCreateError(data.message || "Échec de la création du compte.");
@@ -509,11 +513,18 @@ export default function AdminClientDashboard() {
             className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-mono"
           />
           <input
+            type="text"
+            placeholder="Nom (optionnel)"
+            value={accountName}
+            onChange={(e) => setAccountName(e.target.value)}
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+          />
+          <input
             type="email"
             placeholder="Email (optionnel)"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="sm:col-span-2 lg:col-span-2 w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+            className="w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500"
           />
 
           <select
@@ -780,6 +791,7 @@ export default function AdminClientDashboard() {
             <thead>
               <tr className="text-left text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-800">
                 <th className="py-2 pr-3">Numéro</th>
+                <th className="py-2 pr-3">Nom</th>
                 <th className="py-2 pr-3">Forfait</th>
                 <th className="py-2 pr-3">Temps restant</th>
                 <th className="py-2 pr-3">Email</th>
@@ -796,6 +808,7 @@ export default function AdminClientDashboard() {
                 return (
                 <tr key={a.phone} className="border-b border-slate-800/50">
                   <td className="py-2 pr-3 font-mono text-white">{a.phone}</td>
+                  <td className="py-2 pr-3 text-slate-300">{a.name || "—"}</td>
                   <td className="py-2 pr-3 text-slate-300">{PLAN_LABELS[a.plan] || a.plan}</td>
                   <td className={`py-2 pr-3 font-mono ${remaining.expired ? "text-rose-400" : "text-emerald-400"}`}>{remaining.text}</td>
                   <td className="py-2 pr-3 text-slate-400">{a.email || "—"}</td>

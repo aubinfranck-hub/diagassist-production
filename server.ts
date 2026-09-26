@@ -330,6 +330,7 @@ async function initDatabase(): Promise<void> {
       expires_at BIGINT NOT NULL,
       frame_count INTEGER NOT NULL DEFAULT 0
     );
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS name TEXT;
     ALTER TABLE screening_sessions ADD COLUMN IF NOT EXISTS technician_device_id TEXT;
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_technician ON screening_sessions (technician_phone);
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_coach ON screening_sessions (coach_phone);
@@ -382,6 +383,7 @@ async function loadPersistedData(): Promise<void> {
       createdAt: Number(row.created_at),
       isAdmin: row.is_admin,
       email: row.email || undefined,
+      name: row.name || undefined,
     });
   }
   const plansRes = await dbPool.query("SELECT * FROM plans");
@@ -542,10 +544,10 @@ async function persistAccount(phone: string): Promise<void> {
   if (!acc) return;
   try {
     await dbPool.query(
-      `INSERT INTO accounts (phone, password_hash, salt, created_at, is_admin, email)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (phone) DO UPDATE SET password_hash = $2, salt = $3, is_admin = $5, email = $6`,
-      [phone, acc.passwordHash, acc.salt, acc.createdAt, acc.isAdmin, acc.email || null]
+      `INSERT INTO accounts (phone, password_hash, salt, created_at, is_admin, email, name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (phone) DO UPDATE SET password_hash = $2, salt = $3, is_admin = $5, email = $6, name = $7`,
+      [phone, acc.passwordHash, acc.salt, acc.createdAt, acc.isAdmin, acc.email || null, acc.name || null]
     );
   } catch (err: any) {
     console.error("[DB] Échec de la sauvegarde du compte:", err.message);
@@ -591,13 +593,13 @@ async function deleteBannerFromDb(id: string): Promise<void> {
   }
 }
 
-const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number; isAdmin: boolean; email?: string }>();
+const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number; isAdmin: boolean; email?: string; name?: string }>();
 
 function hashPassword(password: string, salt: string): string {
   return crypto.scryptSync(password, salt, 64).toString("hex");
 }
 
-function createAccount(phone: string, password: string, isAdmin: boolean = false, email?: string): void {
+function createAccount(phone: string, password: string, isAdmin: boolean = false, email?: string, name?: string): void {
   const salt = crypto.randomBytes(16).toString("hex");
   const passwordHash = hashPassword(password, salt);
   const existing = userAccounts.get(phone);
@@ -607,8 +609,16 @@ function createAccount(phone: string, password: string, isAdmin: boolean = false
     createdAt: existing?.createdAt ?? Date.now(),
     isAdmin,
     email: email ?? existing?.email,
+    name: name ?? existing?.name,
   });
   persistAccount(phone).catch(() => {});
+}
+
+function getNameInstruction(phone?: string): string {
+  const name = phone ? userAccounts.get(phone)?.name : undefined;
+  return name
+    ? `\nLe mécanicien s'appelle ${name}. Appelle-le par son prénom quand c'est naturel, sans le forcer à chaque phrase.\n`
+    : "";
 }
 
 function verifyAccountPassword(phone: string, password: string): boolean {
@@ -1092,8 +1102,10 @@ L'utilisateur est un conducteur/propriétaire, pas un professionnel. Adapte-toi 
 - Dans "repairGuideSteps", ne donne PAS de procédure de réparation à exécuter soi-même : décris plutôt ce que le mécanicien devra vérifier, pour que l'utilisateur sache de quoi on lui parle et ne se fasse pas surfacturer.
 - Dans "explanationText", explique la situation avec des mots simples et rassurants, sans jargon.`;
 
-      const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
+      const nameInstruction = getNameInstruction(phone);
 
+      const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
+${nameInstruction}
 COURTOISIE ET TON OBLIGATOIRES (EN TOUTE CIRCONSTANCE) :
 - Tu commences toujours la première interaction par une salutation chaleureuse et professionnelle : "Bonjour, je suis DiagAssist, votre assistant de diagnostic. Je vais vous accompagner étape par étape pour trouver la cause de votre problème."
 - Tu vouvoies TOUJOURS l'utilisateur avec respect et bienveillance, même s'il est bref, impatient ou frustré.
@@ -1401,13 +1413,15 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       // BUG CORRIGÉ : cette route n'imposait aucune vérification de forfait — un compte
       // "free_expired" (0 diagnostic autorisé) pouvait quand même discuter indéfiniment
       // avec l'IA gratuitement via le chat de suivi, en contournant totalement le quota.
-      const { plan } = req.session;
+      const { plan, phone: chatPhone } = req.session;
       if ((PLAN_LIMITS[plan] ?? 0) <= 0) {
         return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas d'utiliser le chat de suivi. Veuillez souscrire à une formule." });
       }
 
-      const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
+      const chatNameInstruction = getNameInstruction(chatPhone);
 
+      const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
+${chatNameInstruction}
 COURTOISIE ET TON OBLIGATOIRES (EN TOUTE CIRCONSTANCE) :
 - Tu commences toujours par une salutation chaleureuse et professionnelle lors des premiers échanges : "Bonjour, je suis DiagAssist, votre assistant de diagnostic. Je vais vous accompagner étape par étape pour trouver la cause de votre problème."
 - Tu vouvoies TOUJOURS l'utilisateur avec respect et bienveillance, même s'il est bref, impatient ou frustré.
@@ -1794,7 +1808,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // créer (ou réinitialiser) le compte associé avec le mot de passe choisi.
   app.post("/api/auth/verify-otp", otpVerifyLimiter, async (req, res) => {
     try {
-      const { phoneNumber, countryCode, code, password } = req.body;
+      const { phoneNumber, countryCode, code, password, name } = req.body;
       if (!phoneNumber || !code) {
         return res.status(400).json({ success: false, message: "Données manquantes pour la validation." });
       }
@@ -1821,7 +1835,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const DEV_MASTER_OTP = process.env.DEV_MASTER_OTP;
       if (process.env.NODE_ENV !== "production" && DEV_MASTER_OTP && code === DEV_MASTER_OTP) {
         if (password) {
-          createAccount(fullPhone, password);
+          createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
         }
         const token = createSession(fullPhone);
         return res.json({
@@ -1854,7 +1868,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       otpAttempts.delete(fullPhone);
 
       if (password) {
-        createAccount(fullPhone, password);
+        createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
         console.log(`[Auth] Compte créé/mis à jour par auto-inscription pour ${fullPhone}.`);
       }
 
@@ -1882,7 +1896,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     // expiresAt calculé côté serveur (source de vérité) — le client ne doit plus deviner
     // une échéance à partir d'une horloge locale non fiable (bug corrigé).
     const expiresAt = planRecord && duration ? planRecord.activatedAt + duration : null;
-    const isAdmin = userAccounts.get(phone)?.isAdmin ?? false;
+    const account = userAccounts.get(phone);
+    const isAdmin = account?.isAdmin ?? false;
     res.json({
       success: true,
       plan,
@@ -1892,6 +1907,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       remaining: limit === Infinity ? null : Math.max(0, limit - usage.diagnosisCount),
       expiresAt,
       isAdmin,
+      name: account?.name || null,
     });
   });
 
@@ -1955,14 +1971,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route (ADMIN UNIQUEMENT) : crée ou met à jour le compte d'un client (numéro + mot de passe).
   // Vous communiquez ensuite ces identifiants directement au client (téléphone, en personne, etc.).
   app.post("/api/admin/create-account", adminLimiter, requireAdminAuth, (req, res) => {
-    const { phone, password, plan, isAdmin, email, durationValue, durationUnit } = req.body;
+    const { phone, password, plan, isAdmin, email, name, durationValue, durationUnit } = req.body;
     if (!phone || !password) {
       return res.status(400).json({ success: false, message: "phone et password sont requis." });
     }
     if (typeof password !== "string" || password.length < 6) {
       return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
     }
-    createAccount(phone, password, Boolean(isAdmin), email);
+    createAccount(phone, password, Boolean(isAdmin), email, typeof name === "string" ? name.trim() : undefined);
     if (plan) {
       if (!(plan in PLAN_LIMITS)) {
         return res.status(400).json({ success: false, message: `Plan inconnu : "${plan}".` });
@@ -1988,7 +2004,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!existing) {
       return res.status(404).json({ success: false, message: "Compte introuvable." });
     }
-    createAccount(phone, password, existing.isAdmin, existing.email);
+    createAccount(phone, password, existing.isAdmin, existing.email, existing.name);
     console.log(`[Admin] Mot de passe réinitialisé pour ${phone}.`);
     res.json({ success: true, message: `Mot de passe mis à jour pour ${phone}.` });
   });
@@ -2007,7 +2023,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(401).json({ success: false, message: "Mot de passe actuel incorrect." });
     }
     const existing = userAccounts.get(phone);
-    createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email);
+    createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
     res.json({ success: true, message: "Mot de passe mis à jour." });
   });
 
@@ -2063,7 +2079,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(400).json({ success: false, message: "Ce code a expiré. Veuillez en demander un nouveau." });
     }
     const existing = userAccounts.get(record.phone);
-    createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email);
+    createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
     passwordResetCodes.delete(normalized);
     res.json({ success: true, message: "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
   });
@@ -2082,6 +2098,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         expiresAt,
         isAdmin: acc.isAdmin,
         email: acc.email || null,
+        name: acc.name || null,
         location: lastKnownLocation.get(phone) || null,
       };
     });
@@ -2939,7 +2956,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // ci-dessus. Ne dépend d'aucun envoi SMS/WhatsApp — évite les pannes liées à un fournisseur
   // OTP mal configuré, tout en gardant une protection anti-bot minimale.
   app.post("/api/auth/register", authLimiter, (req, res) => {
-    const { phoneNumber, countryCode, password, captchaId, captchaAnswer } = req.body;
+    const { phoneNumber, countryCode, password, captchaId, captchaAnswer, name } = req.body;
     if (!phoneNumber || !password || !captchaId || captchaAnswer === undefined) {
       return res.status(400).json({ success: false, message: "Données manquantes pour créer le compte." });
     }
@@ -2966,7 +2983,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     const fullPhone = `${countryCode || "+225"}${cleanNumber}`;
 
-    createAccount(fullPhone, password);
+    createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
     console.log(`[Auth] Compte créé par auto-inscription (captcha) pour ${fullPhone}.`);
     const token = createSession(fullPhone);
     res.json({ success: true, message: "Compte créé avec succès.", sessionToken: token });
@@ -3303,12 +3320,13 @@ Instructions Tour 0 :
 
       parts.push({ text: promptText });
 
+      const loopNameInstruction = getNameInstruction(phone);
       const geminiResult = await retryWithBackoff(async () => {
         return await getAIClient().models.generateContent({
           model: "gemini-3.5-flash",
           contents: parts,
           config: {
-            systemInstruction: state._accountType === "owner" ? LOOP_SYSTEM_INSTRUCTION + LOOP_OWNER_MODE_INSTRUCTION : LOOP_SYSTEM_INSTRUCTION,
+            systemInstruction: (state._accountType === "owner" ? LOOP_SYSTEM_INSTRUCTION + LOOP_OWNER_MODE_INSTRUCTION : LOOP_SYSTEM_INSTRUCTION) + loopNameInstruction,
             responseMimeType: "application/json",
             responseSchema: loopResponseSchema,
             temperature: 0.2,
@@ -3432,12 +3450,13 @@ Directives pour ce tour :
 
       parts.push({ text: promptText });
 
+      const loopNameInstruction = getNameInstruction(req.session.phone);
       const geminiResult = await retryWithBackoff(async () => {
         return await getAIClient().models.generateContent({
           model: "gemini-3.5-flash",
           contents: parts,
           config: {
-            systemInstruction: state._accountType === "owner" ? LOOP_SYSTEM_INSTRUCTION + LOOP_OWNER_MODE_INSTRUCTION : LOOP_SYSTEM_INSTRUCTION,
+            systemInstruction: (state._accountType === "owner" ? LOOP_SYSTEM_INSTRUCTION + LOOP_OWNER_MODE_INSTRUCTION : LOOP_SYSTEM_INSTRUCTION) + loopNameInstruction,
             responseMimeType: "application/json",
             responseSchema: loopResponseSchema,
             temperature: 0.2,
@@ -3594,8 +3613,9 @@ Directives pour ce tour :
 
         if (message.type === "start") {
           console.log("[WebSocket] Starting Gemini Live Session with context...");
+          const liveNameInstruction = getNameInstruction((clientWs as any)._authPhone);
           const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
-
+${liveNameInstruction}
 RÈGLE D'IDENTITÉ & NOM :
 - Ton nom est DiagAssist. Si on te demande qui tu es, réponds : "DiagAssist, je t'écoute."
 

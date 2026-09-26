@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Phone, ShieldCheck, ArrowRight, RefreshCw, Sparkles, CheckCircle, AlertCircle, Lock, Eye, EyeOff } from "lucide-react";
+import { Phone, ShieldCheck, ArrowRight, RefreshCw, Sparkles, CheckCircle, AlertCircle, Lock, Eye, EyeOff, User } from "lucide-react";
 
 interface PhoneAuthProps {
   onLoginSuccess: (phoneNumber: string) => void;
@@ -31,6 +31,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
 
   // Création de compte directe (numéro + mot de passe), protégée par un captcha simple —
   // aucune dépendance à un envoi SMS/WhatsApp externe.
+  const [registerName, setRegisterName] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
   const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
@@ -207,6 +208,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
           phoneNumber: cleanNumber,
           countryCode: selectedCountry,
           password: registerPassword,
+          name: registerName.trim(),
           captchaId,
           captchaAnswer,
         }),
@@ -362,6 +364,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
                 setStep("register");
                 setError(null);
                 setRegisterError(null);
+                setRegisterName("");
                 setRegisterPassword("");
                 setRegisterConfirmPassword("");
                 loadCaptcha();
@@ -385,6 +388,25 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
             </div>
 
             <form onSubmit={handleRegister} className="space-y-5">
+              <div className="space-y-2">
+                <label className="block text-xs text-slate-400 font-extrabold uppercase tracking-wider">
+                  Votre nom
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+                    <User className="h-5 w-5 text-slate-500" />
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    placeholder="ex: Kouassi"
+                    value={registerName}
+                    onChange={(e) => setRegisterName(e.target.value)}
+                    className="w-full bg-slate-950/90 border border-white/[0.08] rounded-2xl pl-11 pr-4 py-4 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/10 transition duration-150"
+                  />
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <label className="block text-xs text-slate-400 font-extrabold uppercase tracking-wider">
                   Numéro de téléphone
