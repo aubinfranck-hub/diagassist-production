@@ -9,7 +9,6 @@ import {
 import DiagnosticForm from "./components/DiagnosticForm";
 import DiagnosisResultView from "./components/DiagnosisResultView";
 import DiagnosticChat from "./components/DiagnosticChat";
-import APIPricePanel from "./components/APIPricePanel";
 import SubscriptionPanel from "./components/SubscriptionPanel";
 import BannerDisplay from "./components/BannerDisplay";
 import SplashScreen from "./components/SplashScreen";
@@ -650,59 +649,6 @@ export default function App() {
     setDiagnosisResult(null);
     setApiUsage(null);
     setChatHistory([]);
-  };
-
-  const handleClearStats = () => {
-    setSessionCostUSD(0);
-    setTotalTokensUsed(0);
-    setQueriesCount(0);
-    setApiLogs([]);
-    alert("Tous les compteurs de tokens, les coûts d'API et les logs ont été réinitialisés avec succès !");
-  };
-
-  const handleAddMockLog = () => {
-    const mockActions = [
-      "Diagnostic Panne: Peugeot 208 (2018) - Code OBD P0234",
-      "Analyse Audio: Clac-clac moteur métallique à froid",
-      "Analyse Photo: Voyant FAP allumé sur tableau de bord",
-      "Recherche Fiche Technique: Couples de serrage injecteurs",
-      "Discussion Chat: 'Où se situe le capteur de pression d'admission ?'"
-    ];
-    const randomAction = mockActions[Math.floor(Math.random() * mockActions.length)];
-    const mockIn = Math.floor(Math.random() * 1200) + 800;
-    const mockOut = Math.floor(Math.random() * 600) + 400;
-    const total = mockIn + mockOut;
-    // Gemini 3.5 Flash prices
-    const cost = (mockIn * (0.075 / 1000000)) + (mockOut * (0.30 / 1000000));
-
-    // Abidjan coordinates (Plateau, Cocody, Treichville, Marcory, Yopougon)
-    const abidjanLocations = [
-      { latitude: 5.3244, longitude: -4.0128 },
-      { latitude: 5.3484, longitude: -3.9892 },
-      { latitude: 5.3019, longitude: -4.0189 },
-      { latitude: 5.3094, longitude: -3.9922 },
-      { latitude: 5.3411, longitude: -4.0722 }
-    ];
-    const randomGps = abidjanLocations[Math.floor(Math.random() * abidjanLocations.length)];
-
-    setQueriesCount(prev => prev + 1);
-    setTotalTokensUsed(prev => prev + total);
-    setSessionCostUSD(prev => prev + cost);
-
-    setApiLogs(prev => [
-      {
-        id: Math.random().toString(36).substring(7),
-        timestamp: new Date(),
-        action: randomAction,
-        model: "Gemini 3.5 Flash",
-        promptTokens: mockIn,
-        candidatesTokens: mockOut,
-        totalTokens: total,
-        costUSD: cost,
-        gps: randomGps
-      },
-      ...prev
-    ]);
   };
 
   return (
@@ -1412,12 +1358,6 @@ export default function App() {
               onRequestActivation={handleRequestActivation}
               isAdmin={isAdminAccount}
               isOwner={accountType === "owner"}
-              sessionCostUSD={sessionCostUSD}
-              totalTokensUsed={totalTokensUsed}
-              queriesCount={queriesCount}
-              apiLogs={apiLogs}
-              onClearStats={handleClearStats}
-              onAddMockLog={handleAddMockLog}
             />
           </div>
         )}
