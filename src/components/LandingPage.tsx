@@ -56,7 +56,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
 
         <div className="flex items-center gap-3 shrink-0">
           <img src="/icon-logo-512.png" alt="DiagAssist" className="w-11 h-11 sm:w-12 sm:h-12 object-contain drop-shadow-[0_5px_18px_rgba(239,68,68,.22)]" />
-          <span className="hidden sm:block font-display font-black text-lg uppercase tracking-tight leading-none">DiagAssist</span>
+          <span className="block font-display font-black text-xl sm:text-2xl tracking-tight leading-none text-white"><span>Diag</span><span className="text-red-500">Assist</span></span>
         </div>
 
         <nav className="hidden lg:flex items-center gap-6 text-xs font-bold uppercase tracking-wide text-[#94a3b8] whitespace-nowrap">
