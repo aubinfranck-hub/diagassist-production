@@ -17,8 +17,10 @@ interface SubscriptionPanelProps {
 
 export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivatePayg, onRequestActivation, isAdmin, isOwner }: SubscriptionPanelProps) {
   
-  // State to hold the dynamically selected payment amount for Wave
-  const [selectedAmount, setSelectedAmount] = useState<number>(6000);
+  // State to hold the dynamically selected payment amount for Wave.
+  // Aucune formule n'est présélectionnée par défaut : sans ça, "Lite" apparaissait déjà comme
+  // "sélectionnée" avec le bloc de paiement prêt à débiter 6000F, avant tout choix du client.
+  const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
   const [requestSent, setRequestSent] = useState(false);
 
   // Paiement automatisé Jèko (Orange/Wave/MTN/Moov)
@@ -129,8 +131,6 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
   const getWavePaymentUrl = (amount: number) => {
     return `https://pay.wave.com/m/M_ci_kwfmSykm6_et/c/ci/?amount=${amount}`;
   };
-
-  const currentWaveUrl = getWavePaymentUrl(selectedAmount);
 
   // Sélectionner une formule ne fait QUE la mettre en évidence — le paiement se fait ensuite
   // dans le bloc unique ci-dessous, pour éviter d'avoir deux endroits différents qui parlent
@@ -278,7 +278,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
             <div className="my-5">
               <div className="text-xs text-slate-400">Accès à l'usage :</div>
               <div className="text-3xl font-display font-extrabold text-emerald-400">
-                500 F CFA <span className="text-sm font-normal text-slate-500">/ {isOwner ? "semaine" : "24h"}</span>
+                <span className="whitespace-nowrap">500 F CFA <span className="text-sm font-normal text-slate-500">/ {isOwner ? "semaine" : "24h"}</span></span>
               </div>
               <div className="text-xs text-slate-400 mt-1.5 font-medium">
                 {isOwner ? "15 diagnostics pendant 7 jours" : "Diagnostics illimités pendant 24 heures"}
@@ -328,7 +328,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
  
             <div className="my-5">
               <div className="text-xs text-slate-400">Abonnement mensuel :</div>
-              <div className="text-3xl font-display font-extrabold text-sky-400">6 000 F CFA <span className="text-sm font-normal text-slate-500">/ mois</span></div>
+              <div className="text-3xl font-display font-extrabold text-sky-400"><span className="whitespace-nowrap">6 000 F CFA <span className="text-sm font-normal text-slate-500">/ mois</span></span></div>
               <div className="text-xs text-slate-400 mt-1.5 font-medium">
                 Diagnostics complets normaux illimités
               </div>
@@ -388,7 +388,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
  
             <div className="my-5">
               <div className="text-xs text-slate-400">Abonnement expert :</div>
-              <div className="text-3xl font-display font-extrabold text-red-500">15 000 F CFA <span className="text-sm font-normal text-slate-500">/ mois</span></div>
+              <div className="text-3xl font-display font-extrabold text-red-500"><span className="whitespace-nowrap">15 000 F CFA <span className="text-sm font-normal text-slate-500">/ mois</span></span></div>
               <div className="text-xs text-red-400 font-bold flex items-center gap-1 mt-1.5">
                 <Sparkles className="w-4 h-4" /> Fonctionnalités ultimes incluses
               </div>
@@ -444,6 +444,12 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
           <Zap className="w-7 h-7 animate-pulse" />
         </div>
         <div className="space-y-4 relative w-full">
+          {selectedAmount === null ? (
+            <p className="text-sm text-slate-300 font-medium">
+              👆 Choisissez une formule ci-dessus pour continuer le paiement.
+            </p>
+          ) : (
+          <>
           <div>
             <span className="font-display font-black text-red-400 block text-base uppercase tracking-wide">
               Finaliser l'abonnement {selectedAmount === 15000 ? "Premium" : selectedAmount === 500 ? (isOwner ? "Pass Semaine" : "Forfait Jour") : "Lite"}
@@ -535,6 +541,8 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
               </button>
             </div>
           </details>
+          </>
+          )}
         </div>
       </div>
         </>
