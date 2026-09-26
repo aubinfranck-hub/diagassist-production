@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
 import {
-  Wrench, Camera, Mic, MessageCircle, ShieldCheck, Smartphone, Clock, ArrowRight, MapPin, Phone, Search, ListChecks, FlaskConical, Stethoscope, CheckCircle2
+  Wrench, Camera, Mic, MessageCircle, ShieldCheck, Smartphone, Clock, ArrowRight, MapPin, Phone, Search, ListChecks, FlaskConical, Stethoscope, CheckCircle2, Menu, X, FileSearch, Play
 } from "lucide-react";
 
 interface LandingPageProps {
@@ -9,6 +9,13 @@ interface LandingPageProps {
 
 const WHATSAPP_NUMBER = "2250707312797";
 const waLink = (message: string) => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+
+const NAV_LINKS = [
+  { href: "#comment-ca-marche", label: "Comment ça marche" },
+  { href: "#fonctionnalites", label: "Fonctionnalités" },
+  { href: "#tarifs", label: "Tarifs" },
+  { href: "/blog/", label: "Blog" },
+];
 
 const METHOD_STEPS = [
   { icon: Search, title: "Historique & symptôme", desc: "DiagAssist vérifie d'abord si la panne s'est déjà produite sur ce véhicule et confirme le symptôme exact." },
@@ -19,37 +26,155 @@ const METHOD_STEPS = [
   { icon: CheckCircle2, title: "Vérification post-réparation", desc: "Contrôle final pour confirmer que la panne est bien résolue avant de rendre le véhicule." },
 ];
 
+const MOBILE_STEPS = [
+  { icon: FileSearch, label: "Code défaut", color: "bg-red-600" },
+  { icon: Search, label: "Analyse", color: "bg-sky-600" },
+  { icon: Wrench, label: "Contrôles", color: "bg-emerald-600" },
+  { icon: CheckCircle2, label: "Diagnostic", color: "bg-violet-600" },
+];
+
+const TRUST_BADGES = [
+  { icon: FileSearch, label: "Codes défauts de toutes marques" },
+  { icon: ListChecks, label: "Protocole de test étape par étape" },
+  { icon: Wrench, label: "Conçu avec des mécaniciens" },
+];
+
 export default function LandingPage({ onGetStarted }: LandingPageProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans overflow-x-hidden relative">
       {/* Header */}
-      <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between gap-4">
+      <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between gap-4 relative">
+        <button
+          onClick={() => setMenuOpen((v) => !v)}
+          className="lg:hidden shrink-0 w-9 h-9 flex items-center justify-center text-[#e2e8f0] hover:text-white transition cursor-pointer"
+          aria-label="Ouvrir le menu"
+        >
+          {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
+
         <div className="flex items-center gap-3 shrink-0">
           <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg shadow-red-600/20 overflow-hidden">
             <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
           </div>
-          <span className="font-display font-black text-lg uppercase tracking-tight block leading-none">DiagAssist</span>
+          <span className="hidden sm:block font-display font-black text-lg uppercase tracking-tight leading-none">DiagAssist</span>
         </div>
+
         <nav className="hidden lg:flex items-center gap-6 text-xs font-bold uppercase tracking-wide text-[#94a3b8] whitespace-nowrap">
-          <a href="#comment-ca-marche" className="hover:text-[#f8fafc] transition">Comment ça marche</a>
-          <a href="#fonctionnalites" className="hover:text-[#f8fafc] transition">Fonctionnalités</a>
-          <a href="#tarifs" className="hover:text-[#f8fafc] transition">Tarifs</a>
-          <a href="/blog/" className="hover:text-[#f8fafc] transition">Blog</a>
+          {NAV_LINKS.map((l) => (
+            <a key={l.label} href={l.href} className="hover:text-[#f8fafc] transition">{l.label}</a>
+          ))}
           <a href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")} target="_blank" rel="noopener noreferrer" className="hover:text-[#f8fafc] transition">Contact</a>
         </nav>
+
         <button
           onClick={onGetStarted}
-          className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider px-5 py-2.5 rounded-xl transition cursor-pointer shrink-0"
+          className="bg-red-600 hover:bg-red-700 text-white text-[11px] sm:text-xs font-bold uppercase tracking-wider px-3.5 sm:px-5 py-2.5 rounded-xl transition cursor-pointer shrink-0 whitespace-nowrap"
         >
           Se connecter
         </button>
+
+        {/* Menu mobile déroulant */}
+        {menuOpen && (
+          <div className="lg:hidden absolute top-full left-0 right-0 mt-2 mx-5 bg-[#0f172a] border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden z-50">
+            {NAV_LINKS.map((l) => (
+              <a
+                key={l.label}
+                href={l.href}
+                onClick={() => setMenuOpen(false)}
+                className="block px-5 py-3.5 text-sm font-bold text-[#e2e8f0] hover:bg-white/[0.06] border-b border-white/[0.05] transition"
+              >
+                {l.label}
+              </a>
+            ))}
+            <a
+              href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setMenuOpen(false)}
+              className="block px-5 py-3.5 text-sm font-bold text-[#e2e8f0] hover:bg-white/[0.06] transition"
+            >
+              Contact
+            </a>
+          </div>
+        )}
       </header>
 
       {/* Hero — démonstration concrète du produit : un code DTC entre, un protocole sort */}
       <main className="w-full max-w-6xl mx-auto px-5 pt-8 pb-16 relative">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-96 bg-red-600/[0.08] rounded-full blur-3xl pointer-events-none" />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-center relative">
+        {/* Hero mobile/tablette : mascotte, parcours en 4 étapes, badges de confiance */}
+        <div className="lg:hidden relative bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 overflow-hidden">
+          <div className="absolute -top-10 -right-10 w-52 h-52 bg-red-600/[0.12] rounded-full blur-3xl pointer-events-none" />
+
+          <span className="inline-flex items-center gap-1.5 bg-red-600/15 border border-red-500/30 text-red-400 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full relative">
+            <Wrench className="w-3 h-3" /> Pour les mécaniciens
+          </span>
+
+          <h1 className="text-[#f8fafc] text-3xl font-display font-black leading-tight mt-4 relative">
+            VOTRE VALISE VOUS DONNE UN CODE. <span className="text-red-500">DIAGASSIST VOUS AIDE À TROUVER LA PANNE.</span>
+          </h1>
+          <p className="text-[#cbd5e1] text-sm mt-3 leading-relaxed relative">
+            Saisissez le code de votre valise (ou décrivez le symptôme) et recevez un protocole de test étape
+            par étape, recoupé avec des sources ouvertes réelles.
+          </p>
+
+          <img src="/icon-512.png" alt="" className="w-40 h-40 mx-auto my-4 relative object-contain" />
+
+          <div className="grid grid-cols-4 gap-1.5 relative">
+            {MOBILE_STEPS.map((s, i) => (
+              <div key={i} className="flex flex-col items-center text-center gap-1.5">
+                <div className={`w-9 h-9 rounded-full ${s.color} flex items-center justify-center shrink-0`}>
+                  <s.icon className="w-4 h-4 text-white" />
+                </div>
+                <span className="text-[9px] font-bold text-[#cbd5e1] leading-tight">{s.label}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col gap-3 mt-6 relative">
+            <button
+              onClick={onGetStarted}
+              className="flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-black text-sm uppercase tracking-wider px-7 py-4 rounded-2xl transition cursor-pointer shadow-lg shadow-red-600/20"
+            >
+              Essayer DiagAssist <ArrowRight className="w-4 h-4" />
+            </button>
+            <a
+              href="#comment-ca-marche"
+              className="flex items-center justify-center gap-2 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.12] text-[#f8fafc] font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
+            >
+              <Play className="w-4 h-4" /> Voir comment ça marche
+            </a>
+
+            <div className="flex items-center gap-3 my-1">
+              <div className="flex-1 h-px bg-white/[0.08]" />
+              <span className="text-[10px] text-[#64748b] font-bold uppercase">Ou</span>
+              <div className="flex-1 h-px bg-white/[0.08]" />
+            </div>
+
+            <a
+              href={waLink("Bonjour, je voudrais essayer DiagAssist !")}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 bg-emerald-600/15 hover:bg-emerald-600/25 border border-emerald-500/30 text-emerald-400 font-bold text-sm px-7 py-4 rounded-2xl transition cursor-pointer"
+            >
+              <MessageCircle className="w-4 h-4" /> Contactez-nous sur WhatsApp
+            </a>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6 pt-6 border-t border-white/[0.06] relative">
+            {TRUST_BADGES.map((b, i) => (
+              <div key={i} className="flex items-center gap-2 text-center sm:flex-col sm:text-center">
+                <b.icon className="w-4 h-4 text-red-500 shrink-0" />
+                <span className="text-[10px] text-[#94a3b8] font-medium leading-tight">{b.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="hidden lg:grid grid-cols-1 lg:grid-cols-2 gap-10 items-center relative">
           <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 md:p-8">
             <h1 className="text-[#f8fafc] text-3xl md:text-5xl font-display font-black leading-tight">
               VOTRE VALISE VOUS DONNE UN CODE. <span className="text-red-500">DIAGASSIST VOUS AIDE À TROUVER LA PANNE.</span>
