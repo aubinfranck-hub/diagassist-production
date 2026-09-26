@@ -1065,6 +1065,75 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
   },
 ];
 
+// Décrit un responseSchema Gemini (POJO {type, properties, items, description, required}, pas la
+// classe SDK) en une forme JSON lisible, pour demander à DeepSeek de produire la même structure —
+// DeepSeek (API compatible OpenAI) n'accepte pas le typage Schema natif de Gemini.
+function schemaToPromptHint(schema: any, indent = ""): string {
+  if (!schema) return "";
+  const type = String(schema.type || "").toUpperCase();
+  if (type === "OBJECT") {
+    const required: string[] = schema.required || [];
+    const lines = Object.entries(schema.properties || {}).map(([key, val]: [string, any]) => {
+      const optionalTag = required.includes(key) ? "" : " (optionnel)";
+      const desc = val?.description ? ` // ${val.description}` : "";
+      return `${indent}  "${key}": ${schemaToPromptHint(val, indent + "  ")}${optionalTag}${desc}`;
+    });
+    return `{\n${lines.join(",\n")}\n${indent}}`;
+  }
+  if (type === "ARRAY") {
+    return `[ ${schemaToPromptHint(schema.items, indent)} ]`;
+  }
+  return `"<${type.toLowerCase() || "string"}>"`;
+}
+
+// Repli DeepSeek quand TOUS les modèles Gemini ont échoué (texte uniquement — DeepSeek ne traite
+// ni image ni audio, contrairement à Gemini). Nécessite DEEPSEEK_API_KEY ; échoue proprement sinon,
+// pour que l'appelant retombe sur l'erreur Gemini d'origine plutôt qu'un plantage différent.
+async function callDeepSeekFallback(promptText: string, config: any): Promise<any> {
+  const apiKey = (process.env.DEEPSEEK_API_KEY || "").trim();
+  if (!apiKey) throw new Error("DEEPSEEK_API_KEY non configuré.");
+
+  let userContent = promptText;
+  if (config?.systemInstruction) {
+    userContent = `${config.systemInstruction}\n\n${userContent}`;
+  }
+  if (config?.responseSchema) {
+    userContent += `\n\nRéponds STRICTEMENT avec un unique objet JSON valide (rien avant, rien après) respectant exactement cette forme :\n${schemaToPromptHint(config.responseSchema)}`;
+  }
+
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: userContent }],
+      response_format: config?.responseSchema ? { type: "json_object" } : undefined,
+      temperature: 0.3,
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`DeepSeek API a répondu ${res.status} : ${errText.slice(0, 300)}`);
+  }
+  const data: any = await res.json();
+  const text = data?.choices?.[0]?.message?.content || "";
+  if (!text) throw new Error("Réponse DeepSeek vide.");
+  return { text, modelUsedForGeneration: "deepseek-chat (repli)" };
+}
+
+// Extrait un texte simple depuis `contents` pour le repli DeepSeek — renvoie null si le contenu
+// est multimédia (image/audio/vidéo joints) ou d'une forme trop complexe (historique de chat en
+// tableau de tours), que DeepSeek ne peut de toute façon pas traiter correctement.
+function extractTextOnlyContent(contents: any): string | null {
+  if (typeof contents === "string") return contents;
+  if (contents && Array.isArray(contents.parts)) {
+    if (contents.parts.some((p: any) => p.inlineData)) return null;
+    const text = contents.parts.map((p: any) => p.text).filter(Boolean).join("\n\n");
+    return text || null;
+  }
+  return null;
+}
+
 async function generateContentWithFallbackAndRetry(
   contents: any,
   config: any,
@@ -1083,7 +1152,7 @@ async function generateContentWithFallbackAndRetry(
           config,
         });
       }, 3, 1000);
-      
+
       if (result) {
         result.modelUsedForGeneration = modelName;
       }
@@ -1095,6 +1164,18 @@ async function generateContentWithFallbackAndRetry(
       if (error.status === 400 || error.status === 401 || error.status === 403) {
         throw error;
       }
+    }
+  }
+
+  // Tous les modèles Gemini ont échoué : dernier recours DeepSeek si une clé est configurée et que
+  // le contenu est du texte simple (voir extractTextOnlyContent).
+  const textOnly = extractTextOnlyContent(contents);
+  if (textOnly && process.env.DEEPSEEK_API_KEY) {
+    try {
+      console.warn("[Fallback] Tous les modèles Gemini ont échoué, tentative de repli avec DeepSeek...");
+      return await callDeepSeekFallback(textOnly, config);
+    } catch (dsErr: any) {
+      console.error("[DeepSeek Fallback] Échec:", dsErr.message || dsErr);
     }
   }
 
