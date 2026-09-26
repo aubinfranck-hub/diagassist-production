@@ -281,6 +281,14 @@ export default function App() {
     }
   }, [currentPlan, loggedInUser]);
 
+  // Dès que le serveur constate la fin de l'essai, on ouvre automatiquement la page des abonnements.
+  // Le paiement reste volontaire : l'utilisateur choisit ensuite son forfait et son moyen de paiement.
+  useEffect(() => {
+    if (loggedInUser && currentPlan === "free_expired") {
+      setActiveTab("prices");
+    }
+  }, [loggedInUser, currentPlan]);
+
   // Load and Save user status from server as source of truth.
   // BUG CORRIGÉ : avant, ce statut n'était récupéré qu'une seule fois à la connexion.
   // Résultat : après une activation manuelle de forfait par l'admin, l'utilisateur déjà connecté
@@ -449,8 +457,8 @@ export default function App() {
       return;
     }
 
-    if (currentPlan === "free_expired") {
-      alert("Votre essai gratuit de 72h est expiré ! Veuillez souscrire à une formule (Lite ou Premium) ou recharger un pass 24h à l'usage de 500 F CFA avec Wave dans l'onglet 'Abonnements & Tarifs' pour pouvoir effectuer des diagnostics.");
+      setActiveTab("prices");
+      alert("Votre essai gratuit de 72h est terminé. La page des abonnements s'ouvre automatiquement : choisissez votre formule et payez en ligne.");
       return;
     }
 
