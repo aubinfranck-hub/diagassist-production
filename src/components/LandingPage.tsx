@@ -145,7 +145,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
 
             <div className="relative z-30 -mt-2 lg:-mt-14 rounded-2xl border border-white/15 bg-[#071326]/95 backdrop-blur-xl shadow-2xl shadow-black/40 overflow-hidden">
               <div className="grid grid-cols-2 md:grid-cols-4">
-                [
+                {[
                   { icon: FileSearch, title: "1. CODE DÉFAUT", desc: "Entrez le code ou un symptôme", color: "text-red-400", bg: "bg-red-500" },
                   { icon: Search, title: "2. ANALYSE", desc: "Recherche des informations", color: "text-sky-400", bg: "bg-sky-500" },
                   { icon: Wrench, title: "3. CONTRÔLES", desc: "Tests et vérifications à effectuer", color: "text-emerald-400", bg: "bg-emerald-500" },
