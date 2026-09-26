@@ -1034,7 +1034,45 @@ async function liveToolSaveDiagnostic(
   };
 }
 
+
+// Guide scanner local ultra-léger : aucune recherche réseau/DB pendant un tour vocal.
+const SCANNER_GUIDES: Array<{ family: string; aliases: string[]; capabilities: string[]; menu: string[]; actions: string[]; bench: boolean; note: string }> = [
+  { family:"Launch X-431", aliases:["launch","x431","x-431","pro5","pro 5","pro3","pro 3","pad","diagun","easydiag","dbscar","smartbox","xpro5","x-pro5","xdiag","diagzone"], capabilities:["DTC","Freeze Frame","Live Data","Active Test","Service Functions","Codage selon modèle"], menu:["Diagnostic > constructeur > véhicule > système/ECU","ECU > Read Codes / Data Stream / Actuation Test"], actions:["Actionneur : chercher Actuation Test / Active Test dans l'ECU.","Mesure : ouvrir Data Stream / Live Data et sélectionner seulement les PIDs utiles."], bench:true, note:"Menus selon modèle X-431, VCI, logiciel et véhicule." },
+  { family:"Autel Maxi", aliases:["autel","maxisys","maxisys pro","maxisys elite","maxicheck","maxidiag","maxidas","ms906","ms908","ms909","ms919","maxi ultra"], capabilities:["DTC","Freeze Frame","Live Data","Active Test","Service Functions","Codage selon modèle"], menu:["Diagnostics > constructeur > véhicule > système > Function Menu","Function Menu > Live Data / Active Test"], actions:["Actionneur : Active Test puis observation physique.","Mesure : relever les paramètres demandés dans Live Data."], bench:true, note:"Active Tests variables selon appareil et véhicule." },
+  { family:"Thinkcar / ThinkDiag", aliases:["thinkcar","thinkdiag","thinkdiag 2","thinkdiag2","thinkscan","thinktool"], capabilities:["DTC","Freeze Frame","Live Data","Active Test","Service Functions"], menu:["Diagnostic > AutoVIN/sélection véhicule > ECU","ECU > Fault Code / Data Stream / Actuation Test"], actions:["Chercher Active Test / Actuation Test.","Sélectionner seulement les PIDs utiles."], bench:false, note:"Dépend du modèle, de l'application et de l'abonnement." },
+  { family:"TOPDON", aliases:["topdon","topscan","artidiag","phoenix"], capabilities:["DTC","Freeze Frame","Live Data","Active Test","Service Functions"], menu:["Diagnostic > constructeur > véhicule > ECU","ECU > Data Stream / Active Test / Special Functions"], actions:["Utiliser Active Test lorsqu'il est disponible et confirmer par observation/mesure."], bench:true, note:"Vérifier le modèle exact." },
+  { family:"XTOOL", aliases:["xtool","x-tool","d5","d6","d7","d8","d9","ip508","ip608","ip616","ip819","ip919","a30","a80"], capabilities:["DTC","Freeze Frame","Live Data","Active Test","Service Functions"], menu:["Diagnosis > constructeur > modèle > système/ECU","ECU > Data Stream / Actuation Test / Special Functions"], actions:["Chercher Actuation Test/Active Test.","Relever le PID demandé dans les conditions du test."], bench:true, note:"Ne pas supposer une fonction à partir de la famille seule." },
+  { family:"KINGBOLEN", aliases:["kingbolen","ediag","ediag elite","ediag plus","k6","k6 pro","k7","k8","k10","soloscan"], capabilities:["DTC","Freeze Frame","Live Data","Active Test","Service Functions","AutoVIN","CAN-FD selon modèle"], menu:["EDIAG > AutoVIN/sélection véhicule > Diagnostic > ECU","ECU > Fault Code / Data Stream / Active Test"], actions:["Chercher Active Test/Bidirectional Test.","Data Stream : relever les valeurs demandées."], bench:false, note:"EDIAG ELITE : diagnostic tous systèmes et bidirectionnel ; fonctions véhicule/modèle dépendantes." },
+  { family:"Bosch", aliases:["bosch","kts","esi tronic","esitronic"], capabilities:["DTC","Freeze Frame","Live Data","Tests composants","Fonctions guidées"], menu:["Diagnostic > véhicule > système > fonction/test","ESI[tronic] > valeurs réelles / tests composants"], actions:["Privilégier les conditions de test guidées."], bench:false, note:"Dépend de l'équipement et de la licence." },
+  { family:"Foxwell", aliases:["foxwell","nt630","nt650","nt680","nt809","nt1000"], capabilities:["DTC","Freeze Frame","Live Data","Service Functions","Active Test selon modèle"], menu:["Diagnostics > constructeur > système > fonction"], actions:["Chercher Live Data ou Active Test dans le système."], bench:false, note:"Vérifier le modèle exact." },
+  { family:"iCarsoft", aliases:["icarsoft","cr max","cr pro","cr ultra"], capabilities:["DTC","Live Data","Freeze Frame","Service Functions selon modèle"], menu:["Diagnose > constructeur > système > Read Codes / Live Data / Special Functions"], actions:["Les fonctions bidirectionnelles ne sont pas disponibles sur tous les modèles."], bench:false, note:"Modèle exact indispensable." },
+  { family:"Delphi / DS", aliases:["delphi","ds150e","ds150","autocom","wow"], capabilities:["DTC","Live Data","Tests d'actionneurs selon logiciel","Service Functions"], menu:["Diagnostic > véhicule > système > paramètres / activations"], actions:["Sélectionner le calculateur puis la fonction disponible."], bench:false, note:"Versions logicielles/interfaces différentes." }
+];
+const scannerGuideCache = new Map<string,string>();
+function liveToolGetScannerGuide(scanner: string): string {
+  const key = scanner.toLowerCase().trim();
+  const cached = scannerGuideCache.get(key);
+  if (cached) return cached;
+  const hit = SCANNER_GUIDES.find(g => g.aliases.some(a => key === a || key.includes(a) || a.includes(key)));
+  const result = hit
+    ? JSON.stringify({ scanner, famille:hit.family, capacites:hit.capabilities, chemins_menu:hit.menu, actions:hit.actions, bench:hit.bench, note:hit.note })
+    : JSON.stringify({ scanner, reconnu:false, instruction:"Demander le modèle exact et, si nécessaire, une photo de l'écran avant de donner un chemin de menu." });
+  scannerGuideCache.set(key,result);
+  return result;
+}
+
 const LIVE_AGENT_TOOL_DECLARATIONS = [
+  {
+    name: "consulter_guide_scanner",
+    description: "Consulte instantanément l'index local des guides de scanners. À utiliser seulement lorsqu'un scanner précis est cité et qu'un chemin de menu ou une action de test est nécessaire. Aucun appel réseau.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        scanner: { type: Type.STRING, description: "Modèle exact si possible : KINGBOLEN EDIAG ELITE, Launch X431 Pro5, Autel MS906BT, ThinkDiag 2, XTOOL D9, TOPDON Phoenix, etc." }
+      },
+      required: ["scanner"],
+    },
+  },
   {
     name: "rechercher_fiche_technique",
     description: "Recherche sur le web des données techniques fiables (emplacement d'un composant, valeurs multimètre, couple de serrage, bulletin constructeur) pour aider au diagnostic ou à la réparation. À utiliser quand le mécanicien demande une valeur précise que tu n'es pas certain de connaître.",
@@ -4249,7 +4287,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                           clientWs.send(JSON.stringify({ type: "toolCall", name: fc.name }));
                           let result: string;
                           try {
-                            if (fc.name === "rechercher_fiche_technique") {
+                            if (fc.name === "consulter_guide_scanner") {
+                              result = liveToolGetScannerGuide(String(fc.args?.scanner || ""));
+                            } else if (fc.name === "rechercher_fiche_technique") {
                               result = await liveToolSearchTechnicalInfo(String(fc.args?.requete || ""));
                             } else if (fc.name === "verifier_base_vehicules") {
                               result = await liveToolCheckVehicleDatabase(String(fc.args?.marque || ""), fc.args?.modele ? String(fc.args.modele) : undefined);
