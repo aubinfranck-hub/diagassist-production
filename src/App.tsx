@@ -457,6 +457,7 @@ export default function App() {
       return;
     }
 
+    if (currentPlan === "free_expired") {
       setActiveTab("prices");
       alert("Votre essai gratuit de 72h est terminé. La page des abonnements s'ouvre automatiquement : choisissez votre formule et payez en ligne.");
       return;
