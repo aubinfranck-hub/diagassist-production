@@ -156,6 +156,7 @@ export default function DiagAssistLiveScreen({
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const lastSpokenMsgIdRef = useRef<string>("");
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Register Audio Ad Playback Handler for Priority Audio Ads at Natural Pauses
   useEffect(() => {
@@ -470,27 +471,21 @@ export default function DiagAssistLiveScreen({
     }
   };
 
-  // Function to speak text aloud using Web Speech API (SpeechSynthesis)
-  const speakText = (rawText: string, msgId?: string) => {
-    if (!speakerEnabled) return;
+  // Repli : synthèse vocale locale du navigateur (voix robotique de l'appareil), utilisée
+  // uniquement quand la voix cloud échoue (API indisponible, pas de connexion, etc.).
+  const speakTextLocal = (cleanText: string, msgId?: string) => {
     if (!("speechSynthesis" in window)) {
       console.warn("Speech synthesis is not supported in this browser.");
       return;
     }
-
     try {
-      window.speechSynthesis.cancel(); // Cancel any existing speech
-      setCurrentlySpeakingId(null);
-
-      const cleanText = cleanPhoneticText(rawText);
-      if (!cleanText) return;
+      window.speechSynthesis.cancel();
 
       const utterance = new SpeechSynthesisUtterance(cleanText);
       utterance.lang = "fr-FR";
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
 
-      // Select French voice if available
       const voices = window.speechSynthesis.getVoices();
       const frVoice = voices.find((v) => v.lang.toLowerCase().startsWith("fr"));
       if (frVoice) {
@@ -517,6 +512,59 @@ export default function DiagAssistLiveScreen({
       window.speechSynthesis.speak(utterance);
     } catch (e) {
       console.error("SpeechSynthesis error:", e);
+    }
+  };
+
+  // Lit le texte à voix haute. Essaie d'abord la voix cloud Google Neural2 (bien plus naturelle
+  // que la synthèse locale robotique du téléphone, utilisée jusqu'ici pour tout le vocal de cet
+  // écran) via /api/tts, et ne retombe sur la voix locale que si l'appel échoue.
+  const speakText = async (rawText: string, msgId?: string) => {
+    if (!speakerEnabled) return;
+
+    const cleanText = cleanPhoneticText(rawText);
+    if (!cleanText) return;
+
+    try { window.speechSynthesis?.cancel(); } catch (e) {}
+    if (ttsAudioRef.current) {
+      try { ttsAudioRef.current.pause(); } catch (e) {}
+      ttsAudioRef.current = null;
+    }
+    setCurrentlySpeakingId(null);
+
+    try {
+      const token = localStorage.getItem("auth_session_token");
+      const preferredVoice = localStorage.getItem("preferred_speech_voice") || "fr-FR-Neural2-B";
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token || ""}` },
+        body: JSON.stringify({ text: cleanText, voiceName: preferredVoice }),
+      });
+      if (!response.ok) throw new Error("Réponse invalide de l'API de synthèse vocale.");
+      const data = await response.json();
+      if (!data.success || !data.audioContent) throw new Error(data.message || "Pas d'audio renvoyé.");
+
+      const audioObj = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+      ttsAudioRef.current = audioObj;
+
+      audioObj.onplay = () => {
+        if (msgId) setCurrentlySpeakingId(msgId);
+        globalAdManager.setGeminiSpeakingStatus(true);
+      };
+      audioObj.onended = () => {
+        setCurrentlySpeakingId(null);
+        globalAdManager.setGeminiSpeakingStatus(false);
+        maybeTriggerAutomaticVocalAd();
+      };
+      audioObj.onerror = () => {
+        setCurrentlySpeakingId(null);
+        globalAdManager.setGeminiSpeakingStatus(false);
+        speakTextLocal(cleanText, msgId);
+      };
+
+      await audioObj.play();
+    } catch (err) {
+      console.warn("Échec de la synthèse vocale cloud, repli sur la voix locale du navigateur :", err);
+      speakTextLocal(cleanText, msgId);
     }
   };
 
@@ -709,6 +757,10 @@ Codes DTC: ${dtcCodes}`;
 
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
+    }
+    if (ttsAudioRef.current) {
+      try { ttsAudioRef.current.pause(); } catch (e) {}
+      ttsAudioRef.current = null;
     }
 
     setCallState("idle");
@@ -957,8 +1009,12 @@ Codes DTC: ${dtcCodes}`;
             onClick={() => {
               const next = !speakerEnabled;
               setSpeakerEnabled(next);
-              if (!next && "speechSynthesis" in window) {
-                window.speechSynthesis.cancel();
+              if (!next) {
+                if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+                if (ttsAudioRef.current) {
+                  try { ttsAudioRef.current.pause(); } catch (e) {}
+                  ttsAudioRef.current = null;
+                }
                 setCurrentlySpeakingId(null);
               }
             }}
