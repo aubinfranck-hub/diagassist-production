@@ -55,9 +55,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </button>
 
         <div className="flex items-center gap-3 shrink-0">
-          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg shadow-red-600/20 overflow-hidden">
-            <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
-          </div>
+          <img src="/icon-logo-512.png" alt="DiagAssist" className="w-11 h-11 sm:w-12 sm:h-12 object-contain drop-shadow-[0_5px_18px_rgba(239,68,68,.22)]" />
           <span className="hidden sm:block font-display font-black text-lg uppercase tracking-tight leading-none">DiagAssist</span>
         </div>
 
@@ -101,81 +99,79 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         )}
       </header>
 
-      {/* Hero — refonte premium mobile/desktop */}
+      {/* Hero — design mobile fidèle à la maquette */}
       <main className="w-full relative">
-        <section className="relative overflow-hidden min-h-[760px] md:min-h-[720px] bg-[#020817]">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_35%,rgba(239,68,68,.18),transparent_30%),radial-gradient(circle_at_20%_60%,rgba(15,23,42,.9),transparent_55%)]" />
-          <div className="absolute inset-0 opacity-25 bg-[linear-gradient(115deg,transparent_0%,rgba(255,255,255,.03)_48%,transparent_49%)]" />
+        <section className="relative overflow-hidden bg-[#020817] min-h-0">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_35%,rgba(239,68,68,.20),transparent_28%),radial-gradient(circle_at_25%_75%,rgba(30,41,59,.75),transparent_48%)]" />
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,8,23,.96)_0%,rgba(2,8,23,.86)_42%,rgba(2,8,23,.42)_72%,rgba(2,8,23,.75)_100%)]" />
 
-          <div className="relative w-full max-w-7xl mx-auto px-5 sm:px-7 lg:px-10 pt-10 md:pt-14 pb-8">
-            <div className="grid lg:grid-cols-[1.02fr_.98fr] gap-4 lg:gap-0 items-center">
-              <div className="relative z-20 max-w-2xl">
-                <div className="inline-flex items-center gap-2 border border-red-500/70 bg-black/30 text-white rounded-full px-4 py-2 text-xs md:text-sm font-black uppercase tracking-wide shadow-[0_0_25px_rgba(239,68,68,.12)]">
+          <div className="relative max-w-7xl mx-auto px-5 sm:px-7 lg:px-10 pt-8 md:pt-12 pb-8">
+            <div className="relative min-h-[650px] md:min-h-[690px]">
+              <div className="relative z-20 max-w-[68%] sm:max-w-[62%] md:max-w-2xl pt-2">
+                <div className="inline-flex items-center gap-2 border border-red-500/80 bg-[#020817]/70 text-white rounded-full px-4 py-2 text-xs md:text-sm font-black uppercase tracking-wide">
                   <Wrench className="w-4 h-4 text-red-500" /> Pour les mécaniciens
                 </div>
 
-                <h1 className="mt-7 text-[2.55rem] sm:text-5xl md:text-6xl lg:text-[4.15rem] font-display font-black leading-[.98] tracking-tight text-white uppercase">
+                <h1 className="mt-7 text-[2.45rem] sm:text-5xl md:text-6xl lg:text-[4rem] font-display font-black leading-[.98] tracking-tight text-white uppercase">
                   VOTRE VOITURE<br />
                   AFFICHE UN<br />
                   <span className="text-red-500">CODE DÉFAUT ?</span>
                 </h1>
 
-                <div className="mt-5 text-[1.55rem] sm:text-3xl md:text-4xl font-display font-black leading-tight uppercase">
+                <div className="mt-5 text-[1.42rem] sm:text-3xl md:text-4xl font-display font-black leading-[1.08] uppercase">
                   <span className="text-red-500">DIAGASSIST</span>{" "}
-                  <span className="text-white">VOUS GUIDE</span><br className="hidden sm:block" />
+                  <span className="text-white">VOUS GUIDE</span>
                   <span className="text-white"> POUR TROUVER LA PANNE.</span>
                 </div>
 
-                <p className="mt-5 max-w-xl text-base md:text-lg leading-relaxed text-slate-300">
+                <p className="mt-6 text-[15px] sm:text-base md:text-lg leading-relaxed text-slate-300 max-w-xl">
                   Entrez le code défaut affiché par votre scanner OBD ou décrivez le symptôme.
                   DiagAssist vous guide étape par étape pour identifier les contrôles à effectuer.
                 </p>
               </div>
 
-              <div className="relative min-h-[300px] md:min-h-[420px] lg:min-h-[570px] flex items-end justify-center lg:justify-end -mt-2 lg:mt-0">
-                <div className="absolute right-0 bottom-8 w-[92%] h-[72%] rounded-[3rem] bg-gradient-to-br from-slate-800/70 via-slate-900/40 to-red-950/30 border border-white/5 blur-[1px]" />
-                <div className="absolute right-[-15%] bottom-0 w-[90%] h-48 bg-red-600/20 blur-3xl rounded-full" />
+              <div className="absolute z-10 right-[-22%] sm:right-[-10%] md:right-[-3%] top-[175px] sm:top-[145px] md:top-[100px] w-[63%] sm:w-[55%] md:w-[48%] lg:w-[47%] pointer-events-none">
+                <div className="absolute inset-0 bg-red-600/20 blur-3xl rounded-full scale-75" />
                 <img
                   src="/icon-512.png"
                   alt="Assistant DiagAssist"
-                  className="relative z-10 w-[320px] sm:w-[390px] md:w-[470px] lg:w-[540px] max-w-none object-contain drop-shadow-[0_25px_45px_rgba(0,0,0,.65)]"
+                  className="relative w-full object-contain drop-shadow-[0_25px_45px_rgba(0,0,0,.7)]"
                 />
               </div>
-            </div>
 
-            <div className="relative z-30 -mt-2 lg:-mt-14 rounded-2xl border border-white/15 bg-[#071326]/95 backdrop-blur-xl shadow-2xl shadow-black/40 overflow-hidden">
-              <div className="grid grid-cols-2 md:grid-cols-4">
-                {[
-                  { icon: FileSearch, title: "1. CODE DÉFAUT", desc: "Entrez le code ou un symptôme", color: "text-red-400", bg: "bg-red-500" },
-                  { icon: Search, title: "2. ANALYSE", desc: "Recherche des informations", color: "text-sky-400", bg: "bg-sky-500" },
-                  { icon: Wrench, title: "3. CONTRÔLES", desc: "Tests et vérifications à effectuer", color: "text-emerald-400", bg: "bg-emerald-500" },
-                  { icon: CheckCircle2, title: "4. DIAGNOSTIC", desc: "Résultat clair et structuré", color: "text-violet-400", bg: "bg-violet-500" },
-                ].map((step, i) => (
-                  <div key={i} className="relative p-5 md:p-6 flex items-center md:items-start gap-4 md:gap-3 md:flex-col">
-                    {i < 3 && <div className="hidden md:block absolute right-0 top-8 w-px h-24 bg-white/10" />}
-                    <div className={`w-12 h-12 md:w-14 md:h-14 rounded-full ${step.bg} flex items-center justify-center text-white shadow-lg shrink-0`}>
-                      <step.icon className="w-6 h-6 md:w-7 md:h-7" />
+              <div className="absolute z-0 right-[-15%] top-[210px] w-[72%] h-[320px] rounded-[50%] bg-gradient-to-br from-slate-800/65 to-red-950/30 border border-white/5 blur-[1px]" />
+
+              <div className="absolute z-30 left-0 right-0 bottom-0 rounded-2xl border border-white/15 bg-[#071326]/96 backdrop-blur-xl shadow-2xl overflow-hidden">
+                <div className="grid grid-cols-2 md:grid-cols-4">
+                  {[
+                    { icon: FileSearch, title: "1. CODE DÉFAUT", desc: "Entrez le code ou un symptôme", color: "text-red-400", bg: "bg-red-500" },
+                    { icon: Search, title: "2. ANALYSE", desc: "Recherche des informations", color: "text-sky-400", bg: "bg-sky-500" },
+                    { icon: Wrench, title: "3. CONTRÔLES", desc: "Tests et vérifications à effectuer", color: "text-emerald-400", bg: "bg-emerald-500" },
+                    { icon: CheckCircle2, title: "4. DIAGNOSTIC", desc: "Résultat clair et structuré", color: "text-violet-400", bg: "bg-violet-500" },
+                  ].map((step, i) => (
+                    <div key={i} className="relative p-4 md:p-6 flex items-center md:items-start gap-3 md:gap-3 md:flex-col">
+                      {i < 3 && <div className="hidden md:block absolute right-0 top-8 w-px h-24 bg-white/10" />}
+                      <div className={`w-11 h-11 md:w-14 md:h-14 rounded-full ${step.bg} flex items-center justify-center text-white shadow-lg shrink-0`}>
+                        <step.icon className="w-5 h-5 md:w-7 md:h-7" />
+                      </div>
+                      <div>
+                        <h3 className={`text-[11px] md:text-base font-black uppercase ${step.color}`}>{step.title}</h3>
+                        <p className="text-[10px] md:text-sm text-slate-400 mt-1 leading-snug">{step.desc}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className={`text-sm md:text-base font-black uppercase ${step.color}`}>{step.title}</h3>
-                      <p className="text-xs md:text-sm text-slate-400 mt-1 leading-snug">{step.desc}</p>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
 
-            <div className="relative z-30 flex flex-col sm:flex-row gap-3 justify-center mt-5">
+            <div className="relative z-40 flex flex-col sm:flex-row gap-3 justify-center mt-5">
               <button
                 onClick={onGetStarted}
                 className="flex-1 sm:flex-none sm:min-w-[330px] flex items-center justify-center gap-3 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-black text-base md:text-lg uppercase px-8 py-4 rounded-2xl shadow-[0_10px_35px_rgba(239,68,68,.28)] transition"
               >
                 <span className="text-xl">🤖</span> Essayer DiagAssist <ArrowRight className="w-5 h-5" />
               </button>
-              <a
-                href="#comment-ca-marche"
-                className="flex-1 sm:flex-none sm:min-w-[300px] flex items-center justify-center gap-3 border border-slate-500 bg-slate-900/70 hover:bg-slate-800 text-white font-black text-sm md:text-base uppercase px-8 py-4 rounded-2xl transition"
-              >
+              <a href="#comment-ca-marche" className="flex-1 sm:flex-none sm:min-w-[300px] flex items-center justify-center gap-3 border border-slate-500 bg-slate-900/70 hover:bg-slate-800 text-white font-black text-sm md:text-base uppercase px-8 py-4 rounded-2xl transition">
                 <Play className="w-5 h-5 fill-white" /> Voir comment ça marche
               </a>
             </div>
@@ -188,7 +184,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
               href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")}
               target="_blank"
               rel="noopener noreferrer"
-              className="relative z-30 flex items-center justify-center gap-3 max-w-2xl mx-auto border border-emerald-400/90 bg-emerald-500/5 hover:bg-emerald-500/10 text-white font-black text-sm md:text-base px-7 py-4 rounded-2xl transition"
+              className="relative z-40 flex items-center justify-center gap-3 max-w-2xl mx-auto border border-emerald-400/90 bg-emerald-500/5 hover:bg-emerald-500/10 text-white font-black text-sm md:text-base px-7 py-4 rounded-2xl transition"
             >
               <MessageCircle className="w-6 h-6 text-emerald-400" /> Contactez-nous sur WhatsApp
             </a>
