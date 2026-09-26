@@ -1,7 +1,7 @@
-import React, { useState } from "react";
-import { 
-  Sparkles, ShieldCheck, Zap, Layers, ExternalLink, Check, Volume2, 
-  BookOpen, HelpCircle, AlertCircle, RefreshCw, Coins, Lock, Eye, EyeOff
+import React, { useEffect, useRef, useState } from "react";
+import {
+  Sparkles, ShieldCheck, Zap, Layers, ExternalLink, Check, Volume2,
+  BookOpen, HelpCircle, AlertCircle, RefreshCw, Coins, Lock, Eye, EyeOff, Smartphone, Loader2
 } from "lucide-react";
 import { SubscriptionPlan } from "../types";
 import AdminClientDashboard from "./AdminClientDashboard";
@@ -28,6 +28,71 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
   // State to hold the dynamically selected payment amount for Wave
   const [selectedAmount, setSelectedAmount] = useState<number>(6000);
   const [requestSent, setRequestSent] = useState(false);
+
+  // Paiement automatisé Jèko (Orange/Wave/MTN/Moov)
+  const [paymentMethod, setPaymentMethod] = useState<"orange" | "wave" | "mtn" | "moov">("orange");
+  const [payerPhone, setPayerPhone] = useState("");
+  const [payStatus, setPayStatus] = useState<"idle" | "creating" | "waiting" | "success" | "error">("idle");
+  const [payError, setPayError] = useState("");
+  const pollIntervalRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => { if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current); }, []);
+
+  const planForAmount = (amount: number): SubscriptionPlan =>
+    amount === 15000 ? "premium"
+    : amount === 500 ? (isOwner ? "owner_week" : "payg_active")
+    : "lite";
+
+  const pollPaymentStatus = (reference: string, plan: SubscriptionPlan) => {
+    const token = localStorage.getItem("auth_session_token");
+    let attempts = 0;
+    pollIntervalRef.current = window.setInterval(async () => {
+      attempts += 1;
+      if (attempts > 60) { // ~5 min (5s d'intervalle)
+        window.clearInterval(pollIntervalRef.current);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/payments/jeko/status/${encodeURIComponent(reference)}`, {
+          headers: { Authorization: `Bearer ${token || ""}` },
+        });
+        const data = await res.json();
+        if (data.success && data.status === "success") {
+          window.clearInterval(pollIntervalRef.current);
+          setPayStatus("success");
+          onPlanChange(plan);
+        } else if (data.success && data.status === "error") {
+          window.clearInterval(pollIntervalRef.current);
+          setPayStatus("error");
+          setPayError("Le paiement a échoué ou a été annulé.");
+        }
+      } catch {
+        // Erreur réseau ponctuelle : on retente au prochain tick plutôt que d'abandonner.
+      }
+    }, 5000);
+  };
+
+  const handlePayJeko = async (amount: number) => {
+    setPayStatus("creating");
+    setPayError("");
+    try {
+      const token = localStorage.getItem("auth_session_token");
+      const plan = planForAmount(amount);
+      const res = await fetch("/api/payments/jeko/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token || ""}` },
+        body: JSON.stringify({ plan, paymentMethod, payerPhone: payerPhone || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || "Paiement impossible.");
+      if (data.redirectUrl) window.open(data.redirectUrl, "_blank", "noopener,noreferrer");
+      setPayStatus("waiting");
+      pollPaymentStatus(data.reference, plan);
+    } catch (e: any) {
+      setPayStatus("error");
+      setPayError(e.message || "Erreur réseau.");
+    }
+  };
 
   // Changement de mot de passe (self-service)
   const [currentPassword, setCurrentPassword] = useState("");
@@ -391,7 +456,7 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
  
       </div>
  
-      {/* Bloc de paiement UNIQUE — reflète la formule choisie ci-dessus, en 2 étapes claires */}
+      {/* Bloc de paiement UNIQUE — reflète la formule choisie ci-dessus */}
       <div className="bg-red-600/10 border border-red-500/20 rounded-3xl p-6 md:p-8 flex gap-5 items-start animate-fade-in relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-red-600/[0.03] rounded-full blur-2xl pointer-events-none" />
         <div className="p-3 bg-red-600/10 text-red-500 rounded-xl shrink-0 border border-red-500/10">
@@ -400,39 +465,95 @@ export default function SubscriptionPanel({ currentPlan, onPlanChange, onActivat
         <div className="space-y-4 relative w-full">
           <div>
             <span className="font-display font-black text-red-400 block text-base uppercase tracking-wide">
-              Finaliser l'abonnement {selectedAmount === 15000 ? "Premium" : "Lite"}
+              Finaliser l'abonnement {selectedAmount === 15000 ? "Premium" : selectedAmount === 500 ? (isOwner ? "Pass Semaine" : "Forfait Jour") : "Lite"}
             </span>
-            <span className="text-xs text-slate-400 font-mono">{selectedAmount.toLocaleString("fr-FR")} F CFA / mois — paiement par Wave</span>
+            <span className="text-xs text-slate-400 font-mono">{selectedAmount.toLocaleString("fr-FR")} F CFA — paiement Mobile Money automatique</span>
           </div>
 
-          <div className="flex items-start gap-3 bg-slate-950/60 p-4 rounded-xl border border-white/[0.05]">
-            <span className="shrink-0 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-black flex items-center justify-center">1</span>
-            <div className="text-sm text-slate-200">
-              Payez <strong className="text-white">NTIC STRATEGY {selectedAmount}F</strong> via Wave.
+          {payStatus === "success" ? (
+            <div className="flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 text-emerald-300 text-sm font-bold">
+              <Check className="w-5 h-5 shrink-0" />
+              <span>Paiement confirmé — votre forfait est activé !</span>
             </div>
-          </div>
-          <button
-            onClick={() => handlePayWithWave(selectedAmount)}
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xs py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider shadow"
-          >
-            <ExternalLink className="w-4.5 h-4.5" />
-            <span>Ouvrir Wave — Payer {selectedAmount}F</span>
-          </button>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {([
+                  { id: "orange", label: "Orange Money" },
+                  { id: "wave", label: "Wave" },
+                  { id: "mtn", label: "MTN MoMo" },
+                  { id: "moov", label: "Moov Money" },
+                ] as const).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setPaymentMethod(m.id)}
+                    className={`text-xs font-bold py-2.5 px-2 rounded-xl border transition cursor-pointer ${
+                      paymentMethod === m.id
+                        ? "bg-red-600 border-red-500 text-white"
+                        : "bg-slate-950/60 border-white/[0.08] text-slate-300 hover:border-white/20"
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
 
-          <div className="flex items-start gap-3 bg-slate-950/60 p-4 rounded-xl border border-white/[0.05]">
-            <span className="shrink-0 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-black flex items-center justify-center">2</span>
-            <div className="text-sm text-slate-200">
-              Une fois le transfert effectué, confirmez ici — votre forfait sera activé manuellement après vérification (généralement sous quelques minutes).
+              <div className="relative">
+                <Smartphone className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="tel"
+                  placeholder="Numéro à débiter (ex: 0700000000)"
+                  value={payerPhone}
+                  onChange={(e) => setPayerPhone(e.target.value)}
+                  className="w-full bg-slate-950/60 border border-white/[0.08] rounded-xl pl-10 pr-3 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <button
+                onClick={() => handlePayJeko(selectedAmount)}
+                disabled={payStatus === "creating" || payStatus === "waiting"}
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xs py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider shadow disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {payStatus === "creating" || payStatus === "waiting" ? <Loader2 className="w-4.5 h-4.5 animate-spin" /> : <ExternalLink className="w-4.5 h-4.5" />}
+                <span>
+                  {payStatus === "creating" && "Initialisation…"}
+                  {payStatus === "waiting" && "En attente de confirmation…"}
+                  {(payStatus === "idle" || payStatus === "error") && `Payer ${selectedAmount}F maintenant`}
+                </span>
+              </button>
+
+              {payStatus === "waiting" && (
+                <p className="text-xs text-slate-400 text-center">
+                  Validez le paiement sur votre téléphone (ou la page qui s'est ouverte). L'activation est automatique dès confirmation.
+                </p>
+              )}
+              {payStatus === "error" && payError && (
+                <p className="text-xs text-rose-400 text-center">{payError}</p>
+              )}
+            </>
+          )}
+
+          <details className="text-xs text-slate-500">
+            <summary className="cursor-pointer hover:text-slate-400">Le paiement en ligne ne fonctionne pas ? Payer via Wave manuellement</summary>
+            <div className="mt-3 space-y-3">
+              <button
+                onClick={() => handlePayWithWave(selectedAmount)}
+                className="w-full bg-slate-900 hover:bg-slate-850 border border-white/[0.08] text-white font-black text-xs py-3 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>Ouvrir Wave — Payer {selectedAmount}F</span>
+              </button>
+              <button
+                onClick={() => handleConfirmTransfer(selectedAmount)}
+                disabled={requestSent}
+                className="w-full bg-slate-900 hover:bg-slate-850 border border-white/[0.08] text-emerald-400 hover:text-emerald-300 font-black text-xs py-3 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Check className="w-4 h-4" />
+                <span>{requestSent ? "Demande envoyée ✓" : "J'ai payé par virement — Confirmer"}</span>
+              </button>
             </div>
-          </div>
-          <button
-            onClick={() => handleConfirmTransfer(selectedAmount)}
-            disabled={requestSent}
-            className="w-full bg-slate-900 hover:bg-slate-850 border border-white/[0.08] text-emerald-400 hover:text-emerald-300 font-black text-xs py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Check className="w-4 h-4" />
-            <span>{requestSent ? "Demande envoyée ✓" : "J'ai payé — Confirmer"}</span>
-          </button>
+          </details>
         </div>
       </div>
         </>

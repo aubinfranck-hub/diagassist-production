@@ -12,6 +12,7 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
+import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 
 dotenv.config();
 
@@ -333,6 +334,18 @@ async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_technician ON screening_sessions (technician_phone);
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_coach ON screening_sessions (coach_phone);
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_created ON screening_sessions (created_at DESC);
+
+    -- Paiements d'abonnement via Jèko (Mobile Money / carte) : persistance pour que le webhook
+    -- retrouve la commande même si le serveur a redémarré entre la création et la confirmation.
+    CREATE TABLE IF NOT EXISTS jeko_payments (
+      reference TEXT PRIMARY KEY,
+      phone TEXT NOT NULL,
+      plan TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_jeko_payments_phone ON jeko_payments (phone);
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 
@@ -887,7 +900,13 @@ async function startServer() {
     }
     next();
   });
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({
+    limit: "50mb",
+    // Conserve le corps brut (avant parsing) pour la vérification de signature HMAC des
+    // webhooks (ex: Jèko), qui doit porter sur les octets exacts reçus, pas sur du JSON
+    // re-sérialisé qui pourrait différer (ordre des clés, espacement).
+    verify: (req: any, _res, buf) => { req.rawBody = buf; },
+  }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // Anti-abus : limite le nombre de requêtes sur les routes sensibles (SMS/OTP coûtent de l'argent, auth = cible de brute-force)
@@ -3493,6 +3512,20 @@ Directives pour ce tour :
     requireAuth,
     getEffectivePlan,
     sessions,
+    dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
+  });
+
+  // Paiements d'abonnement automatisés (Orange/Wave/MTN/Moov via Jèko) : à la confirmation par
+  // webhook, active le forfait exactement comme le fait l'admin manuellement aujourd'hui.
+  registerJekoPayments(app, {
+    requireAuth,
+    setUserPlan,
+    onPlanActivated: (phone: string, plan: string) => {
+      usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });
+      for (const [, session] of sessions) {
+        if (session.phone === phone) session.plan = plan;
+      }
+    },
     dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
   });
 
