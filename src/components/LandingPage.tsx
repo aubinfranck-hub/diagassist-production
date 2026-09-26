@@ -130,27 +130,27 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,8,23,.96)_0%,rgba(2,8,23,.86)_42%,rgba(2,8,23,.42)_72%,rgba(2,8,23,.75)_100%)]" />
 
           <div className="relative max-w-7xl mx-auto px-5 sm:px-7 lg:px-10 pt-3 md:pt-5 pb-8">
-            <div className="relative min-h-[650px] md:min-h-[690px]">
+            <div className="relative min-h-[555px] sm:min-h-[620px] md:min-h-[690px]">
               <div className="relative z-20 max-w-full sm:max-w-[62%] md:max-w-2xl pt-0">
-                <h1 className="mt-3 text-[2.45rem] sm:text-5xl md:text-6xl lg:text-[4rem] font-display font-black leading-[.98] tracking-tight text-white uppercase">
+                <h1 className="mt-2 text-[2.18rem] sm:text-5xl md:text-6xl lg:text-[4rem] font-display font-black leading-[.98] tracking-tight text-white uppercase">
                   VOTRE VOITURE<br />
                   AFFICHE UN<br />
                   <span className="text-red-500">CODE DÉFAUT ?</span>
                 </h1>
 
-                <div className="mt-4 text-[1.35rem] sm:text-3xl md:text-4xl font-display font-black leading-[1.08] uppercase">
+                <div className="mt-3 text-[1.12rem] sm:text-3xl md:text-4xl font-display font-black leading-[1.08] uppercase">
                   <span className="text-red-500">DIAGASSIST</span>{" "}
                   <span className="text-white">VOUS GUIDE</span>
                   <span className="text-white"> POUR TROUVER LA PANNE.</span>
                 </div>
 
-                <p className="mt-4 text-[15px] sm:text-base md:text-lg leading-relaxed text-slate-300 max-w-[78%] sm:max-w-xl">
+                <p className="mt-3 text-[14px] sm:text-base md:text-lg leading-relaxed text-slate-300 max-w-[92%] sm:max-w-xl">
                   Entrez le code défaut affiché par votre scanner OBD ou décrivez le symptôme.
                   DiagAssist vous guide étape par étape pour identifier les contrôles à effectuer.
                 </p>
               </div>
 
-              <div className="absolute z-10 right-[-7%] sm:right-[-10%] md:right-[-3%] top-[390px] sm:top-[330px] md:top-[100px] w-[50%] sm:w-[55%] md:w-[48%] lg:w-[47%] pointer-events-none">
+              <div className="absolute z-10 right-[-4%] sm:right-[-10%] md:right-[-3%] top-[305px] sm:top-[320px] md:top-[100px] w-[47%] sm:w-[55%] md:w-[48%] lg:w-[47%] pointer-events-none">
                 <div className="absolute inset-0 bg-red-600/20 blur-3xl rounded-full scale-75" />
                 <img
                   src="/icon-512.png"
@@ -159,7 +159,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
                 />
               </div>
 
-              <div className="absolute z-0 right-[-10%] top-[390px] sm:top-[350px] md:top-[210px] w-[65%] sm:w-[72%] h-[280px] sm:h-[320px] rounded-[50%] bg-gradient-to-br from-slate-800/65 to-red-950/30 border border-white/5 blur-[1px]" />
+              <div className="absolute z-0 right-[-8%] top-[315px] sm:top-[350px] md:top-[210px] w-[62%] sm:w-[72%] h-[220px] sm:h-[320px] rounded-[50%] bg-gradient-to-br from-slate-800/65 to-red-950/30 border border-white/5 blur-[1px]" />
 
               <div className="absolute z-30 left-0 right-0 bottom-0 rounded-2xl border border-white/15 bg-[#071326]/96 backdrop-blur-xl shadow-2xl overflow-hidden">
                 <div className="grid grid-cols-2 md:grid-cols-4">
@@ -169,14 +169,14 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
                     { icon: Wrench, title: "3. CONTRÔLES", desc: "Tests et vérifications à effectuer", color: "text-emerald-400", bg: "bg-emerald-500" },
                     { icon: CheckCircle2, title: "4. DIAGNOSTIC", desc: "Résultat clair et structuré", color: "text-violet-400", bg: "bg-violet-500" },
                   ].map((step, i) => (
-                    <div key={i} className="relative p-4 md:p-6 flex items-center md:items-start gap-3 md:gap-3 md:flex-col">
+                    <div key={i} className="relative p-3 sm:p-4 md:p-6 flex items-center md:items-start gap-2.5 md:gap-3 md:flex-col">
                       {i < 3 && <div className="hidden md:block absolute right-0 top-8 w-px h-24 bg-white/10" />}
-                      <div className={`w-11 h-11 md:w-14 md:h-14 rounded-full ${step.bg} flex items-center justify-center text-white shadow-lg shrink-0`}>
+                      <div className={`w-10 h-10 sm:w-11 sm:h-11 md:w-14 md:h-14 rounded-full ${step.bg} flex items-center justify-center text-white shadow-lg shrink-0`}>
                         <step.icon className="w-5 h-5 md:w-7 md:h-7" />
                       </div>
                       <div>
-                        <h3 className={`text-[11px] md:text-base font-black uppercase ${step.color}`}>{step.title}</h3>
-                        <p className="text-[10px] md:text-sm text-slate-400 mt-1 leading-snug">{step.desc}</p>
+                        <h3 className={`text-[10px] sm:text-[11px] md:text-base font-black uppercase ${step.color}`}>{step.title}</h3>
+                        <p className="text-[9px] sm:text-[10px] md:text-sm text-slate-400 mt-1 leading-snug">{step.desc}</p>
                       </div>
                     </div>
                   ))}
