@@ -970,61 +970,36 @@ async function liveToolCheckPartAvailability(query: string): Promise<string> {
   }
 }
 
-// Envoi WhatsApp réel (indépendant de sendShopWhatsApp, définie plus bas dans une autre portée) —
-// nécessite TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN configurés côté serveur, sinon échoue proprement.
-async function sendTwilioWhatsApp(phone: string, message: string): Promise<void> {
-  const sid = (process.env.TWILIO_ACCOUNT_SID || "").trim();
-  const token = (process.env.TWILIO_AUTH_TOKEN || "").trim();
-  if (!sid || !token) throw new Error("TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN manquants");
-
-  const client = twilio(sid, token);
-  const sender = (process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886").trim();
-  const fromNumber = sender.startsWith("whatsapp:") ? sender : `whatsapp:${sender}`;
-  const toNumber = phone.startsWith("whatsapp:") ? phone : `whatsapp:${phone}`;
-  const contentSid = (process.env.TWILIO_WHATSAPP_CONTENT_SID || "").trim();
-
-  if (contentSid) {
-    await client.messages.create({ from: fromNumber, to: toNumber, contentSid, contentVariables: JSON.stringify({ "1": message }) });
-  } else {
-    await client.messages.create({ from: fromNumber, to: toNumber, body: message });
-  }
-}
-
-// Enregistre le diagnostic établi pendant l'appel live, et envoie automatiquement un récapitulatif
-// par WhatsApp au client — SANS relecture humaine avant envoi (assumé explicitement par l'utilisateur).
+// Enregistre le diagnostic établi pendant l'appel live. Pas d'envoi WhatsApp automatique côté
+// serveur (choix explicite : pas de Twilio) — un lien wa.me prérempli est renvoyé pour que le
+// mécanicien l'envoie lui-même en un tap depuis son propre WhatsApp (voir dispatch de toolCall).
 async function liveToolSaveDiagnostic(
   phone: string,
   vehicule: string,
   symptome: string,
   causeProbable: string,
   actionRecommandee: string
-): Promise<string> {
+): Promise<{ toolResult: string; whatsappUrl: string }> {
   const message = `Bonjour, voici le récapitulatif de votre diagnostic DiagAssist :\n\nVéhicule : ${vehicule}\nSymptôme : ${symptome}\nCause probable : ${causeProbable}\nAction recommandée : ${actionRecommandee}\n\n— L'équipe DiagAssist 🚗🔧\nhttps://www.diagassist.app`;
-
-  let whatsappSent = false;
-  let whatsappNote = "";
-  try {
-    await sendTwilioWhatsApp(phone, message);
-    whatsappSent = true;
-  } catch (err: any) {
-    console.warn("[Live Tool] Échec de l'envoi WhatsApp du récapitulatif:", err.message || err);
-    whatsappNote = " (échec de l'envoi WhatsApp — Twilio non configuré ou indisponible, informe le mécanicien qu'il devra transmettre le récapitulatif lui-même)";
-  }
+  const whatsappUrl = `https://wa.me/${phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(message)}`;
 
   if (dbPool) {
     try {
       await dbPool.query(
         `INSERT INTO live_diagnostics (phone, vehicle_summary, symptom, probable_cause, recommended_action, whatsapp_sent, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [phone, vehicule, symptome, causeProbable, actionRecommandee, whatsappSent, Date.now()]
+        [phone, vehicule, symptome, causeProbable, actionRecommandee, false, Date.now()]
       );
     } catch (err) {
       console.warn("[Live Tool] Échec de l'enregistrement du diagnostic:", err);
-      return `Le diagnostic n'a pas pu être enregistré en base (erreur serveur)${whatsappNote}.`;
+      return { toolResult: "Le diagnostic n'a pas pu être enregistré en base (erreur serveur).", whatsappUrl };
     }
   }
 
-  return `Diagnostic enregistré${whatsappSent ? " et récapitulatif envoyé par WhatsApp au client" : whatsappNote}.`;
+  return {
+    toolResult: "Diagnostic enregistré. Un lien WhatsApp prérempli avec le récapitulatif a été affiché au mécanicien pour qu'il l'envoie lui-même au client en un tap.",
+    whatsappUrl,
+  };
 }
 
 const LIVE_AGENT_TOOL_DECLARATIONS = [
@@ -3986,9 +3961,10 @@ ${message.diagnosticContext}
 
 ENREGISTREMENT DU DIAGNOSTIC (OBLIGATOIRE) : dès qu'un diagnostic clair se dégage (cause probable
 identifiée et action recommandée établie), appelle l'outil enregistrer_diagnostic UNE SEULE FOIS pour
-le sauvegarder et envoyer automatiquement un récapitulatif WhatsApp au client — préviens-le à l'oral
-juste avant ("je vous envoie le récapitulatif par WhatsApp"). Ne le fais pas pour une simple question
-technique ponctuelle sans diagnostic global établi.
+le sauvegarder. Ça prépare un lien WhatsApp prérempli avec le récapitulatif, affiché au mécanicien
+pour qu'il l'envoie lui-même au client en un tap — dis-le à l'oral juste avant ("je vous prépare le
+récapitulatif, vous pourrez l'envoyer par WhatsApp en un clic"). Ne le fais pas pour une simple
+question technique ponctuelle sans diagnostic global établi.
 
 FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisques, pas de hashtags, pas de puces). Rédige uniquement de simples phrases fluides et naturelles.`;
 
@@ -4083,13 +4059,15 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               if (!authPhone) {
                                 result = "Impossible d'enregistrer le diagnostic : numéro du client introuvable.";
                               } else {
-                                result = await liveToolSaveDiagnostic(
+                                const saved = await liveToolSaveDiagnostic(
                                   authPhone,
                                   String(fc.args?.vehicule || ""),
                                   String(fc.args?.symptome || ""),
                                   String(fc.args?.cause_probable || ""),
                                   String(fc.args?.action_recommandee || "")
                                 );
+                                result = saved.toolResult;
+                                clientWs.send(JSON.stringify({ type: "whatsappLink", url: saved.whatsappUrl }));
                               }
                             } else {
                               result = `Outil "${fc.name}" inconnu.`;

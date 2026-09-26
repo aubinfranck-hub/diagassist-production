@@ -140,6 +140,7 @@ export default function DiagAssistLiveScreen({
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
   const [speakerEnabled, setSpeakerEnabled] = useState(true);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
+  const [liveWhatsappUrl, setLiveWhatsappUrl] = useState<string | null>(null);
   const [liveInputText, setLiveInputText] = useState("");
   const [currentlySpeakingId, setCurrentlySpeakingId] = useState<string | null>(null);
 
@@ -535,6 +536,7 @@ export default function DiagAssistLiveScreen({
   // Start real-time Gemini Live WebSocket call
   const startLiveCallSession = async () => {
     setCallState("connecting");
+    setLiveWhatsappUrl(null);
     playMicStartSound();
 
     try {
@@ -604,6 +606,10 @@ Codes DTC: ${dtcCodes}`;
             // End of AI turn: Gemini is silent -> update status and trigger priority audio queue at natural pause
             globalAdManager.setGeminiSpeakingStatus(false);
             maybeTriggerAutomaticVocalAd();
+          } else if (msg.type === "whatsappLink") {
+            // Le diagnostic vient d'être enregistré côté serveur ; le mécanicien envoie lui-même
+            // le récapitulatif en un tap (pas d'envoi automatique côté serveur, par choix explicite).
+            setLiveWhatsappUrl(msg.url);
           } else if (msg.type === "error") {
             setToast(`Avertissement : ${msg.message}`);
           }
@@ -1339,6 +1345,31 @@ Codes DTC: ${dtcCodes}`;
             </div>
             {liveTranscript}
           </div>
+        )}
+
+        {liveWhatsappUrl && (
+          <a
+            href={liveWhatsappUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setLiveWhatsappUrl(null)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              fontSize: 12,
+              fontWeight: 700,
+              padding: "10px 14px",
+              borderRadius: 10,
+              background: T.confirm,
+              color: "#04140d",
+              textDecoration: "none",
+            }}
+          >
+            <MessageSquare size={14} />
+            Envoyer le récapitulatif par WhatsApp
+          </a>
         )}
 
         {chatHistory.slice(-4).map((msg) => (

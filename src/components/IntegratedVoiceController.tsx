@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
-import { 
-  Volume2, VolumeX, Mic, MicOff, Play, Pause, Square, RefreshCw, Sparkles, 
-  ChevronRight, ChevronLeft, HelpCircle, AlertCircle, Paperclip, Camera, 
-  Film, Music, X, Send, Upload
+import {
+  Volume2, VolumeX, Mic, MicOff, Play, Pause, Square, RefreshCw, Sparkles,
+  ChevronRight, ChevronLeft, HelpCircle, AlertCircle, Paperclip, Camera,
+  Film, Music, X, Send, Upload, MessageCircle
 } from "lucide-react";
 import { Diagnosis, ChatMessage } from "../types";
 import { playMicStartSound, playMicStopSound, playNotificationSound, playClickFeedbackSound } from "../utils/audioEngine";
@@ -182,6 +182,7 @@ export default function IntegratedVoiceController({
   const [liveStatus, setLiveStatus] = useState<"disconnected" | "connecting" | "connected" | "error">("disconnected");
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
+  const [liveWhatsappUrl, setLiveWhatsappUrl] = useState<string | null>(null);
 
   // Live Multimodal Attachment & Chat State
   const [liveInputText, setLiveInputText] = useState("");
@@ -520,6 +521,7 @@ export default function IntegratedVoiceController({
     setLiveStatus("connecting");
     setLiveError(null);
     setLiveTranscript("");
+    setLiveWhatsappUrl(null);
     setActiveLive(true);
     
     try {
@@ -622,6 +624,10 @@ ESTIMATION DES COÛTS DE RÉPARATION CONSEILLÉS À ABIDJAN :
               return cleaned + (cleaned ? "\n" : "") + "DiagAssist : " + msg.text;
             }
           });
+        } else if (msg.type === "whatsappLink") {
+          // Le diagnostic vient d'être enregistré côté serveur ; le mécanicien envoie lui-même
+          // le récapitulatif en un tap (pas d'envoi automatique côté serveur, par choix explicite).
+          setLiveWhatsappUrl(msg.url);
         } else if (msg.type === "error") {
           setLiveError(msg.message);
           setLiveStatus("error");
@@ -1062,6 +1068,21 @@ ESTIMATION DES COÛTS DE RÉPARATION CONSEILLÉS À ABIDJAN :
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{liveError}</span>
               </div>
+            )}
+
+            {/* Récapitulatif du diagnostic prêt à envoyer par WhatsApp — clic = envoi manuel par le
+                mécanicien depuis son propre WhatsApp, jamais un envoi automatique côté serveur. */}
+            {liveWhatsappUrl && (
+              <a
+                href={liveWhatsappUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setLiveWhatsappUrl(null)}
+                className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-3 px-4 rounded-xl transition cursor-pointer animate-fade-in"
+              >
+                <MessageCircle className="w-4 h-4" />
+                Envoyer le récapitulatif par WhatsApp
+              </a>
             )}
 
             {/* Live Multimodal Attachment Preview Chip */}
