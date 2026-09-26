@@ -3488,21 +3488,6 @@ Directives pour ce tour :
 
 
 
-  // Vite integration
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
@@ -3528,6 +3513,24 @@ Directives pour ce tour :
     },
     dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
   });
+
+  // Vite integration — DOIT être enregistré en dernier : app.get("*", ...) intercepte sinon
+  // toute requête GET (y compris les routes API ci-dessus enregistrées après lui), qui reçoit
+  // alors la page HTML de l'app au lieu du JSON attendu (bug réel trouvé en testant
+  // /api/payments/jeko/status/:reference, qui renvoyait index.html).
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), "dist");
+    app.use(express.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  }
 
   // Create standard WebSocketServer for low-latency live audio streaming
   const wss = new WebSocketServer({ noServer: true });
