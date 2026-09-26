@@ -127,26 +127,22 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_35%,rgba(239,68,68,.20),transparent_28%),radial-gradient(circle_at_25%_75%,rgba(30,41,59,.75),transparent_48%)]" />
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,8,23,.96)_0%,rgba(2,8,23,.86)_42%,rgba(2,8,23,.42)_72%,rgba(2,8,23,.75)_100%)]" />
 
-          <div className="relative max-w-7xl mx-auto px-5 sm:px-7 lg:px-10 pt-8 md:pt-12 pb-8">
+          <div className="relative max-w-7xl mx-auto px-5 sm:px-7 lg:px-10 pt-3 md:pt-5 pb-8">
             <div className="relative min-h-[650px] md:min-h-[690px]">
-              <div className="relative z-20 max-w-[68%] sm:max-w-[62%] md:max-w-2xl pt-2">
-                <div className="inline-flex items-center gap-2 border border-red-500/80 bg-[#020817]/70 text-white rounded-full px-4 py-2 text-xs md:text-sm font-black uppercase tracking-wide">
-                  <Wrench className="w-4 h-4 text-red-500" /> Pour les mécaniciens
-                </div>
-
-                <h1 className="mt-7 text-[2.45rem] sm:text-5xl md:text-6xl lg:text-[4rem] font-display font-black leading-[.98] tracking-tight text-white uppercase">
+              <div className="relative z-20 max-w-[68%] sm:max-w-[62%] md:max-w-2xl pt-0">
+                <h1 className="mt-3 text-[2.45rem] sm:text-5xl md:text-6xl lg:text-[4rem] font-display font-black leading-[.98] tracking-tight text-white uppercase">
                   VOTRE VOITURE<br />
                   AFFICHE UN<br />
                   <span className="text-red-500">CODE DÉFAUT ?</span>
                 </h1>
 
-                <div className="mt-5 text-[1.42rem] sm:text-3xl md:text-4xl font-display font-black leading-[1.08] uppercase">
+                <div className="mt-4 text-[1.35rem] sm:text-3xl md:text-4xl font-display font-black leading-[1.08] uppercase">
                   <span className="text-red-500">DIAGASSIST</span>{" "}
                   <span className="text-white">VOUS GUIDE</span>
                   <span className="text-white"> POUR TROUVER LA PANNE.</span>
                 </div>
 
-                <p className="mt-6 text-[15px] sm:text-base md:text-lg leading-relaxed text-slate-300 max-w-xl">
+                <p className="mt-4 text-[15px] sm:text-base md:text-lg leading-relaxed text-slate-300 max-w-xl">
                   Entrez le code défaut affiché par votre scanner OBD ou décrivez le symptôme.
                   DiagAssist vous guide étape par étape pour identifier les contrôles à effectuer.
                 </p>
