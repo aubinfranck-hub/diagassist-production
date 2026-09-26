@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import {
-  Wrench, Camera, Mic, MessageCircle, ShieldCheck, Smartphone, Clock, ArrowRight, MapPin, Phone, Search, ListChecks, FlaskConical, Stethoscope, CheckCircle2, Menu, X, FileSearch, Play, Sun, Moon
+  Wrench, Camera, Mic, MessageCircle, ShieldCheck, Smartphone, Clock, ArrowRight, ArrowUp, MapPin, Phone, Search, ListChecks, FlaskConical, Stethoscope, CheckCircle2, Menu, X, FileSearch, Play, Sun, Moon
 } from "lucide-react";
 
 interface LandingPageProps { onGetStarted: () => void; }
@@ -67,7 +67,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         )}
       </header>
 
-      <main className="w-full relative">
+      <main id="top" className="w-full relative">
         <section className="relative overflow-hidden bg-[#020817] min-h-0">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_35%,rgba(239,68,68,.20),transparent_28%),radial-gradient(circle_at_25%_75%,rgba(30,41,59,.75),transparent_48%)]" />
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,8,23,.96)_0%,rgba(2,8,23,.86)_42%,rgba(2,8,23,.42)_72%,rgba(2,8,23,.75)_100%)]" />
@@ -137,10 +137,32 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </div>
       </section>
 
-      <section id="fonctionnalites" className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
-          {[["Photo & son","Voyant, moteur, écran de valise : envoyez une preuve, DiagAssist l'analyse.",Camera],["Assistant vocal live","Parlez mains libres pendant que vous travaillez sur le véhicule.",Mic],["Jamais à l'aveugle","Chaque hypothèse est vérifiée par un test avant conclusion.",ShieldCheck],["Partout, même en 3G","Sur téléphone, en atelier, même en connexion dégradée.",Smartphone]].map(([title,desc,Icon],i)=><div key={i} className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-6 space-y-3"><div className="w-10 h-10 bg-red-600/10 text-red-500 rounded-xl flex items-center justify-center"><Icon className="w-4 h-4" /></div><h3 className="font-bold text-sm text-white">{title}</h3><p className="text-xs text-slate-400 leading-relaxed">{desc}</p></div>)}
+      <section id="fonctionnalites" className="w-full max-w-6xl mx-auto px-5 py-14 md:py-16 border-t border-white/[0.05] scroll-mt-20">
+        <div className="flex items-center justify-between gap-4 mb-7">
+          <div>
+            <div className="flex items-center gap-3 text-red-500 text-xs font-black uppercase tracking-widest">
+              <span className="w-10 h-1 bg-red-500 rounded-full" /> Fonctionnalités
+            </div>
+            <h2 className="mt-3 text-2xl md:text-4xl font-display font-black uppercase tracking-tight text-white">Tout ce qu'il faut pour diagnostiquer</h2>
+            <p className="mt-2 text-sm text-slate-400">Des outils conçus pour accompagner le mécanicien pendant toute l'intervention.</p>
+          </div>
+          <a href="#top" className="hidden sm:inline-flex items-center gap-2 rounded-xl border border-white/10 bg-slate-900/70 px-4 py-2 text-xs font-black uppercase text-slate-300 hover:text-white hover:border-red-500/40 transition">
+            <ArrowUp className="w-4 h-4" /> Retour
+          </a>
         </div>
+
+        <div className="grid md:grid-cols-[1.05fr_1.95fr] gap-5 md:gap-6 items-stretch">
+          <div className="rounded-3xl overflow-hidden border border-white/10 bg-slate-900/70 shadow-2xl min-h-[250px] md:min-h-[390px]">
+            <img src="/preview/preview-live.png" alt="Assistant vocal live DiagAssist en intervention" className="w-full h-full min-h-[250px] md:min-h-[390px] object-cover object-top" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {[["Photo & son","Voyant, moteur, écran de valise : envoyez une preuve, DiagAssist l'analyse.",Camera],["Assistant vocal live","Parlez mains libres pendant que vous travaillez sur le véhicule.",Mic],["Jamais à l'aveugle","Chaque hypothèse est vérifiée par un test avant conclusion.",ShieldCheck],["Partout, même en 3G","Sur téléphone, en atelier, même en connexion dégradée.",Smartphone]].map(([title,desc,Icon],i)=><div key={i} className="bg-slate-900/60 border border-white/[0.06] rounded-2xl p-5 md:p-6 space-y-3"><div className="w-11 h-11 bg-red-600/10 text-red-500 rounded-xl flex items-center justify-center"><Icon className="w-5 h-5" /></div><h3 className="font-bold text-sm md:text-base text-white">{title}</h3><p className="text-xs md:text-sm text-slate-400 leading-relaxed">{desc}</p></div>)}
+          </div>
+        </div>
+
+        <a href="#top" className="sm:hidden mt-5 w-full inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900/70 px-4 py-3 text-xs font-black uppercase text-slate-300 hover:text-white hover:border-red-500/40 transition">
+          <ArrowUp className="w-4 h-4" /> Retour en haut
+        </a>
       </section>
 
       <section id="tarifs" className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
