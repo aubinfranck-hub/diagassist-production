@@ -57,19 +57,27 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
   return (
     <div className={`min-h-screen font-sans overflow-x-hidden relative diagassist-landing ${lightMode ? "diagassist-light bg-slate-50 text-slate-900" : "bg-slate-950 text-slate-100"}`}>
       {/* Header */}
-      <header className="w-full max-w-6xl mx-auto px-5 py-5 flex items-center justify-between gap-4 relative">
-        <button
-          onClick={() => setMenuOpen((v) => !v)}
-          className="lg:hidden shrink-0 w-9 h-9 flex items-center justify-center text-[#e2e8f0] hover:text-white transition cursor-pointer"
-          aria-label="Ouvrir le menu"
-        >
-          {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
+      <header className="w-full border-b border-slate-200/80 dark:border-white/5 bg-white/95 dark:bg-[#020817]/95 backdrop-blur-xl relative z-50">
+        <div className="max-w-7xl mx-auto h-[72px] sm:h-[78px] px-3 sm:px-5 lg:px-8 flex items-center gap-2 sm:gap-4">
+          <button
+            onClick={() => setMenuOpen((v) => !v)}
+            className="lg:hidden shrink-0 w-11 h-11 rounded-xl flex items-center justify-center text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-white/10 transition cursor-pointer"
+            aria-label={menuOpen ? "Fermer le menu" : "Ouvrir le menu"}
+          >
+            {menuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <img src="/icon-logo-512.png" alt="DiagAssist" className="w-11 h-11 sm:w-12 sm:h-12 object-contain drop-shadow-[0_5px_18px_rgba(239,68,68,.22)]" />
-          <span className="block font-display font-black text-xl sm:text-2xl tracking-tight leading-none text-white"><span>Diag</span><span className="text-red-500">Assist</span></span>
-        </div>
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 lg:flex-none">
+            <img src="/icon-logo-512.png" alt="DiagAssist" className="w-10 h-10 sm:w-12 sm:h-12 object-contain shrink-0 drop-shadow-[0_5px_18px_rgba(239,68,68,.18)]" />
+            <span className="font-display font-black text-[18px] sm:text-2xl tracking-tight leading-none text-slate-900 dark:text-white whitespace-nowrap"><span>Diag</span><span className="text-red-500">Assist</span></span>
+          </div>
+
+          <nav className="hidden lg:flex items-center gap-6 text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 whitespace-nowrap">
+            {NAV_LINKS.map((l) => (
+              <a key={l.label} href={l.href} className="hover:text-slate-900 dark:hover:text-white transition">{l.label}</a>
+            ))}
+            <a href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")} target="_blank" rel="noopener noreferrer" className="hover:text-slate-900 dark:hover:text-white transition">Contact</a>
+          </nav>
 
         <nav className="hidden lg:flex items-center gap-6 text-xs font-bold uppercase tracking-wide text-[#94a3b8] whitespace-nowrap">
           {NAV_LINKS.map((l) => (
@@ -78,10 +86,10 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           <a href={waLink("Bonjour, je voudrais des informations sur DiagAssist !")} target="_blank" rel="noopener noreferrer" className="hover:text-[#f8fafc] transition">Contact</a>
         </nav>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
           <button
             onClick={() => setLightMode((v) => !v)}
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition ${lightMode ? "bg-white border-slate-300 text-slate-700" : "bg-slate-900/70 border-white/15 text-yellow-300"}`}
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl border flex items-center justify-center transition ${lightMode ? "bg-white border-slate-300 text-slate-700" : "bg-slate-900/70 border-white/15 text-yellow-300"}`}
             aria-label={lightMode ? "Activer le mode nuit" : "Activer le mode jour"}
             title={lightMode ? "Mode nuit" : "Mode jour"}
           >
@@ -89,7 +97,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           </button>
           <button
             onClick={onGetStarted}
-            className="bg-red-600 hover:bg-red-700 text-white text-[11px] sm:text-xs font-bold uppercase tracking-wider px-3.5 sm:px-5 py-2.5 rounded-xl transition cursor-pointer shrink-0 whitespace-nowrap"
+            className="bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs font-bold uppercase tracking-wide px-3 sm:px-5 py-3 rounded-xl transition cursor-pointer shrink-0 whitespace-nowrap"
           >
             Se connecter
           </button>
@@ -97,13 +105,13 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
 
         {/* Menu mobile déroulant */}
         {menuOpen && (
-          <div className="lg:hidden absolute top-full left-0 right-0 mt-2 mx-5 bg-[#0f172a] border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden z-50">
+          <div className="lg:hidden absolute top-[72px] sm:top-[78px] left-3 right-3 bg-white dark:bg-[#0f172a] border border-slate-200 dark:border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden z-[60]">
             {NAV_LINKS.map((l) => (
               <a
                 key={l.label}
                 href={l.href}
                 onClick={() => setMenuOpen(false)}
-                className="block px-5 py-3.5 text-sm font-bold text-[#e2e8f0] hover:bg-white/[0.06] border-b border-white/[0.05] transition"
+                className="block px-5 py-3.5 text-sm font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-white/[0.06] border-b border-slate-200 dark:border-white/[0.05] transition"
               >
                 {l.label}
               </a>
@@ -113,7 +121,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setMenuOpen(false)}
-              className="block px-5 py-3.5 text-sm font-bold text-[#e2e8f0] hover:bg-white/[0.06] transition"
+              className="block px-5 py-3.5 text-sm font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-white/[0.06] transition"
             >
               Contact
             </a>
