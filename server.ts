@@ -921,6 +921,43 @@ async function liveToolCheckVehicleDatabase(brand: string, model?: string): Prom
   }
 }
 
+// Cherche un mécanicien ou vendeur de pièces agréé par ville — permet au live de recommander un
+// vrai contact (nom, téléphone, spécialités) au lieu d'un conseil générique "voyez un mécanicien".
+function liveToolFindMechanic(city: string, type?: "mechanic" | "parts_vendor"): string {
+  const cityLower = city.toLowerCase();
+  let list = Array.from(mechanics.values()).filter(
+    (m) => m.active && (m.city.toLowerCase().includes(cityLower) || (m.area || "").toLowerCase().includes(cityLower))
+  );
+  if (type) list = list.filter((m) => m.type === type);
+  if (list.length === 0) {
+    return `Aucun ${type === "parts_vendor" ? "vendeur de pièces" : "mécanicien"} agréé trouvé dans le réseau DiagAssist pour "${city}".`;
+  }
+  const lines = list.slice(0, 5).map((m) => {
+    const label = m.type === "parts_vendor" ? "Vendeur de pièces" : "Mécanicien";
+    return `${label} ${m.name}${m.garageName ? ` (${m.garageName})` : ""}, ${m.city}${m.area ? ` - ${m.area}` : ""}, tél. ${m.phone}${m.specialties ? `, spécialités : ${m.specialties}` : ""}${m.hasScanner ? ", équipé d'une valise de diagnostic" : ""}`;
+  });
+  return `Contacts trouvés : ${lines.join(" | ")}.`;
+}
+
+// Vérifie le prix et la disponibilité d'une pièce dans la boutique DiagAssist, pour donner une
+// vraie fourchette de prix au lieu d'un chiffre inventé.
+async function liveToolCheckPartAvailability(query: string): Promise<string> {
+  if (!dbPool) return "La boutique de pièces n'est pas configurée sur ce serveur.";
+  try {
+    const { rows } = await dbPool.query(
+      "SELECT name, price_fcfa, availability FROM shop_products WHERE is_active = true AND name ILIKE $1 ORDER BY name ASC LIMIT 5",
+      [`%${query}%`]
+    );
+    if (rows.length === 0) return `Aucune pièce trouvée dans la boutique DiagAssist pour "${query}".`;
+    const availabilityLabel: Record<string, string> = { disponible: "disponible", rupture: "en rupture de stock", sur_commande: "disponible sur commande" };
+    const lines = rows.map((r: any) => `${r.name} : ${r.price_fcfa ? `${r.price_fcfa} F CFA` : "prix non renseigné"} (${availabilityLabel[r.availability] || r.availability})`);
+    return `Pièces trouvées dans la boutique : ${lines.join(" | ")}.`;
+  } catch (err) {
+    console.warn("[Live Tool] Erreur requête boutique pièces:", err);
+    return "Erreur lors de la consultation de la boutique de pièces.";
+  }
+}
+
 const LIVE_AGENT_TOOL_DECLARATIONS = [
   {
     name: "rechercher_fiche_technique",
@@ -943,6 +980,29 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
         modele: { type: Type.STRING, description: "Modèle du véhicule, ex: 'Corolla'. Omettre pour lister tous les modèles connus de la marque." },
       },
       required: ["marque"],
+    },
+  },
+  {
+    name: "chercher_mecanicien_pres",
+    description: "Cherche un mécanicien agréé ou un vendeur de pièces dans le réseau de partenaires DiagAssist, par ville. À utiliser pour recommander un vrai contact (nom, téléphone) plutôt qu'un conseil générique, notamment en mode propriétaire de véhicule.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        ville: { type: Type.STRING, description: "Ville ou quartier où chercher, ex: 'Abidjan' ou 'Yopougon'." },
+        type: { type: Type.STRING, description: "'mechanic' pour un mécanicien, 'parts_vendor' pour un vendeur de pièces. Omettre pour chercher les deux." },
+      },
+      required: ["ville"],
+    },
+  },
+  {
+    name: "verifier_disponibilite_piece",
+    description: "Vérifie le prix et la disponibilité réels d'une pièce détachée dans la boutique DiagAssist. À utiliser avant de donner un prix ou de dire qu'une pièce est disponible.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        piece: { type: Type.STRING, description: "Nom de la pièce recherchée, ex: 'capteur PMH' ou 'plaquettes de frein'." },
+      },
+      required: ["piece"],
     },
   },
 ];
@@ -3924,6 +3984,11 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               result = await liveToolSearchTechnicalInfo(String(fc.args?.requete || ""));
                             } else if (fc.name === "verifier_base_vehicules") {
                               result = await liveToolCheckVehicleDatabase(String(fc.args?.marque || ""), fc.args?.modele ? String(fc.args.modele) : undefined);
+                            } else if (fc.name === "chercher_mecanicien_pres") {
+                              const t = fc.args?.type;
+                              result = liveToolFindMechanic(String(fc.args?.ville || ""), t === "mechanic" || t === "parts_vendor" ? t : undefined);
+                            } else if (fc.name === "verifier_disponibilite_piece") {
+                              result = await liveToolCheckPartAvailability(String(fc.args?.piece || ""));
                             } else {
                               result = `Outil "${fc.name}" inconnu.`;
                             }
