@@ -114,14 +114,19 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           </span>
 
           <h1 className="text-[#f8fafc] text-3xl font-display font-black leading-tight mt-4 relative">
-            VOTRE VALISE VOUS DONNE UN CODE. <span className="text-red-500">DIAGASSIST VOUS AIDE À TROUVER LA PANNE.</span>
+            VOTRE VOITURE AFFICHE UN CODE DÉFAUT ? <span className="text-red-500">DIAGASSIST VOUS GUIDE POUR TROUVER LA PANNE.</span>
           </h1>
           <p className="text-[#cbd5e1] text-sm mt-3 leading-relaxed relative">
-            Saisissez le code de votre valise (ou décrivez le symptôme) et recevez un protocole de test étape
-            par étape, recoupé avec des sources ouvertes réelles.
+            Entrez le code défaut affiché par votre scanner OBD ou décrivez le symptôme. DiagAssist vous guide
+            étape par étape pour identifier les contrôles à effectuer.
           </p>
 
-          <img src="/icon-512.png" alt="" className="w-40 h-40 mx-auto my-4 relative object-contain" />
+          <div className="relative flex justify-center my-5">
+            <div className="absolute w-44 h-44 bg-red-600/20 rounded-full blur-3xl" />
+            <div className="relative w-52 h-52 rounded-[2rem] border border-red-500/20 bg-gradient-to-br from-red-600/10 to-slate-950/80 shadow-2xl shadow-red-900/20 flex items-center justify-center overflow-hidden">
+              <img src="/icon-512.png" alt="Assistant DiagAssist" className="w-full h-full object-contain scale-110" />
+            </div>
+          </div>
 
           <div className="grid grid-cols-4 gap-1.5 relative">
             {MOBILE_STEPS.map((s, i) => (
@@ -177,12 +182,11 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         <div className="hidden lg:grid grid-cols-1 lg:grid-cols-2 gap-10 items-center relative">
           <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-white/[0.06] rounded-3xl p-6 md:p-8">
             <h1 className="text-[#f8fafc] text-3xl md:text-5xl font-display font-black leading-tight">
-              VOTRE VALISE VOUS DONNE UN CODE. <span className="text-red-500">DIAGASSIST VOUS AIDE À TROUVER LA PANNE.</span>
+              VOTRE VOITURE AFFICHE UN CODE DÉFAUT ? <span className="text-red-500">DIAGASSIST VOUS GUIDE POUR TROUVER LA PANNE.</span>
             </h1>
             <p className="text-[#cbd5e1] text-sm md:text-base max-w-xl mt-4 leading-relaxed">
-              Un code défaut seul ne dit pas quoi tester ni dans quel ordre. Saisissez le code de votre valise
-              (ou décrivez le symptôme) et recevez un protocole de test étape par étape, recoupé avec des sources
-              ouvertes réelles — bases de codes DTC, bulletins constructeur, forums techniques reconnus.
+              Votre scanner OBD vous donne un code, mais pas toujours la cause ni l'ordre des contrôles. Entrez le code défaut,
+              décrivez le symptôme ou ajoutez une photo. DiagAssist vous guide étape par étape dans le diagnostic.
             </p>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mt-8">
@@ -266,10 +270,9 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           Le code, ce n'est jamais le problème
         </h2>
         <p className="text-sm text-slate-400 leading-relaxed max-w-2xl mx-auto">
-          P0301, P0171, P0420... la valise donne le code en une seconde. Le vrai travail commence après :
-          quel test faire, dans quel ordre, avec quel outil, pour ne pas changer une pièce à l'aveugle.
-          C'est exactement ce que DiagAssist fait avec vous — pas à la place de votre expertise, mais pour
-          structurer la démarche et éviter les allers-retours inutiles.
+          P0301, P0171, P0420... votre scanner identifie le défaut. Le vrai travail commence ensuite :
+          comprendre la cause, choisir les bons contrôles et vérifier avant de remplacer une pièce.
+          DiagAssist structure cette démarche avec vous, étape par étape.
         </p>
       </section>
 
