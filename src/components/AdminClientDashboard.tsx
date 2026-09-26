@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight, Wrench, Upload, Car } from "lucide-react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 
 interface Account {
   phone: string;
@@ -135,6 +137,74 @@ function LocationMapPreview({ location }: { location: { latitude: number; longit
           </a>
         </div>
       )}
+    </div>
+  );
+}
+
+// Icônes chargées depuis un CDN plutôt qu'importées localement : évite de dépendre
+// des déclarations de types PNG (non configurées dans ce projet) pour un simple asset statique.
+const clientMarkerIcon = L.icon({
+  iconUrl: "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-icon.png",
+  iconRetinaUrl: "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  shadowUrl: "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
+});
+
+// Vue d'ensemble : tous les clients géolocalisés sur une seule carte (fond sombre CartoDB,
+// pas de clé API requise, contrairement à l'API JS Google Maps).
+function ClientsMap({ accounts }: { accounts: Account[] }) {
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markersLayerRef = useRef<L.LayerGroup | null>(null);
+
+  const located = accounts.filter((a) => a.location);
+
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+    const map = L.map(mapContainerRef.current).setView([5.34, -4.03], 7); // Abidjan par défaut
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      maxZoom: 19,
+    }).addTo(map);
+    markersLayerRef.current = L.layerGroup().addTo(map);
+    mapRef.current = map;
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      markersLayerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = markersLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    const points: [number, number][] = [];
+    located.forEach((a) => {
+      const loc = a.location!;
+      points.push([loc.latitude, loc.longitude]);
+      const label = a.name || a.phone;
+      L.marker([loc.latitude, loc.longitude], { icon: clientMarkerIcon })
+        .bindPopup(
+          `<b>${label}</b><br/>${a.phone}<br/>${PLAN_LABELS[a.plan] || a.plan}<br/><span style="color:#94a3b8">maj ${formatDate(loc.updatedAt)}</span>`
+        )
+        .addTo(layer);
+    });
+    if (points.length > 0) {
+      map.fitBounds(points, { padding: [30, 30], maxZoom: 13 });
+    }
+  }, [located]);
+
+  return (
+    <div className="space-y-2">
+      <div ref={mapContainerRef} className="w-full h-[420px] rounded-xl overflow-hidden border border-white/[0.08]" />
+      <p className="text-[10px] text-slate-500">
+        {located.length} client(s) géolocalisé(s) sur {accounts.length} compte(s) au total.
+      </p>
     </div>
   );
 }
@@ -778,6 +848,15 @@ export default function AdminClientDashboard() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Carte des clients */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+          <MapPin className="w-4 h-4 text-emerald-400" />
+          Carte des clients
+        </h3>
+        <ClientsMap accounts={accounts} />
       </div>
 
       {/* Tous les comptes */}
