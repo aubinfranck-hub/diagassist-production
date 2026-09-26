@@ -482,3 +482,9 @@ html.light body,
   }
 }
 
+/* Rendu sombre des tuiles OpenStreetMap (carte des clients, admin) sans dépendre d'un
+   fournisseur de fonds de carte sombres tiers nécessitant une clé API */
+.map-tiles-dark {
+  filter: invert(90%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+

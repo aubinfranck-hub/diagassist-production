@@ -178,9 +178,14 @@ function ClientsMap({ accounts }: { accounts: Account[] }) {
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
     const map = L.map(mapContainerRef.current).setView([5.34, -4.03], 7); // Abidjan par défaut
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    // Tuiles OpenStreetMap standard : gratuites, sans clé API (CartoDB exige désormais une clé
+    // même en usage gratuit — voir capture montrant "API KEY REQUIRED" sur dark_all).
+    // Filtre CSS pour obtenir un rendu sombre cohérent avec le reste de l'app, sans dépendre
+    // d'un fournisseur de tuiles sombres tiers.
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
+      className: "map-tiles-dark",
     }).addTo(map);
     markersLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
