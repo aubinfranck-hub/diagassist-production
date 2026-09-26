@@ -29,6 +29,7 @@ export function registerJekoPayments(
   app: Express,
   deps: {
     requireAuth: any;
+    requireAdminAuth: any;
     setUserPlan: (phone: string, plan: string, customDurationMs?: number) => void;
     onPlanActivated: (phone: string, plan: string) => void;
     dbQuery?: (sql: string, params?: any[]) => Promise<any>;
@@ -199,6 +200,36 @@ export function registerJekoPayments(
       console.error("[JEKO] Erreur réseau lors de la création du paiement:", err.message);
       res.status(502).json({ success: false, message: "Impossible de contacter le service de paiement." });
     }
+  });
+
+  // Tableau de bord admin : liste des paiements Jèko (toutes formules confondues), pour vérifier
+  // en ligne sans dépendre des logs serveur ou d'une commande manuelle.
+  app.get("/api/admin/jeko/payments", deps.requireAdminAuth, async (req: any, res) => {
+    if (deps.dbQuery) {
+      try {
+        const result = await deps.dbQuery(
+          `SELECT reference, phone, plan, amount_cents, status, created_at, jeko_id
+           FROM jeko_payments ORDER BY created_at DESC LIMIT 200`
+        );
+        return res.json({ success: true, payments: result.rows });
+      } catch (err: any) {
+        return res.status(500).json({ success: false, message: "Lecture des paiements impossible." });
+      }
+    }
+    const payments = Array.from(pending.entries())
+      .map(([reference, p]) => ({ reference, phone: p.phone, plan: p.plan, amount_cents: p.amountCents, status: p.status, created_at: p.createdAt, jeko_id: p.jekoId || null }))
+      .sort((a, b) => b.created_at - a.created_at);
+    res.json({ success: true, payments });
+  });
+
+  // Revérifie manuellement un paiement encore "pending" auprès de Jèko (même filet de sécurité
+  // que le sondage automatique du statut client, déclenchable depuis le tableau de bord admin).
+  app.post("/api/admin/jeko/payments/:reference/reconcile", deps.requireAdminAuth, async (req: any, res) => {
+    const reference = String(req.params.reference || "");
+    const record = await findPayment(reference);
+    if (!record) return res.status(404).json({ success: false, message: "Paiement introuvable." });
+    const updated = await reconcileWithJeko(reference, record);
+    res.json({ success: true, status: updated.status, plan: updated.plan });
   });
 
   // Permet au client de savoir si son paiement a été confirmé, pendant qu'il attend après

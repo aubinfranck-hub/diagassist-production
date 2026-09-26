@@ -3505,6 +3505,7 @@ Directives pour ce tour :
   // webhook, active le forfait exactement comme le fait l'admin manuellement aujourd'hui.
   registerJekoPayments(app, {
     requireAuth,
+    requireAdminAuth,
     setUserPlan,
     onPlanActivated: (phone: string, plan: string) => {
       usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });

@@ -48,6 +48,16 @@ interface Banner {
   createdAt: number;
 }
 
+interface JekoPayment {
+  reference: string;
+  phone: string;
+  plan: string;
+  amount_cents: number;
+  status: "pending" | "success" | "error";
+  created_at: number;
+  jeko_id: string | null;
+}
+
 const authHeaders = (): Record<string, string> => {
   const token = localStorage.getItem("auth_session_token");
   return { "Content-Type": "application/json", "Authorization": `Bearer ${token || ""}` };
@@ -133,6 +143,8 @@ export default function AdminClientDashboard() {
   const [activeSessions, setActiveSessions] = useState<SessionInfo[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [bannerList, setBannerList] = useState<Banner[]>([]);
+  const [jekoPayments, setJekoPayments] = useState<JekoPayment[]>([]);
+  const [reconcilingRef, setReconcilingRef] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [logoutBusyPhone, setLogoutBusyPhone] = useState<string | null>(null);
@@ -252,18 +264,20 @@ export default function AdminClientDashboard() {
     setLoadingList(true);
     setListError(null);
     try {
-      const [accRes, sessRes, histRes, bannerRes, mechRes] = await Promise.all([
+      const [accRes, sessRes, histRes, bannerRes, mechRes, jekoRes] = await Promise.all([
         fetch("/api/admin/accounts", { headers: authHeaders() }),
         fetch("/api/admin/sessions", { headers: authHeaders() }),
         fetch("/api/admin/connection-history", { headers: authHeaders() }),
         fetch("/api/admin/banners", { headers: authHeaders() }),
         fetch("/api/admin/mechanics", { headers: authHeaders() }),
+        fetch("/api/admin/jeko/payments", { headers: authHeaders() }),
       ]);
       const accData = await accRes.json();
       const sessData = await sessRes.json();
       const histData = await histRes.json();
       const bannerData = await bannerRes.json();
       const mechData = await mechRes.json();
+      const jekoData = await jekoRes.json();
 
       const errors: string[] = [];
       if (accData.success) setAccounts(accData.accounts); else errors.push(accData.message || "comptes");
@@ -271,6 +285,7 @@ export default function AdminClientDashboard() {
       if (histData.success) setHistory(histData.history); else errors.push(histData.message || "historique");
       if (bannerData.success) setBannerList(bannerData.banners); else errors.push(bannerData.message || "bannières");
       if (mechData.success) setMechanicsList(mechData.mechanics); else errors.push(mechData.message || "mécaniciens");
+      if (jekoData.success) setJekoPayments(jekoData.payments); else errors.push(jekoData.message || "paiements Jèko");
 
       if (errors.length > 0) setListError(`Certaines données n'ont pas pu être chargées : ${errors.join(", ")}`);
     } catch {
@@ -367,6 +382,18 @@ export default function AdminClientDashboard() {
       setBannerError("Erreur réseau.");
     } finally {
       setBannerCreating(false);
+    }
+  };
+
+  const handleReconcilePayment = async (reference: string) => {
+    setReconcilingRef(reference);
+    try {
+      await fetch(`/api/admin/jeko/payments/${encodeURIComponent(reference)}/reconcile`, { method: "POST", headers: authHeaders() });
+      loadData();
+    } catch {
+      // silencieux — l'utilisateur peut réessayer
+    } finally {
+      setReconcilingRef(null);
     }
   };
 
@@ -574,6 +601,63 @@ export default function AdminClientDashboard() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Paiements Jèko (abonnements payés en ligne) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+          <Wrench className="w-4 h-4 text-emerald-400" />
+          Paiements Jèko ({jekoPayments.length})
+        </h3>
+        {jekoPayments.length === 0 && !loadingList && (
+          <p className="text-xs text-slate-500">Aucun paiement en ligne pour le moment.</p>
+        )}
+        {jekoPayments.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-slate-500 uppercase text-[10px] border-b border-slate-800">
+                  <th className="py-2 pr-3">Téléphone</th>
+                  <th className="py-2 pr-3">Forfait</th>
+                  <th className="py-2 pr-3">Montant</th>
+                  <th className="py-2 pr-3">Statut</th>
+                  <th className="py-2 pr-3">Date</th>
+                  <th className="py-2 pr-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {jekoPayments.map((p) => (
+                  <tr key={p.reference} className="border-b border-slate-800/60">
+                    <td className="py-2 pr-3 font-mono text-slate-300">{p.phone}</td>
+                    <td className="py-2 pr-3 text-slate-300">{PLAN_LABELS[p.plan] || p.plan}</td>
+                    <td className="py-2 pr-3 text-slate-300">{(p.amount_cents / 100).toLocaleString("fr-FR")} F</td>
+                    <td className="py-2 pr-3">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        p.status === "success" ? "bg-emerald-500/10 text-emerald-400" :
+                        p.status === "error" ? "bg-rose-500/10 text-rose-400" :
+                        "bg-amber-500/10 text-amber-400"
+                      }`}>
+                        {p.status === "success" ? "Confirmé" : p.status === "error" ? "Échoué" : "En attente"}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 text-slate-500">{formatDate(p.created_at)}</td>
+                    <td className="py-2 pr-3">
+                      {p.status === "pending" && p.jeko_id && (
+                        <button
+                          onClick={() => handleReconcilePayment(p.reference)}
+                          disabled={reconcilingRef === p.reference}
+                          className="text-sky-400 hover:text-sky-300 text-[10px] font-bold uppercase disabled:opacity-50 cursor-pointer"
+                        >
+                          {reconcilingRef === p.reference ? "..." : "Revérifier"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Historique des connexions */}
