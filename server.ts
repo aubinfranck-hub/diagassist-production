@@ -345,6 +345,7 @@ async function initDatabase(): Promise<void> {
       status TEXT NOT NULL DEFAULT 'pending',
       created_at BIGINT NOT NULL
     );
+    ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS jeko_id TEXT;
     CREATE INDEX IF NOT EXISTS idx_jeko_payments_phone ON jeko_payments (phone);
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");

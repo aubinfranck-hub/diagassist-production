@@ -22,6 +22,7 @@ type PendingPayment = {
   amountCents: number;
   status: "pending" | "success" | "error";
   createdAt: number;
+  jekoId?: string;
 };
 
 export function registerJekoPayments(
@@ -56,10 +57,10 @@ export function registerJekoPayments(
     if (!deps.dbQuery) return;
     try {
       await deps.dbQuery(
-        `INSERT INTO jeko_payments (reference, phone, plan, amount_cents, status, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6)
-         ON CONFLICT (reference) DO UPDATE SET status = $5`,
-        [reference, p.phone, p.plan, p.amountCents, p.status, p.createdAt]
+        `INSERT INTO jeko_payments (reference, phone, plan, amount_cents, status, created_at, jeko_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (reference) DO UPDATE SET status = $5, jeko_id = COALESCE($7, jeko_payments.jeko_id)`,
+        [reference, p.phone, p.plan, p.amountCents, p.status, p.createdAt, p.jekoId || null]
       );
     } catch (err: any) {
       console.error("[JEKO][DB] Sauvegarde échouée:", err.message);
@@ -72,7 +73,7 @@ export function registerJekoPayments(
     if (!deps.dbQuery) return null;
     try {
       const result = await deps.dbQuery(
-        `SELECT phone, plan, amount_cents, status, created_at FROM jeko_payments WHERE reference = $1`,
+        `SELECT phone, plan, amount_cents, status, created_at, jeko_id FROM jeko_payments WHERE reference = $1`,
         [reference]
       );
       const row = result.rows?.[0];
@@ -83,6 +84,7 @@ export function registerJekoPayments(
         amountCents: Number(row.amount_cents),
         status: row.status,
         createdAt: Number(row.created_at),
+        jekoId: row.jeko_id || undefined,
       };
       pending.set(reference, record);
       return record;
@@ -90,6 +92,42 @@ export function registerJekoPayments(
       console.error("[JEKO][DB] Lecture échouée:", err.message);
       return null;
     }
+  };
+
+  // Marque un paiement confirmé et active le forfait — chemin commun au webhook et au filet de
+  // sécurité par sondage ci-dessous, pour ne jamais dupliquer la logique d'activation.
+  const confirmPayment = async (reference: string, record: PendingPayment) => {
+    record.status = "success";
+    pending.set(reference, record);
+    await persistPayment(reference, record);
+    deps.setUserPlan(record.phone, record.plan);
+    deps.onPlanActivated(record.phone, record.plan);
+    console.log(`[JEKO] Paiement confirmé : forfait "${record.plan}" activé pour ${record.phone} (réf. ${reference}).`);
+  };
+
+  // Filet de sécurité : si le webhook n'est jamais arrivé (ex: redémarrage du serveur pile au
+  // mauvais moment — déjà arrivé une fois en test), on interroge directement Jèko pour l'état
+  // réel de la transaction plutôt que de rester bloqué sur "pending" indéfiniment.
+  const reconcileWithJeko = async (reference: string, record: PendingPayment): Promise<PendingPayment> => {
+    if (record.status !== "pending" || !record.jekoId || !isConfigured()) return record;
+    try {
+      const response = await fetch(`${JEKO_API_BASE}/partner_api/payment_requests/${record.jekoId}`, {
+        headers: { "X-API-KEY": apiKey!, "X-API-KEY-ID": apiKeyId! },
+      });
+      if (!response.ok) return record;
+      const data: any = await response.json().catch(() => ({}));
+      const status = String(data?.status || data?.transaction?.status || "").toLowerCase();
+      if (status === "success" || status === "completed") {
+        await confirmPayment(reference, record);
+      } else if (status === "error" || status === "failed") {
+        record.status = "error";
+        pending.set(reference, record);
+        await persistPayment(reference, record);
+      }
+    } catch (err: any) {
+      console.error("[JEKO] Réconciliation impossible:", err.message);
+    }
+    return record;
   };
 
   // Crée une demande de paiement Jèko (Orange/Wave/MTN/Moov) pour un forfait donné et renvoie
@@ -152,7 +190,7 @@ export function registerJekoPayments(
         return res.status(502).json({ success: false, message: data?.message || "Le paiement n'a pas pu être initié." });
       }
 
-      const record: PendingPayment = { phone: req.session.phone, plan, amountCents, status: "pending", createdAt: Date.now() };
+      const record: PendingPayment = { phone: req.session.phone, plan, amountCents, status: "pending", createdAt: Date.now(), jekoId: data?.id };
       pending.set(reference, record);
       await persistPayment(reference, record);
 
@@ -168,10 +206,11 @@ export function registerJekoPayments(
   // cette route ne fait que refléter ce que notre propre webhook a déjà enregistré).
   app.get("/api/payments/jeko/status/:reference", deps.requireAuth, async (req: any, res) => {
     const reference = String(req.params.reference || "");
-    const record = await findPayment(reference);
+    let record = await findPayment(reference);
     if (!record || record.phone !== req.session.phone) {
       return res.status(404).json({ success: false, message: "Paiement introuvable." });
     }
+    record = await reconcileWithJeko(reference, record);
     res.json({ success: true, status: record.status, plan: record.plan });
   });
 
@@ -218,15 +257,12 @@ export function registerJekoPayments(
     }
 
     const succeeded = status === "success" || status === "completed";
-    record.status = succeeded ? "success" : "error";
-    pending.set(reference, record);
-    await persistPayment(reference, record);
-
     if (succeeded) {
-      deps.setUserPlan(record.phone, record.plan);
-      deps.onPlanActivated(record.phone, record.plan);
-      console.log(`[JEKO] Paiement confirmé : forfait "${record.plan}" activé pour ${record.phone} (réf. ${reference}).`);
+      await confirmPayment(reference, record);
     } else {
+      record.status = "error";
+      pending.set(reference, record);
+      await persistPayment(reference, record);
       console.warn(`[JEKO] Paiement en échec pour ${record.phone} (réf. ${reference}, statut "${status}").`);
     }
 
