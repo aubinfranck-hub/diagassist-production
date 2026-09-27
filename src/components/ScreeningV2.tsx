@@ -25,6 +25,10 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
   const [sessionEnded,setSessionEnded]=useState(false);
   const [voiceActive,setVoiceActive]=useState(false);
   const [voiceBusy,setVoiceBusy]=useState(false);
+  const [autoPilot,setAutoPilot]=useState(false);
+  const [pilotLog,setPilotLog]=useState<string[]>([]);
+  const [pilotDone,setPilotDone]=useState<{summary:string;dtcs:string[]}|null>(null);
+  const [pilotBusy,setPilotBusy]=useState(false);
   const peerRef=useRef<RTCPeerConnection|null>(null);
   const voiceStreamRef=useRef<MediaStream|null>(null);
   const voiceAudioRef=useRef<HTMLAudioElement|null>(null);
@@ -69,6 +73,9 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
               onSessionEnd?.();
             }
           }
+          if(m.type==="pilot_status"){setAutoPilot(m.active);}
+          if(m.type==="pilot_action"){setPilotLog(prev=>[...prev.slice(-49), m.log||`[${m.step}] ${m.tool} — ${m.reason}`]);}
+          if(m.type==="pilot_done"){setAutoPilot(false);setPilotBusy(false);setPilotDone({summary:m.summary||"",dtcs:m.dtcs||[]});setStatus("Autopilot terminé.");}
           if(m.type==="human_coach_requested"){setHumanCoachRequested(true);setStatus("Coach humain demandé.");}
           if(m.type==="session_ended"){
             sessionEndedLocal=true;
@@ -178,6 +185,24 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
 
   useEffect(()=>()=>endVoice(false),[]);
 
+  const toggleAutoPilot=async(enable:boolean)=>{
+    if(sessionEnded||pilotBusy)return;
+    setPilotBusy(true);
+    try{
+      const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/autopilot",{
+        method:"POST",
+        headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},
+        body:JSON.stringify({enable})
+      });
+      const data=await res.json();
+      if(!res.ok||!data.success)throw new Error(data.message||"Impossible.");
+      setAutoPilot(data.autoPilot);
+      if(data.autoPilot){setPilotLog([]);setPilotDone(null);setStatus("Autopilot activé — Gemini pilote la tablette.");}
+      else setStatus("Autopilot arrêté.");
+    }catch(e:any){setStatus(e.message||"Erreur autopilot.");}
+    finally{setPilotBusy(false);}
+  };
+
   const endSession=async()=>{
     await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/end",{
       method:"POST",headers:{Authorization:"Bearer "+token}
@@ -238,9 +263,20 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
     {(role==="technician"||role==="controller")&&<div className="rounded-2xl border border-emerald-500/20 bg-emerald-950/10 p-4 space-y-3"><div className="text-xs font-black uppercase tracking-widest text-emerald-300">🤖 DiagAssist — Coach principal</div><p className="text-sm text-slate-300">DiagAssist analyse automatiquement les nouvelles captures de votre scanner et vous explique quoi vérifier et quoi faire ensuite.</p><div className="text-[10px] uppercase font-black tracking-widest text-slate-500">Option 2 — aide d’un autre technicien</div><button onClick={async()=>{try{const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/request-human-coach",{method:"POST",headers:{Authorization:"Bearer "+token}});const data=await res.json();if(!res.ok||!data.success)throw new Error(data.message||"Demande impossible.");setHumanCoachRequested(true);setStatus("Demande d’aide envoyée. DiagAssist reste actif.");}catch(e:any){setStatus(e.message||"Erreur.");}}} disabled={humanCoachRequested} className="px-3 py-2 rounded-lg bg-amber-600 disabled:opacity-50 text-white text-xs font-bold">{humanCoachRequested?"Aide d’un autre technicien demandée":"Demander l’aide d’un ami / technicien"}</button></div>}
 
     {(role==="controller"||role==="coach")&&!sessionEnded&&<div className="space-y-2">
+      {/* Autopilot toggle */}
+      <div className="rounded-2xl border border-red-500/30 bg-red-950/20 p-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-widest text-red-300">🤖 Autopilot Gemini</div>
+          <div className="text-[10px] text-slate-400 mt-0.5">Gemini voit l'écran et pilote la tablette automatiquement</div>
+        </div>
+        {autoPilot
+          ? <button onClick={()=>toggleAutoPilot(false)} disabled={pilotBusy} className="px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-xs font-black">⏹ Arrêter</button>
+          : <button onClick={()=>toggleAutoPilot(true)} disabled={pilotBusy||!connected} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-black">▶ Démarrer</button>
+        }
+      </div>
+
       <div className="flex flex-wrap gap-1.5">
         <button onClick={()=>command("request_screen")} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">Actualiser</button>
-        
         <button onClick={analyzeFrame} disabled={!frame||visionBusy} className="px-3 py-2 rounded-lg bg-red-600 disabled:opacity-40 text-white text-xs font-bold">
           {visionBusy?"Analyse…":"Analyser avec IA"}
         </button>
@@ -275,6 +311,26 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
       <div className="text-xs text-slate-400"><b>Sécurité :</b> {vision.safety}</div>
       {vision.uncertainty&&<div className="text-xs text-slate-500"><b>Limites :</b> {vision.uncertainty}</div>}
       <div className="text-[10px] text-slate-500">L’analyse IA est une aide au diagnostic et doit être confirmée par les mesures et procédures appropriées.</div>
+    </div>}
+
+    {pilotLog.length>0&&<div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-3 space-y-1">
+      <div className="text-[10px] font-black uppercase tracking-widest text-red-300 flex items-center gap-2">
+        {autoPilot&&<span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse"/>}
+        Journal Autopilot Gemini
+      </div>
+      <div className="max-h-40 overflow-y-auto space-y-0.5 font-mono text-[10px] text-slate-300">
+        {pilotLog.map((l,i)=><div key={i} className={i===pilotLog.length-1?"text-white":""} >{l}</div>)}
+      </div>
+    </div>}
+
+    {pilotDone&&<div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-4 space-y-2">
+      <div className="text-xs font-black uppercase tracking-widest text-emerald-400">✅ Diagnostic Autopilot terminé</div>
+      <p className="text-sm text-slate-200">{pilotDone.summary}</p>
+      {pilotDone.dtcs.length>0&&<div>
+        <div className="text-[10px] uppercase font-black text-red-300">Codes DTC trouvés</div>
+        <ul className="mt-1 space-y-0.5">{pilotDone.dtcs.map((d,i)=><li key={i} className="text-sm font-mono text-white">{d}</li>)}</ul>
+      </div>}
+      <button onClick={()=>setPilotDone(null)} className="text-[10px] text-slate-500 underline">Fermer</button>
     </div>}
 
     <audio ref={voiceAudioRef} autoPlay playsInline className="hidden" />

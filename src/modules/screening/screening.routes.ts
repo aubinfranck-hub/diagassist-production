@@ -15,6 +15,8 @@ const ALLOWED = new Set(["click", "scroll", "input", "back", "request_screen"]);
 const MAX_FRAME_RATE_PER_SECOND = 4;
 const MAX_COMMAND_TEXT_LENGTH = 1_000;
 const VOICE_MESSAGE_TYPES = new Set(["voice_start","voice_signal","voice_end"]);
+const MAX_PILOT_STEPS = 30;
+const PILOT_MIN_INTERVAL_MS = 3000;
 
 function code() {
   return crypto.randomInt(100000, 1000000).toString();
@@ -65,6 +67,113 @@ function getVisionClient(): GoogleGenAI {
     apiKey,
     httpOptions: { headers: { "User-Agent": "aistudio-build" } },
   });
+}
+
+async function runAutoPilotStep(
+  s: any,
+  imageData: string,
+  sid: string,
+  clients: Map<string, Set<any>>,
+  sendAll: (id: string, msg: any, except?: any) => void
+): Promise<void> {
+  const now = Date.now();
+  if (!s.autoPilotActive) return;
+  if (now - (s.lastPilotAt || 0) < PILOT_MIN_INTERVAL_MS) return;
+  if ((s.pilotSteps || 0) >= MAX_PILOT_STEPS) {
+    s.autoPilotActive = false;
+    sendAll(sid, { type: "pilot_done", reason: "max_steps", summary: "Limite de 30 actions atteinte.", dtcs: s.pilotDtcs || [] });
+    return;
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return;
+  s.lastPilotAt = now;
+  s.pilotSteps = (s.pilotSteps || 0) + 1;
+
+  const history: string[] = s.pilotHistory || [];
+  const historyText = history.length > 0
+    ? "Actions précédentes (récentes en dernier) :\n" + history.slice(-8).join("\n")
+    : "Première action — aucune action précédente.";
+
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
+  const base64 = imageData.replace(/^data:image\/[^;]+;base64,/, "");
+
+  let fc: any = null;
+  try {
+    const resp = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [{
+        role: "user",
+        parts: [
+          { inlineData: { data: base64, mimeType: "image/jpeg" } },
+          { text: `Tu es DiagAssist Autopilot — agent IA qui pilote une tablette de valise OBD.
+Objectifs dans l'ordre :
+1. Ouvrir l'application de diagnostic si pas encore ouverte.
+2. Sélectionner marque/modèle si demandé.
+3. Lancer la lecture des codes défauts (DTC).
+4. Lire et noter tous les codes affichés, naviguer dans les détails.
+5. Appeler done quand diagnostic complet ou si l'écran ne permet pas d'avancer.
+Règles : appuie uniquement sur des éléments VISIBLES. Ne répète pas deux fois la même action. Si bloqué 3 fois sur le même écran, appelle back. Confirme les boîtes de dialogue Android.
+
+${historyText}
+
+Regarde l'écran et choisis la prochaine action. Utilise exactement un des outils disponibles.` }
+        ]
+      }],
+      config: {
+        tools: [{
+          functionDeclarations: [
+            { name: "click", description: "Appuie sur un élément visible à la position x,y en pixels", parameters: { type: "OBJECT", properties: { x: { type: "NUMBER" }, y: { type: "NUMBER" }, reason: { type: "STRING" } }, required: ["x","y","reason"] } },
+            { name: "scroll", description: "Fait défiler l'écran. direction = 'up' ou 'down'", parameters: { type: "OBJECT", properties: { direction: { type: "STRING" }, reason: { type: "STRING" } }, required: ["direction","reason"] } },
+            { name: "input", description: "Saisit du texte dans un champ de saisie actif", parameters: { type: "OBJECT", properties: { text: { type: "STRING" }, reason: { type: "STRING" } }, required: ["text","reason"] } },
+            { name: "back", description: "Appuie sur le bouton retour Android", parameters: { type: "OBJECT", properties: { reason: { type: "STRING" } }, required: ["reason"] } },
+            { name: "wait", description: "Attend sans agir (chargement, animation en cours)", parameters: { type: "OBJECT", properties: { reason: { type: "STRING" } }, required: ["reason"] } },
+            { name: "done", description: "Diagnostic terminé — arrête le pilotage et résume les trouvailles", parameters: { type: "OBJECT", properties: { summary: { type: "STRING" }, dtcs: { type: "ARRAY", items: { type: "STRING" } } }, required: ["summary"] } }
+          ]
+        }],
+        toolConfig: { functionCallingConfig: { mode: "ANY" } }
+      }
+    });
+    const candidate = resp.candidates?.[0];
+    fc = candidate?.content?.parts?.find((p: any) => p.functionCall)?.functionCall || null;
+  } catch (err: any) {
+    console.error("[PILOT] Gemini error:", err?.message || err);
+    return;
+  }
+
+  if (!fc) return;
+
+  const toolName: string = fc.name || "";
+  const args: any = fc.args || {};
+  const reason: string = args.reason || "";
+
+  const logEntry = `[${s.pilotSteps}] ${toolName}(${JSON.stringify({ ...args, reason: undefined })}) — ${reason}`;
+  history.push(logEntry);
+  s.pilotHistory = history;
+
+  sendAll(sid, { type: "pilot_action", step: s.pilotSteps, tool: toolName, args, reason, log: logEntry });
+
+  if (toolName === "done") {
+    s.autoPilotActive = false;
+    sendAll(sid, { type: "pilot_done", reason: "done", summary: args.summary || "", dtcs: args.dtcs || [] });
+    return;
+  }
+
+  if (toolName === "wait") return;
+
+  const commandAction = toolName === "click" ? "click"
+    : toolName === "scroll" ? "scroll"
+    : toolName === "input" ? "input"
+    : toolName === "back" ? "back"
+    : null;
+
+  if (commandAction) {
+    const payload: any = { action: commandAction };
+    if (toolName === "click") { payload.x = Math.round(Number(args.x)); payload.y = Math.round(Number(args.y)); }
+    if (toolName === "scroll") { payload.direction = args.direction === "up" ? "up" : "down"; }
+    if (toolName === "input") { payload.text = String(args.text || "").slice(0, MAX_COMMAND_TEXT_LENGTH); }
+    sendAll(sid, { type: "command", sessionId: sid, payload });
+  }
 }
 
 export function registerScreening(
@@ -465,6 +574,24 @@ Ne fabrique aucune donnée absente de l'image.`,
     }
   });
 
+  app.post("/api/screening/sessions/:id/autopilot", deps.requireAuth, async (req: any, res) => {
+    const s = await getSessionAsync(req.params.id);
+    if (!s) return res.status(404).json({ success: false, message: "Session introuvable." });
+    if (req.session.phone !== s.technicianPhone && req.session.phone !== s.coachPhone) {
+      return res.status(403).json({ success: false, message: "Accès refusé." });
+    }
+    const enable = req.body?.enable !== false;
+    s.autoPilotActive = enable;
+    if (enable) {
+      s.pilotHistory = [];
+      s.pilotSteps = 0;
+      s.pilotDtcs = [];
+      s.lastPilotAt = 0;
+    }
+    sendAll(s.id, { type: "pilot_status", active: s.autoPilotActive });
+    res.json({ success: true, autoPilot: s.autoPilotActive });
+  });
+
   // Le coach humain rejoint avec son ID de session uniquement.
   // Le code d'appairage est strictement réservé à la tablette du technicien.
   app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, async (req: any, res) => {
@@ -633,6 +760,11 @@ Ne fabrique aucune donnée absente de l'image.`,
           s.frameCount++;
           s.lastFrame = m;
           sendAll(sid, m);
+          if (s.autoPilotActive) {
+            runAutoPilotStep(s, imageData, sid, clients, sendAll).catch((err: any) =>
+              console.error("[PILOT] step error:", err?.message || err)
+            );
+          }
         } else if (m.type === "command" && (role === "controller" || role === "coach")) {
           const s = getSession(sid);
           if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
