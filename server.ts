@@ -13,6 +13,7 @@ import helmet from "helmet";
 import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
+import { planLiveDiagnostic } from "./src/modules/live/liveDiagnosticPlanner";
 
 dotenv.config();
 
