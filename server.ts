@@ -14,6 +14,8 @@ import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
+import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
+import { searchHpWeb } from "./src/modules/vehicle/hpwebClient";
 
 dotenv.config();
 
@@ -1732,6 +1734,22 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
         requete: { type: Type.STRING, description: "Ce qu'il faut chercher, incluant marque/modèle/année et le composant ou problème précis, ex: 'Toyota Corolla 2015 résistance capteur PMH'." },
       },
       required: ["requete"],
+    },
+  },
+  {
+    name: "rechercher_vehicule_hpweb",
+    description: "Recherche le véhicule dans HP-Web par VIN, marque, modèle, année ou motorisation. À utiliser pour identifier précisément le véhicule avant une procédure technique. La recherche est côté serveur et mise en cache ; ne demande jamais les identifiants HP-Web à l'utilisateur.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        vin: { type: Type.STRING, description: "VIN complet si disponible." },
+        marque: { type: Type.STRING, description: "Marque du véhicule." },
+        modele: { type: Type.STRING, description: "Modèle du véhicule." },
+        annee: { type: Type.STRING, description: "Année du véhicule." },
+        moteur: { type: Type.STRING, description: "Motorisation ou code moteur." },
+        q: { type: Type.STRING, description: "Recherche libre HP-Web si les autres critères ne suffisent pas." },
+      },
+      required: [],
     },
   },
   {
@@ -4808,6 +4826,9 @@ Directives pour ce tour :
     dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
   });
 
+  // HP-Web : recherche métier côté serveur, jamais depuis le navigateur.
+  registerHpWebRoutes(app, requireAuth);
+
   // Vite integration — DOIT être enregistré en dernier : app.get("*", ...) intercepte sinon
   // toute requête GET (y compris les routes API ci-dessus enregistrées après lui), qui reçoit
   // alors la page HTML de l'app au lieu du JSON attendu (bug réel trouvé en testant
@@ -5026,6 +5047,23 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               result = liveToolGetScannerGuide(String(fc.args?.scanner || ""));
                             } else if (fc.name === "rechercher_fiche_technique") {
                               result = await liveToolSearchTechnicalInfo(String(fc.args?.requete || ""));
+                            } else if (fc.name === "rechercher_vehicule_hpweb") {
+                              const results = await searchHpWeb({
+                                vin: fc.args?.vin ? String(fc.args.vin) : undefined,
+                                make: fc.args?.marque ? String(fc.args.marque) : undefined,
+                                model: fc.args?.modele ? String(fc.args.modele) : undefined,
+                                year: fc.args?.annee ? String(fc.args.annee) : undefined,
+                                engine: fc.args?.moteur ? String(fc.args.moteur) : undefined,
+                                q: fc.args?.q ? String(fc.args.q) : undefined,
+                              });
+                              if (results.length === 1 && liveAgentState) {
+                                const v = results[0];
+                                liveAgentState.vehicle = [v.make, v.model, v.year, v.engine].filter(Boolean).join(" ");
+                                liveAgentState.evidence.push("Identification HP-Web : " + JSON.stringify(v));
+                                await saveLiveAgentState((clientWs as any)._authPhone || "", liveAgentState);
+                                clientWs.send(JSON.stringify({ type: "agentState", state: liveAgentState }));
+                              }
+                              result = JSON.stringify({ source: "HP-Web", count: results.length, results });
                             } else if (fc.name === "verifier_base_vehicules") {
                               result = await liveToolCheckVehicleDatabase(String(fc.args?.marque || ""), fc.args?.modele ? String(fc.args.modele) : undefined);
                             } else if (fc.name === "chercher_mecanicien_pres") {
