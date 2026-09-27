@@ -1115,8 +1115,43 @@ interface LiveAgentState {
   currentTest: string | null;
   repaired: boolean;
   concluded: boolean;
+  contradictions: string[];
+  lastResult: string;
 }
 const liveAgentStates = new Map<string, LiveAgentState>();
+
+// Planificateur local déterministe : zéro appel IA, zéro réseau, zéro DB.
+// Objectif : choisir UNE seule prochaine action sans ajouter de latence au Live vocal.
+function planLiveDiagnosticLocal(input: {
+  vehicle: string;
+  symptom: string;
+  dtcs: string[];
+  evidence: string[];
+  hypotheses: string[];
+  contradictions: string[];
+  currentTest: string | null;
+  repaired: boolean;
+  concluded: boolean;
+  phase: LiveAgentPhase;
+}): { priorite: "securite" | "critique" | "prioritaire" | "confirmation"; action: string; raison: string; attendu: string } {
+  const has = (needle: string) => input.evidence.some(e => e.toLowerCase().includes(needle));
+  if (input.concluded) return { priorite:"confirmation", action:"Diagnostic clôturé", raison:"La session est déjà clôturée.", attendu:"Aucune nouvelle action." };
+  if (input.currentTest) return { priorite:"prioritaire", action:"Attendre le résultat du test en cours", raison:"Un seul test doit être exécuté à la fois.", attendu:"Résultat objectif, mesure ou observation." };
+  if (!input.vehicle) return { priorite:"critique", action:"Identifier précisément le véhicule", raison:"Une procédure dépend du modèle, de l'année et de la motorisation.", attendu:"Marque, modèle, année et motorisation." };
+  if (/hybride|électrique|ev|phev|bev/i.test(input.vehicle) && !has("sécurité haute tension") && !has("consignation")) {
+    return { priorite:"securite", action:"Confirmer la procédure de sécurité haute tension", raison:"Les procédures HT varient selon le véhicule.", attendu:"Modèle/motorisation confirmés et circuit HT sécurisé avant intervention." };
+  }
+  if (!input.symptom) return { priorite:"critique", action:"Caractériser le symptôme", raison:"Sans symptôme reproductible, les hypothèses restent trop larges.", attendu:"Conditions d'apparition et comportement précis." };
+  if (input.phase === "historique") return { priorite:"prioritaire", action:"Vérifier l'historique d'intervention récent", raison:"Une intervention récente peut être directement liée à la panne.", attendu:"Ce qui a été remplacé, débranché, nettoyé ou réparé et quand." };
+  if (input.phase === "symptome") return { priorite:"prioritaire", action:"Reproduire et caractériser le symptôme", raison:"Il faut établir les conditions exactes avant le test.", attendu:"Froid/chaud, démarrage/roulage, charge, régime ou fréquence." };
+  if (input.phase === "inspection") return { priorite:"prioritaire", action:"Faire une inspection visuelle rapide", raison:"Connecteurs, fusibles, faisceaux, fuites et niveaux sont des prérequis simples.", attendu:"Observation visuelle positive ou anomalie trouvée." };
+  if (input.phase === "outils" && input.dtcs.length === 0) return { priorite:"prioritaire", action:"Lire les codes défauts et données figées", raison:"Sans DTC ni données objectives, la piste reste trop large.", attendu:"DTC, freeze frame et seulement les données utiles." };
+  if (input.contradictions.length > 0) return { priorite:"critique", action:"Résoudre la contradiction avec un test discriminant", raison:"Une preuve contredit la piste actuelle.", attendu:"Résultat permettant d'écarter ou de renforcer une hypothèse." };
+  if (input.hypotheses.length === 0) return { priorite:"prioritaire", action:"Construire les hypothèses à partir des preuves", raison:"Il faut relier le symptôme et les observations avant de choisir une pièce.", attendu:"Une ou plusieurs causes candidates à vérifier." };
+  if (input.evidence.length < 2 && input.dtcs.length > 0) return { priorite:"prioritaire", action:"Obtenir une preuve technique supplémentaire", raison:"Un DTC seul ne condamne pas une pièce.", attendu:"Mesure, donnée scanner, inspection ou test physique." };
+  if (input.repaired) return { priorite:"confirmation", action:"Effectuer la validation post-réparation et rescanner", raison:"Une réparation n'est pas confirmée tant que le symptôme et les DTC ne sont pas vérifiés.", attendu:"Symptôme absent et aucun nouveau DTC pertinent." };
+  return { priorite:"confirmation", action:"Choisir un seul test discriminant", raison:"Le test doit séparer les hypothèses restantes avant toute condamnation de pièce.", attendu:"Résultat mesurable ou observation permettant la prochaine décision." };
+}
 
 function createLiveAgentState(sessionId: string, context = ""): LiveAgentState {
   const text = String(context || "");
@@ -1124,7 +1159,7 @@ function createLiveAgentState(sessionId: string, context = ""): LiveAgentState {
   const state: LiveAgentState = {
     sessionId, phase: "historique", tour: 0, vehicle: "", symptom: text.slice(0, 500),
     dtcs, evidence: [], hypotheses: [], testsDone: [], currentTest: null,
-    repaired: false, concluded: false,
+    repaired: false, concluded: false, contradictions: [], lastResult: "",
   };
   liveAgentStates.set(sessionId, state);
   return state;
@@ -1160,7 +1195,15 @@ function pilotLiveDiagnostic(args: any, state: LiveAgentState): string {
   if (symptom) state.symptom = symptom;
   if (hypothesis && !state.hypotheses.includes(hypothesis)) state.hypotheses.push(hypothesis);
   if (evidence) state.evidence.push(evidence);
-  if (test && !state.testsDone.includes(test) && result) state.testsDone.push(test + " => " + result);
+  if (result) state.lastResult = result;
+  if (test && !state.testsDone.includes(test) && result) {
+    state.testsDone.push(test + " => " + result);
+    state.currentTest = null;
+  }
+  if (result && /incohérent|contradic|ne correspond|anormal|hors plage|impossible/i.test(result)) {
+    const contradiction = test ? test + " : " + result : result;
+    if (!state.contradictions.includes(contradiction)) state.contradictions.push(contradiction);
+  }
   if (test && !result) state.currentTest = test;
 
   if (event === "historique") state.phase = "historique";
@@ -1183,6 +1226,8 @@ function pilotLiveDiagnostic(args: any, state: LiveAgentState): string {
     hypotheses: state.hypotheses.slice(-5),
     preuves: state.evidence.slice(-5),
     tests_realises: state.testsDone.slice(-5),
+    contradictions: state.contradictions.slice(-5),
+    dernier_resultat: state.lastResult || null,
     test_en_cours: state.currentTest,
     plan_local: planLiveDiagnosticLocal({
       vehicle: state.vehicle,
@@ -1190,7 +1235,7 @@ function pilotLiveDiagnostic(args: any, state: LiveAgentState): string {
       dtcs: state.dtcs,
       evidence: state.evidence,
       hypotheses: state.hypotheses,
-      contradictions: [],
+      contradictions: state.contradictions,
       currentTest: state.currentTest,
       repaired: state.repaired,
       concluded: state.concluded,
@@ -1254,7 +1299,7 @@ function liveToolGetScannerGuide(scanner: string): string {
 const LIVE_AGENT_TOOL_DECLARATIONS = [
   {
     name: "piloter_diagnostic",
-    description: "Pilote l'état local de l'Agent DiagAssist sans appel réseau. À utiliser après un symptôme, une observation, un résultat de test, une réparation ou une validation pour garder une session structurée et déterminer la prochaine étape. Une seule action/test à la fois.",
+    description: "Pilote l'état local de l'Agent DiagAssist sans appel réseau. À utiliser après un symptôme, une observation, un résultat de test, une réparation ou une validation. Le planificateur local détermine la prochaine action sans appel IA supplémentaire. Une seule action/test à la fois.",
     parameters: {
       type: Type.OBJECT,
       properties: {
