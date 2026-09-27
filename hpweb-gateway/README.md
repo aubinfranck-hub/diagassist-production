@@ -1,19 +1,23 @@
-# HP-Web Gateway
+# DiagAssist HP-Web Gateway
 
-Passerelle dédiée aux données véhicule HP-Web pour DiagAssist.
+Service Playwright dédié à la recherche de véhicules dans HP-Web.
 
-## Recherches prévues
-- VIN
-- marque
-- modèle
-- année
-- motorisation
-- recherche libre
+## Variables Render
+- `HP_WEB_URL=https://hp-web.in`
+- `HP_WEB_USERNAME=...`
+- `HP_WEB_PASSWORD=...`
+- `HP_WEB_GATEWAY_API_KEY=...`
+- `HP_WEB_TIMEOUT_MS=12000` (optionnel)
+- `HP_WEB_CACHE_TTL_MS=900000` (optionnel)
+- `PORT=10000`
 
-Le gateway n'expose aucune route proxy générique. Les sélecteurs et endpoints HP-Web sont configurés uniquement après découverte locale.
+Ne jamais commiter les identifiants, cookies, storage state ou captures de session.
 
-## Production
-Secrets via variables d'environnement Render uniquement. Ne jamais commiter les identifiants, cookies ou session_template.json.
+## API
+- `GET /health`
+- `POST /vehicle/search`
 
-## Découverte
-Le script local de découverte doit capturer les appels XHR/fetch lors d'une recherche VIN et lors d'une recherche marque/modèle. Les routes réelles seront ensuite branchées dans le service.
+La route n'est pas un proxy générique. Elle accepte uniquement les critères véhicule: VIN, marque, modèle, année, moteur ou recherche libre.
+
+## Important
+Les sélecteurs HP-Web ne sont pas encore certifiés contre une session réelle. Le premier déploiement doit servir à vérifier le flux de connexion et la recherche; si HP-Web utilise une UI/API différente, les sélecteurs seront ajustés après cette vérification.
