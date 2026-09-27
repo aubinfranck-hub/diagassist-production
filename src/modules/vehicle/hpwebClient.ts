@@ -23,11 +23,6 @@ function cleanQuery(q: VehicleSearchQuery): VehicleSearchQuery {
   return out;
 }
 
-/**
- * Adaptateur HP-Web côté serveur.
- * DiagAssist ne parle jamais directement au navigateur avec les identifiants HP-Web.
- * Le gateway doit exposer un endpoint métier POST /vehicle/search.
- */
 export class HpWebGateway implements VehicleDataGateway {
   async lookup(query: VehicleSearchQuery): Promise<VehicleContext[]> {
     const cleaned = cleanQuery(query);
@@ -35,7 +30,7 @@ export class HpWebGateway implements VehicleDataGateway {
     const cached = cache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-    const base = process.env.HP_WEB_GATEWAY_URL?.replace(/\\/$/, "");
+    const base = process.env.HP_WEB_GATEWAY_URL?.replace(/\/$/, "");
     if (!base) {
       throw new Error("HP-Web n'est pas configuré côté serveur (HP_WEB_GATEWAY_URL).");
     }
