@@ -13,7 +13,7 @@ import helmet from "helmet";
 import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
-import { planLiveDiagnostic } from "./src/modules/live/liveDiagnosticPlanner";
+import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 
 dotenv.config();
 
@@ -1184,8 +1184,20 @@ function pilotLiveDiagnostic(args: any, state: LiveAgentState): string {
     preuves: state.evidence.slice(-5),
     tests_realises: state.testsDone.slice(-5),
     test_en_cours: state.currentTest,
+    plan_local: planLiveDiagnosticLocal({
+      vehicle: state.vehicle,
+      symptom: state.symptom,
+      dtcs: state.dtcs,
+      evidence: state.evidence,
+      hypotheses: state.hypotheses,
+      contradictions: [],
+      currentTest: state.currentTest,
+      repaired: state.repaired,
+      concluded: state.concluded,
+      phase: state.phase,
+    }),
     prochaine_etape: liveAgentNextStep(state),
-    regle: "Une seule action/test à la fois. Aucun remplacement de pièce sans preuve."
+    regle: "Une seule action/test à la fois. Aucun remplacement de pièce sans preuve. Plan local sans appel réseau."
   });
 }
 
