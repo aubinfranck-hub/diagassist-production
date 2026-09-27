@@ -996,22 +996,67 @@ function liveToolFindMechanic(city: string, type?: "mechanic" | "parts_vendor"):
   return `Contacts trouvés : ${lines.join(" | ")}.`;
 }
 
-// Vérifie le prix et la disponibilité d'une pièce dans la boutique DiagAssist, pour donner une
-// vraie fourchette de prix au lieu d'un chiffre inventé.
-async function liveToolCheckPartAvailability(query: string): Promise<string> {
-  if (!dbPool) return "La boutique de pièces n'est pas configurée sur ce serveur.";
+// Vérifie le prix et la disponibilité d'une pièce dans la boutique DiagAssist.
+// Si la pièce est introuvable ou en rupture, enregistre automatiquement une demande de
+// commande dans shop_part_requests et génère un lien WhatsApp de confirmation au client.
+async function liveToolCheckPartAvailability(
+  query: string,
+  phone?: string,
+  vehicule?: string
+): Promise<{ text: string; orderRequestCreated: boolean; waConfirmUrl?: string }> {
+  if (!dbPool) return { text: "La boutique de pièces n'est pas configurée sur ce serveur.", orderRequestCreated: false };
   try {
     const { rows } = await dbPool.query(
       "SELECT name, price_fcfa, availability FROM shop_products WHERE is_active = true AND name ILIKE $1 ORDER BY name ASC LIMIT 5",
       [`%${query}%`]
     );
-    if (rows.length === 0) return `Aucune pièce trouvée dans la boutique DiagAssist pour "${query}".`;
-    const availabilityLabel: Record<string, string> = { disponible: "disponible", rupture: "en rupture de stock", sur_commande: "disponible sur commande" };
-    const lines = rows.map((r: any) => `${r.name} : ${r.price_fcfa ? `${r.price_fcfa} F CFA` : "prix non renseigné"} (${availabilityLabel[r.availability] || r.availability})`);
-    return `Pièces trouvées dans la boutique : ${lines.join(" | ")}.`;
+    const availabilityLabel: Record<string, string> = {
+      disponible: "disponible",
+      rupture: "en rupture de stock",
+      sur_commande: "disponible sur commande",
+    };
+
+    // Pièces disponibles — retour simple
+    const dispo = rows.filter((r: any) => r.availability === "disponible" || r.availability === "sur_commande");
+    if (dispo.length > 0) {
+      const lines = dispo.map((r: any) => `${r.name} : ${r.price_fcfa ? `${r.price_fcfa} F CFA` : "prix non renseigné"} (${availabilityLabel[r.availability] || r.availability})`);
+      return { text: `Pièces trouvées dans la boutique : ${lines.join(" | ")}.`, orderRequestCreated: false };
+    }
+
+    // Pièce introuvable ou en rupture — enregistrer une demande de commande
+    const pieceLabel = rows.length > 0 ? rows[0].name : query;
+    const extraInfo = vehicule ? `Véhicule : ${vehicule}` : undefined;
+    let waConfirmUrl: string | undefined;
+
+    if (phone) {
+      // S'assurer que le client existe dans shop_customers
+      await dbPool.query(
+        "INSERT INTO shop_customers (phone, name) VALUES ($1, $2) ON CONFLICT (phone) DO NOTHING",
+        [phone, phone]
+      );
+      // Insérer la demande de commande
+      await dbPool.query(
+        "INSERT INTO shop_part_requests (customer_phone, part_description, extra_info, status) VALUES ($1, $2, $3, 'nouvelle')",
+        [phone, pieceLabel, extraInfo || null]
+      );
+      // Lien WhatsApp de confirmation vers le client
+      const WA_SHOP = "2250707312797";
+      const msg = `Bonjour, nous avons bien noté votre demande pour la pièce : ${pieceLabel}${vehicule ? ` (${vehicule})` : ""}.\nNous allons la commander pour vous et vous recontacterons dès qu'elle est disponible. DiagAssist.`;
+      waConfirmUrl = `https://wa.me/${WA_SHOP}?text=${encodeURIComponent(msg)}`;
+    }
+
+    const notFoundMsg = rows.length === 0
+      ? `La pièce "${query}" n'est pas encore en stock à la boutique DiagAssist.`
+      : `La pièce "${pieceLabel}" est actuellement en rupture de stock.`;
+
+    return {
+      text: `${notFoundMsg} Une demande de commande a été enregistrée${phone ? ` pour le numéro ${phone}` : ""}. Le client sera recontacté dès qu'elle arrive.`,
+      orderRequestCreated: true,
+      waConfirmUrl,
+    };
   } catch (err) {
     console.warn("[Live Tool] Erreur requête boutique pièces:", err);
-    return "Erreur lors de la consultation de la boutique de pièces.";
+    return { text: "Erreur lors de la consultation de la boutique de pièces.", orderRequestCreated: false };
   }
 }
 
@@ -1615,7 +1660,7 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
   },
   {
     name: "verifier_disponibilite_piece",
-    description: "Vérifie le prix et la disponibilité réels d'une pièce détachée dans la boutique DiagAssist. À utiliser avant de donner un prix ou de dire qu'une pièce est disponible.",
+    description: "Vérifie le prix et la disponibilité réels d'une pièce dans la boutique DiagAssist. Si la pièce est disponible, retourne le prix. Si elle est en rupture ou introuvable, enregistre automatiquement une demande de commande pour le client et génère un message de confirmation WhatsApp — dans ce cas, dis au mécanicien que nous allons commander la pièce et qu'il sera recontacté.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -4863,7 +4908,13 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               const t = fc.args?.type;
                               result = liveToolFindMechanic(String(fc.args?.ville || ""), t === "mechanic" || t === "parts_vendor" ? t : undefined);
                             } else if (fc.name === "verifier_disponibilite_piece") {
-                              result = await liveToolCheckPartAvailability(String(fc.args?.piece || ""));
+                              const partPhone = (clientWs as any)._authPhone;
+                              const partVehicule = liveAgentState?.vehicle || undefined;
+                              const partResult = await liveToolCheckPartAvailability(String(fc.args?.piece || ""), partPhone, partVehicule);
+                              result = partResult.text;
+                              if (partResult.orderRequestCreated && partResult.waConfirmUrl) {
+                                clientWs.send(JSON.stringify({ type: "orderRequestCreated", url: partResult.waConfirmUrl }));
+                              }
                             } else if (fc.name === "rechercher_code_obd") {
                               result = liveToolLookupOBDCode(String(fc.args?.code || ""));
                             } else if (fc.name === "commander_piece") {
