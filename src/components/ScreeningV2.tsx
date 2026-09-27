@@ -11,7 +11,7 @@ type VisionAnalysis = {
   uncertainty: string;
 };
 
-export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionId:string; pairingCode:string; role:"technician"|"controller"|"coach" }) {
+export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd }: { sessionId:string; pairingCode:string; role:"technician"|"controller"|"coach"; onSessionEnd?: () => void }) {
   const wsRef=useRef<WebSocket|null>(null);
   const [connected,setConnected]=useState(false);
   const [frame,setFrame]=useState<string|null>(null);
@@ -66,6 +66,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
               sessionEndedLocal=true;
               setSessionEnded(true);
               if(reconnectTimer!==undefined)window.clearTimeout(reconnectTimer);
+              onSessionEnd?.();
             }
           }
           if(m.type==="human_coach_requested"){setHumanCoachRequested(true);setStatus("Coach humain demandé.");}
@@ -75,6 +76,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
             setSessionEnded(true);
             setStatus("Session terminée.");
             if(reconnectTimer!==undefined)window.clearTimeout(reconnectTimer);
+            onSessionEnd?.();
           }
           if(m.type==="voice_start" && role==="coach"){setStatus("Appel vocal demandé depuis la tablette.");}
           if(m.type==="voice_signal" && role==="coach"){handleVoiceSignal(m.payload);}
@@ -94,8 +96,15 @@ export default function ScreeningV2({ sessionId, pairingCode, role }: { sessionI
     };
 
     connect();
+
+    const pingInterval=window.setInterval(()=>{
+      const ws=wsRef.current;
+      if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:"ping"}));
+    },25000);
+
     return()=>{
       stopped=true;
+      window.clearInterval(pingInterval);
       if(reconnectTimer!==undefined)window.clearTimeout(reconnectTimer);
       const ws=wsRef.current;
       wsRef.current=null;

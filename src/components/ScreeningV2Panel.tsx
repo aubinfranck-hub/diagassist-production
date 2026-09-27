@@ -13,6 +13,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sessionDone, setSessionDone] = useState(false);
 
   const token = () => localStorage.getItem("auth_session_token") || "";
 
@@ -56,6 +57,18 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
   }
 
   if (created && role === "controller") {
+    if (sessionDone) {
+      return (
+        <div className="premium-glass-card rounded-2xl border border-slate-700 bg-slate-950/80 p-6 text-center space-y-4">
+          <div className="text-slate-400 text-sm">Session terminée.</div>
+          <button
+            onClick={() => { setCreated(false); setSessionId(""); setPairingCode(""); setSessionDone(false); setStatus(""); }}
+            className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase tracking-wider"
+          >Nouvelle session</button>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-3">
         <div className="premium-glass-card rounded-2xl border border-emerald-400/20 bg-slate-950/80 p-4">
@@ -72,10 +85,22 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
                 download
                 className="inline-flex items-center gap-1.5 mt-1 text-xs font-bold text-emerald-400 underline underline-offset-2"
               >
-                Télécharger l'application (.apk)
+                Télécharger l’application (.apk)
               </a>
               <div className="text-sm text-slate-400 mt-2">2. Scannez ce QR code avec la caméra de la tablette.</div>
-              <div className="text-sm text-slate-400 mt-1">3. Autorisez la capture d’écran puis le contrôle à distance lorsque Android le demande.</div>
+              <div className="text-sm text-slate-400 mt-1">3. Autorisez la capture d’écran lorsque Android le demande.</div>
+
+              {/* Accessibility instructions */}
+              <div className="mt-3 rounded-xl bg-amber-950/30 border border-amber-500/20 p-3 space-y-1">
+                <div className="text-[9px] font-black uppercase tracking-widest text-amber-400">4. Accessibilité Android (étape importante)</div>
+                <p className="text-xs text-amber-200">Android ouvre automatiquement les Paramètres d’accessibilité.</p>
+                <ol className="list-decimal pl-4 space-y-0.5 text-xs text-slate-300">
+                  <li>Appuyez sur <span className="font-bold text-white">DiagAssist Controller</span> dans la liste.</li>
+                  <li>Activez le service avec le bouton en haut à droite.</li>
+                  <li>Confirmez avec <span className="font-bold text-white">Autoriser</span> dans la boîte de dialogue Android.</li>
+                  <li>Revenez à l’application DiagAssist Technician.</li>
+                </ol>
+              </div>
 
               <div className="mt-4 rounded-xl bg-black/30 border border-white/10 p-3">
                 <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">Code de secours tablette</div>
@@ -87,7 +112,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
                     className="px-2.5 py-1.5 rounded-lg bg-slate-800 text-[10px] font-bold text-white"
                   >{copied ? "✓" : "Copier"}</button>
                 </div>
-                <div className="text-[10px] text-slate-500 mt-1">Le code est un secours. Le QR est le parcours normal.</div>
+                <div className="text-[10px] text-slate-500 mt-1">Si le QR ne fonctionne pas, entrez ce code à 6 chiffres sur la tablette.</div>
               </div>
 
               <div className="mt-3 rounded-xl bg-black/30 border border-white/10 px-3 py-2">
@@ -104,7 +129,7 @@ export default function ScreeningV2Panel({ isPremium }: { isPremium: boolean }) 
           {status && <p className="text-[11px] text-slate-400 mt-3">{status}</p>}
         </div>
 
-        <ScreeningV2 sessionId={sessionId} pairingCode="" role="controller" />
+        <ScreeningV2 sessionId={sessionId} pairingCode="" role="controller" onSessionEnd={() => setSessionDone(true)} />
       </div>
     );
   }

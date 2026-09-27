@@ -611,6 +611,10 @@ Ne fabrique aucune donnée absente de l'image.`,
           return ws.send(JSON.stringify({ type: "error", message: "Appairage requis." }));
         }
 
+        if (m.type === "ping") {
+          return ws.send(JSON.stringify({ type: "pong" }));
+        }
+
         if (m.type === "frame" && role === "technician") {
           const s = await getSessionAsync(sid);
           if (!s || s.status === "completed") return ws.send(JSON.stringify({ type: "error", message: "Session terminée." }));
