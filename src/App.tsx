@@ -825,7 +825,7 @@ export default function App() {
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    {isAdminAccount ? <Users className="w-4.5 h-4.5" /> : <Sparkles className="w-4.5 h-4.5" />}
+                    {isAdminAccount ? <Users className="w-4.5 h-4.5" /> : <Coins className="w-4.5 h-4.5" />}
                     <span>{isAdminAccount ? "Gestion Clients" : "Abonnements"}</span>
                   </div>
                   {activeTab === "prices" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
@@ -1131,7 +1131,7 @@ export default function App() {
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              {isAdminAccount ? <Users className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+              {isAdminAccount ? <Users className="w-5 h-5" /> : <Coins className="w-5 h-5" />}
               <span className="text-[9px] font-black uppercase tracking-wider">{isAdminAccount ? "Clients" : "Offres"}</span>
             </button>
 
