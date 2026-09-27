@@ -363,6 +363,8 @@ export default function DiagAssistLiveScreen({
   // 4G dégradée/3G) pendant un appel toujours en cours — jusqu'à 2 tentatives.
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inactivityHandledRef = useRef(false);
   const callGenerationRef = useRef(0);
   const audioCtxInputRef = useRef<AudioContext | null>(null);
   const audioCtxOutputRef = useRef<AudioContext | null>(null);
@@ -421,6 +423,33 @@ export default function DiagAssistLiveScreen({
   };
 
   // Stop any playing audio buffer sources (for interruption / barge-in)
+  // Si l'utilisateur ne commence pas réellement le diagnostic dans les 20 secondes,
+  // on évite de laisser le micro ouvert inutilement et on prépare le prochain appel.
+  const armLiveInactivityTimer = () => {
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    inactivityTimerRef.current = setTimeout(() => {
+      if (inactivityHandledRef.current || callState !== "live") return;
+      inactivityHandledRef.current = true;
+      const message =
+        "Je n'ai pas reçu d'informations de diagnostic depuis quelques instants. " +
+        "Pour gagner du temps, rappelez-moi lorsque vous êtes prêt et préparez la marque, le modèle, l'année, la motorisation, " +
+        "le kilométrage, les symptômes précis, les circonstances d'apparition, les codes défaut et, si possible, une photo de la valise ou du voyant. " +
+        "Je pourrai alors vous guider étape par étape. À bientôt.";
+      stopAllAudioPlayback();
+      try { window.speechSynthesis?.cancel(); } catch {}
+      speakText(message);
+      setToast("Session terminée : préparez les informations du véhicule avant de rappeler.");
+      setTimeout(() => {
+        if (isLiveActive) stopLiveCallSession();
+      }, 9000);
+    }, 20000);
+  };
+
+  const resetLiveInactivityTimer = () => {
+    inactivityHandledRef.current = false;
+    armLiveInactivityTimer();
+  };
+
   const stopAllAudioPlayback = () => {
     activeSourcesRef.current.forEach((src) => {
       try { src.stop(); } catch (e) {}
@@ -652,6 +681,7 @@ Codes DTC: ${dtcCodes}`;
 
         setCallState("live");
         setIsLiveActive(true);
+        resetLiveInactivityTimer();
         playNotificationSound();
         setToast("Duplex vocal actif — Parlez à voix haute, DiagAssist vous écoute.");
       };
@@ -666,6 +696,7 @@ Codes DTC: ${dtcCodes}`;
             globalAdManager.setGeminiSpeakingStatus(false);
             stopAllAudioPlayback();
           } else if (msg.type === "userTranscript") {
+            if (msg.text?.trim()) resetLiveInactivityTimer();
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "Mécano: " + msg.text);
           } else if (msg.type === "text") {
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "DiagAssist: " + msg.text);
@@ -758,6 +789,11 @@ Codes DTC: ${dtcCodes}`;
     playMicStopSound();
 
     callGenerationRef.current++;
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+    inactivityHandledRef.current = false;
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
