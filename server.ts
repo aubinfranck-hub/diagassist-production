@@ -1002,6 +1002,29 @@ async function liveToolCheckPartAvailability(query: string): Promise<string> {
   }
 }
 
+// Récupère les N derniers diagnostics enregistrés pour un numéro de téléphone donné.
+// Utilisé au démarrage de l'appel live pour injecter le contexte historique dans systemInstruction,
+// et exposé comme outil consulter_historique_diagnostic pour les requêtes en cours d'appel.
+async function liveGetRecentDiagnostics(phone: string, limit = 3): Promise<string> {
+  if (!dbPool) return "";
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT vehicle_summary, symptom, probable_cause, recommended_action, created_at
+       FROM live_diagnostics WHERE phone = $1 ORDER BY created_at DESC LIMIT $2`,
+      [phone, limit]
+    );
+    if (rows.length === 0) return "";
+    const lines = rows.map((r: any, i: number) => {
+      const date = new Date(Number(r.created_at)).toLocaleDateString("fr-FR");
+      return `Appel ${i + 1} (${date}) — Véhicule : ${r.vehicle_summary} | Symptôme : ${r.symptom} | Cause : ${r.probable_cause} | Action : ${r.recommended_action}`;
+    });
+    return lines.join("\n");
+  } catch (err) {
+    console.warn("[Live] Erreur lecture historique diagnostics:", err);
+    return "";
+  }
+}
+
 // Enregistre le diagnostic établi pendant l'appel live. Pas d'envoi WhatsApp automatique côté
 // serveur (choix explicite : pas de Twilio) — un lien wa.me prérempli est renvoyé pour que le
 // mécanicien l'envoie lui-même en un tap depuis son propre WhatsApp (voir dispatch de toolCall).
@@ -1239,6 +1262,17 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
         piece: { type: Type.STRING, description: "Nom de la pièce recherchée, ex: 'capteur PMH' ou 'plaquettes de frein'." },
       },
       required: ["piece"],
+    },
+  },
+  {
+    name: "consulter_historique_diagnostic",
+    description: "Consulte les derniers diagnostics enregistrés pour ce mécanicien/client lors de ses appels précédents. Utilise cet outil si le mécanicien mentionne un problème récurrent, demande un suivi, ou si tu veux vérifier si ce véhicule a déjà été diagnostiqué.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        limite: { type: Type.NUMBER, description: "Nombre de diagnostics récents à récupérer (1 à 5). Par défaut 3." },
+      },
+      required: [],
     },
   },
   {
@@ -4286,6 +4320,11 @@ Directives pour ce tour :
           liveAgentState = createLiveAgentState(liveAgentSessionId, String(message.diagnosticContext || ""));
           clientWs.send(JSON.stringify({ type: "agentState", sessionId: liveAgentSessionId, phase: liveAgentState.phase }));
           const liveNameInstruction = getNameInstruction((clientWs as any)._authPhone);
+          const authPhoneForHistory = (clientWs as any)._authPhone;
+          const recentHistory = authPhoneForHistory ? await liveGetRecentDiagnostics(authPhoneForHistory, 3) : "";
+          const historySection = recentHistory
+            ? `\nHISTORIQUE DES APPELS PRÉCÉDENTS DE CE CLIENT :\n${recentHistory}\nUtilise cet historique pour personnaliser le suivi (ex: "Lors de votre dernier appel, vous aviez un problème de capteur PMH sur votre Toyota..."). Si le véhicule actuel correspond à un appel précédent, signale-le discrètement.`
+            : "";
           const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
 ${liveNameInstruction}
 RÈGLE D'IDENTITÉ & NOM :
@@ -4336,7 +4375,7 @@ sans base constructeur officielle, et invite à vérifier sur la carte grise.
 
 FICHE TECHNIQUE ET DIAGNOSTIC ACTUEL DU VÉHICULE :
 ${message.diagnosticContext}
-
+${historySection}
 ENREGISTREMENT DU DIAGNOSTIC (OBLIGATOIRE) : dès qu'un diagnostic clair se dégage (cause probable
 identifiée et action recommandée établie), appelle l'outil enregistrer_diagnostic UNE SEULE FOIS pour
 le sauvegarder. Ça prépare un lien WhatsApp prérempli avec le récapitulatif, affiché au mécanicien
@@ -4438,6 +4477,15 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               result = liveToolFindMechanic(String(fc.args?.ville || ""), t === "mechanic" || t === "parts_vendor" ? t : undefined);
                             } else if (fc.name === "verifier_disponibilite_piece") {
                               result = await liveToolCheckPartAvailability(String(fc.args?.piece || ""));
+                            } else if (fc.name === "consulter_historique_diagnostic") {
+                              const histPhone = (clientWs as any)._authPhone;
+                              if (!histPhone) {
+                                result = "Impossible de consulter l'historique : numéro du client introuvable.";
+                              } else {
+                                const lim = Math.min(5, Math.max(1, Number(fc.args?.limite) || 3));
+                                const hist = await liveGetRecentDiagnostics(histPhone, lim);
+                                result = hist || "Aucun diagnostic précédent enregistré pour ce client.";
+                              }
                             } else if (fc.name === "enregistrer_diagnostic") {
                               const authPhone = (clientWs as any)._authPhone;
                               if (!authPhone) {
