@@ -74,7 +74,8 @@ async function runAutoPilotStep(
   imageData: string,
   sid: string,
   clients: Map<string, Set<any>>,
-  sendAll: (id: string, msg: any, except?: any) => void
+  sendAll: (id: string, msg: any, except?: any) => void,
+  scannerResults?: Map<string, { dtcs: string[]; summary: string; completedAt: number }>
 ): Promise<void> {
   const now = Date.now();
   if (!s.autoPilotActive) return;
@@ -155,7 +156,12 @@ Regarde l'écran et choisis la prochaine action. Utilise exactement un des outil
 
   if (toolName === "done") {
     s.autoPilotActive = false;
-    sendAll(sid, { type: "pilot_done", reason: "done", summary: args.summary || "", dtcs: args.dtcs || [] });
+    const doneDtcs: string[] = args.dtcs || [];
+    const doneSummary: string = args.summary || "";
+    sendAll(sid, { type: "pilot_done", reason: "done", summary: doneSummary, dtcs: doneDtcs });
+    if (scannerResults && s.technicianPhone) {
+      scannerResults.set(s.technicianPhone, { dtcs: doneDtcs, summary: doneSummary, completedAt: Date.now() });
+    }
     return;
   }
 
@@ -184,6 +190,7 @@ export function registerScreening(
     getEffectivePlan: (phone: string) => string;
     sessions: Map<string, any>;
     dbQuery?: (sql: string, params?: any[]) => Promise<any>;
+    scannerResults?: Map<string, { dtcs: string[]; summary: string; completedAt: number }>;
   }
 ) {
   const dbQuery = deps.dbQuery;
@@ -761,7 +768,7 @@ Ne fabrique aucune donnée absente de l'image.`,
           s.lastFrame = m;
           sendAll(sid, m);
           if (s.autoPilotActive) {
-            runAutoPilotStep(s, imageData, sid, clients, sendAll).catch((err: any) =>
+            runAutoPilotStep(s, imageData, sid, clients, sendAll, deps.scannerResults).catch((err: any) =>
               console.error("[PILOT] step error:", err?.message || err)
             );
           }

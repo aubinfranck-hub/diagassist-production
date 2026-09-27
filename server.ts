@@ -1254,6 +1254,49 @@ const OBD_CODES: Record<string, { cause: string; action: string }> = {
   P0A00: { cause: "Moteur électrique/générateur A — défaillance", action: "Vérifier système hybride/électrique, consulter spécialiste HV" },
   P0A08: { cause: "Convertisseur DC-DC — défaillance", action: "Vérifier système hybride, convertisseur DC-DC" },
   P1000: { cause: "Tests OBD II non complets (cycles de conduite incomplets)", action: "Effectuer des cycles de conduite pour compléter les moniteurs OBD" },
+  // Toyota / Lexus codes spécifiques (fréquents en CI)
+  P1300: { cause: "[Toyota] Circuit allumeur défaillant (banc 1)", action: "Vérifier bobines d'allumage, signal IGF, câblage vers ECU" },
+  P1301: { cause: "[Toyota] Circuit allumeur cylindre 1 défaillant", action: "Vérifier bobine cyl.1, signal IGF, câblage" },
+  P1302: { cause: "[Toyota] Circuit allumeur cylindre 2 défaillant", action: "Vérifier bobine cyl.2, signal IGF" },
+  P1303: { cause: "[Toyota] Circuit allumeur cylindre 3 défaillant", action: "Vérifier bobine cyl.3, signal IGF" },
+  P1304: { cause: "[Toyota] Circuit allumeur cylindre 4 défaillant", action: "Vérifier bobine cyl.4, signal IGF" },
+  P1349: { cause: "[Toyota] Système VVT-i défaillant — calage variable arbre à cames", action: "Vérifier solénoïde OCV (huile souvent encrassé), pression huile, qualité huile" },
+  P1400: { cause: "[Toyota] Capteur température EGR / sous-papillon — circuit défaillant", action: "Vérifier capteur température EGR, câblage" },
+  P1401: { cause: "[Toyota] Capteur différentiel pression EGR", action: "Vérifier capteur différentiel EGR, durites" },
+  P1455: { cause: "[Toyota] Grande fuite système EVAP", action: "Vérifier bouchon réservoir, canister, joints durites EVAP" },
+  P1500: { cause: "[Toyota] Circuit signal démarreur — défaillance", action: "Vérifier contacteur de démarrage, câblage signal STA" },
+  P1520: { cause: "[Toyota] Circuit interrupteur stop — défaillance", action: "Vérifier contacteur pédale de frein" },
+  P1600: { cause: "[Toyota] Défaillance mémoire ECU / communication série", action: "Réinitialiser ECU, vérifier alimentation ECU (masse propre)" },
+  P1780: { cause: "[Toyota] Circuit interrupteur position boîte (P/N) — défaillance", action: "Vérifier contacteur neutre BVA, câblage" },
+  // Peugeot / Citroën codes spécifiques
+  P1315: { cause: "[Peugeot] Pré-allumage détecté", action: "Vérifier bougies, qualité carburant, capteur cliquetis" },
+  P1336: { cause: "[Peugeot/Citroën] Apprentissage capteur PMH non effectué", action: "Réaliser procédure d'apprentissage PMH avec valise Peugeot/PP2000" },
+  P1340: { cause: "[Peugeot/Citroën] Capteur position arbre à cames — défaillance", action: "Vérifier capteur ACM, roue phonique, câblage" },
+  P1351: { cause: "[Peugeot] Bobine allumage groupe A — défaillance", action: "Vérifier bobine allumage, câblage HT" },
+  P1352: { cause: "[Peugeot] Bobine allumage groupe B — défaillance", action: "Vérifier bobine allumage groupe B" },
+  P1380: { cause: "[Peugeot] Défaillance gestion bougies de préchauffage", action: "Vérifier bougies de préchauffage, relais préchauffage" },
+  P1600: { cause: "[Peugeot/Citroën] Défaillance communication ECU injection", action: "Vérifier alimentation ECU, masse carrosserie, connecteur ECU" },
+  P1618: { cause: "[Peugeot] Tension alimentation capteurs ECU — trop basse", action: "Vérifier batterie, alternateur, connexion masse ECU" },
+  P1629: { cause: "[Peugeot] Coupure alimentation 5V capteurs", action: "Vérifier court-circuit sur circuit 5V ECU" },
+  // Renault / Dacia codes spécifiques
+  P1100: { cause: "[Renault] Signal régime moteur absent ou incohérent", action: "Vérifier capteur PMH, câblage, roue phonique" },
+  P1110: { cause: "[Renault] Débit air (MAF) — circuit ouvert ou déconnecté", action: "Vérifier connecteur MAF, nettoyer ou remplacer" },
+  P1335: { cause: "[Renault] Signal capteur PMH — absence ou intermittence", action: "Vérifier capteur PMH, entrefer, roue phonique" },
+  P1609: { cause: "[Renault] Défaillance communication injection/carrosserie", action: "Vérifier câblage entre calculateur injection et BSI/UCH" },
+  P1625: { cause: "[Renault] Tension alimentation ECU insuffisante (batterie)", action: "Vérifier batterie, alternateur, masse carrosserie" },
+  P1750: { cause: "[Renault] Unité de contrôle boîte automatique — défaillance", action: "Vérifier module BVA, câblage CAN vers TCM" },
+  // Codes diesel courants (HDi, CDTi, dCi — très répandus en CI)
+  P2002: { cause: "Filtre à particules DPF — efficacité sous le seuil", action: "Forcer régénération DPF avec valise, vérifier conditions de regen (températures)" },
+  P2003: { cause: "Filtre à particules — trop plein / obstruction grave", action: "Régénération forcée requise, vérifier capteur différentiel pression DPF" },
+  P2004: { cause: "Volet d'admission (swirl flap) coincé ouvert", action: "Vérifier volet d'admission, actionneur, câblage" },
+  P2006: { cause: "Volet d'admission (swirl flap) coincé fermé", action: "Vérifier volet d'admission, actionneur" },
+  P2008: { cause: "Circuit commande volet d'admission — défaillance", action: "Vérifier câblage volet d'admission, résistance actionneur" },
+  P2015: { cause: "Capteur position volet d'admission — hors plage", action: "Vérifier capteur position volet, câblage" },
+  P2200: { cause: "Capteur NOx banc 1 — circuit défaillant", action: "Vérifier capteur NOx, câblage, module SCR" },
+  P2263: { cause: "Turbo — suralimentation insuffisante (géométrie variable / wastegate)", action: "Vérifier actionneur turbo, durites de vide, nettoyer géométrie variable" },
+  P2265: { cause: "Capteur eau dans carburant — signal trop haut", action: "Purger filtre carburant, vérifier capteur eau" },
+  P2266: { cause: "Capteur eau dans carburant — signal trop bas", action: "Vérifier capteur eau dans carburant, câblage" },
+  P246C: { cause: "Filtre à particules DPF — température régénération non atteinte", action: "Vérifier capteur température DPF, conditions de régénération (autoroute requise)" },
   C0031: { cause: "Capteur vitesse roue avant droite — défaillance", action: "Vérifier capteur ABS roue avant droite, câblage, roue phonique" },
   C0034: { cause: "Capteur vitesse roue avant gauche — défaillance", action: "Vérifier capteur ABS roue avant gauche, câblage, roue phonique" },
   C0037: { cause: "Capteur vitesse roue arrière droite — défaillance", action: "Vérifier capteur ABS roue arrière droite, câblage, roue phonique" },
@@ -1311,6 +1354,63 @@ function liveToolOrderPart(pieceName: string, priceFcfa: number | null, vehicule
   const priceStr = priceFcfa ? `${priceFcfa} F CFA` : "prix à confirmer";
   const msg = `Bonjour DiagAssist, je souhaite commander la pièce suivante :\n- Pièce : ${pieceName}\n- Véhicule : ${vehicule}\n- Prix indiqué : ${priceStr}\n- Mon numéro : ${phone || "non renseigné"}`;
   return `https://wa.me/${WA_SHOP}?text=${encodeURIComponent(msg)}`;
+}
+
+// Procédures de réparation structurées pour les 20 pannes les plus fréquentes en CI.
+const REPAIR_PROCEDURES: Record<string, { titre: string; etapes: string[]; conseil_ci: string }> = {
+  rates_allumage: { titre: "Ratés d'allumage (P0300-P030x)", etapes: ["1. Identifier le ou les cylindres fautifs (valise — données live)", "2. Permuter les bougies entre cylindres adjacents — le raté se déplace ? → bougie défectueuse", "3. Permuter les bobines — le raté se déplace ? → bobine défectueuse", "4. Vérifier la résistance des injecteurs (12-14 Ω essence)", "5. Compression cylindre suspect : < 10 bar → problème mécanique (soupapes, segment)", "6. Vérifier fuites de vide sur les durites d'admission (spray carbu moteur chaud)"], conseil_ci: "À Abidjan : carburant de mauvaise qualité = cause fréquente. Faire remplir dans une station Total/Shell. Bougies NGK ou Denso recommandées (éviter les copies chinoises)." },
+  melange_pauvre: { titre: "Mélange pauvre P0171/P0174", etapes: ["1. Vérifier fuites d'air admission (durite principale, joints papillon, raccords collecteur)", "2. Nettoyer le débitmètre MAF (spray nettoyant MAF — ne pas toucher le fil)", "3. Mesurer pression carburant (3,0-3,8 bar essence — moteur tournant)", "4. Vérifier les sondes lambda (oscilloscope ou valise — doit alterner 0,1-0,9V)", "5. Vérifier filtre à carburant (colmaté si vieux > 2 ans en CI)", "6. Mesurer débit injecteurs (balance test valise)"], conseil_ci: "Fuites d'admission très fréquentes en CI à cause de la chaleur qui abîme les durites. Inspecter toutes les durites noires sous le capot." },
+  surchauffe: { titre: "Surchauffe moteur", etapes: ["1. ARRÊTER le moteur immédiatement — ne pas continuer à rouler", "2. Laisser refroidir 30 min AVANT d'ouvrir le bouchon radiateur", "3. Vérifier niveau liquide refroidissement (réservoir + radiateur froid)", "4. Vérifier thermostat (ouvre-t-il à 80-90°C ?)", "5. Tester pompe à eau (jeu / bruit / débit)", "6. Inspecter courroie / courroie accessoire", "7. Vérifier ventilateur de refroidissement (électrique : test direct 12V)", "8. Contrôler joints de culasse (bulles dans radiateur, huile crémeuse, eau dans huile)"], conseil_ci: "Chaleur ambiante d'Abidjan aggrave tout défaut de refroidissement. Thermostat à remettre systématiquement si > 150 000 km. Utiliser eau + antigel 50/50 même en CI (protège les joints)." },
+  alternateur: { titre: "Alternateur / batterie", etapes: ["1. Mesurer tension batterie à vide : doit être 12,5-12,8V (< 12V → batterie faible/morte)", "2. Démarrer moteur, mesurer aux bornes batterie : doit être 13,8-14,5V (sinon alternateur défaillant)", "3. Vérifier courroie alternateur (tension, état)", "4. Vérifier connecteur régulateur alternateur et masse carrosserie", "5. Test de charge : allumer phares + clim → tension doit rester > 13V", "6. Si tension OK mais voyant allumé : vérifier câblage voyant charge, diode de tableau"], conseil_ci: "Alternateurs Valeo ou Denso recommandés. Éviter les alternateurs reconstruits de mauvaise qualité — durée de vie très courte sous la chaleur." },
+  demarreur: { titre: "Démarreur ne tourne pas / tourne mais ne démarre pas", etapes: ["1. Vérifier tension batterie (doit être > 12V)", "2. Vérifier la borne + et masse du démarreur (câbles gros section)", "3. Tester signal commande démarreur (50V sur solénoïde à la clé)", "4. Si cliquetis : solénoïde OK mais démarreur bloqué — retirer et tester hors voiture", "5. Si silence total : vérifier fusible principal, relais démarreur, contacteur de démarrage", "6. Si tourne sans accrocher : couronne d'entraînement usée ou bendix hors service"], conseil_ci: "Problème de masse très fréquent. Nettoyer et resserrer la tresse de masse moteur/carrosserie en premier." },
+  capteur_pmh: { titre: "Capteur PMH (P0335-P0338)", etapes: ["1. Vérifier l'entrefer entre capteur et roue phonique (0,5-1,5 mm selon constructeur)", "2. Inspecter la roue phonique (dents manquantes = P0336)", "3. Mesurer résistance capteur PMH inductif : 500-1000 Ω (capteur Hall : 3 fils — vérifier alimentation 5V)", "4. Mesurer tension de sortie (oscilloscope) — signal sinusoïdal ou carré selon type", "5. Vérifier câblage blindé sans coupure ni court-circuit", "6. Nettoyer la roue phonique (rouille fréquente en CI à cause de la boue)"], conseil_ci: "Roue phonique rouillée = cause courante à Abidjan. Nettoyer à la brosse métallique avant de changer le capteur." },
+  maf_encrase: { titre: "Débitmètre MAF encrassé / défaillant (P0100-P0103)", etapes: ["1. Débrancher le MAF et démarrer le moteur — amélioration visible ? → MAF défaillant", "2. Nettoyer avec spray nettoyant MAF spécifique (ne jamais toucher le fil avec les doigts)", "3. Vérifier les durites d'admission en aval du MAF (fuites = lectures faussées)", "4. Mesurer tension de sortie : 0,5V à vide, 4,5V pleine charge (environ)", "5. Vérifier filtre à air (colmaté = sous-alimentation MAF)", "6. Si nettoyage insuffisant : remplacer MAF"], conseil_ci: "Filtre à air colmaté très fréquent en CI (poussière rouge latérite). Changer le filtre à air tous les 15 000 km minimum." },
+  bougies_prechauffage: { titre: "Bougies de préchauffage diesel (P0380)", etapes: ["1. Mesurer résistance chaque bougie : doit être 0,5-2 Ω (circuit ouvert = bougie HS)", "2. Vérifier alimentation relais bougies (tension batterie à la commande)", "3. Mesurer courant de chauffe (ampèremètre sur câble bougies) : 15-25A normal par bougie", "4. Vérifier durée de chauffe via valise (voyant / temps de préchauffage)", "5. Injecter huile moteur dans les alésages bougies pour faciliter le dévissage (éviter la casse)", "6. Remplacer toutes les bougies en même temps"], conseil_ci: "Bougies de préchauffage HS = démarrage difficile le matin en saison sèche ou en altitude (Man, Korhogo). Marques Beru, Bosch, NGK recommandées." },
+  egr_bouche: { titre: "Vanne EGR bouchée diesel (P0401/P0403)", etapes: ["1. Inspecter la vanne EGR — retirer et vérifier encrassement carbone", "2. Nettoyer à la brosse + nettoyant carburateur (ou remplacement si trop bouchée)", "3. Vérifier durites EGR (fissures, flexibles bouchés)", "4. Mesurer capteur différentiel pression EGR (valeur > 2 kPa lors d'ouverture EGR)", "5. Tester solénoïde EGR (résistance 20-40 Ω)", "6. Après nettoyage : effacer le code et faire route pour valider"], conseil_ci: "Carburant diesel de mauvaise qualité en CI = EGR s'encrasse très vite. Conseiller entretien EGR tous les 60 000 km." },
+  turbo: { titre: "Turbo diesel insuffisant / fumée (P2263)", etapes: ["1. Vérifier durites turbo (fissures, joints toriques côté pression)", "2. Vérifier actionneur géométrie variable (VNT) : se déplace librement ? Nettoyer tiges", "3. Vérifier niveau et état huile moteur (huile dégradée détruit le turbo)", "4. Mesurer pression suralimentation avec valise (turbo doit atteindre 1,5-2 bar selon moteur)", "5. Vérifier filtre à air (colmaté = turbo sous-alimenté)", "6. Avant remplacement : vérifier retour huile turbo (colmaté = nouveau turbo brûlé en < 1000 km)"], conseil_ci: "Ne jamais éteindre moteur à chaud sans laisser tourner 2 min — détruit le turbo. Huile de qualité 5W40 minimum." },
+  courroie_distribution: { titre: "Courroie de distribution / chaîne", etapes: ["1. Repérer marque constructeur pour l'intervalle (Renault/Peugeot 1.9D : 120 000 km / Toyota : chaîne mais surveiller tendeur)", "2. Vérifier galet tendeur (grince, jeu), galet enrouleur, pompe à eau (si commandée par courroie)", "3. Contrôle calage distribution (marques sur poulie vilebrequin + arbre à cames)", "4. Vérifier niveau huile moteur (huile basse = usure chaîne accélérée)", "5. En cas de saut de distribution : contrôler jeu soupapes avant redémarrage (risque choc piston/soupape)"], conseil_ci: "Courroie de distribution = panne gravissime si elle casse. Recommander remplacement préventif à 120 000 km ou 5 ans. Éviter les courroies 'made in China' sans marque." },
+  abs_capteur: { titre: "ABS / capteur de roue (C0031-C0050)", etapes: ["1. Identifier la roue fautive avec le code (C0031=AVD, C0034=AVG, C0037=ARD, C0040=ARG)", "2. Inspecter la roue phonique (rouille, boue, dent manquante — roue phonique dans la roulement en acier souvent rouillée en CI)", "3. Mesurer résistance capteur inductif : 900-2000 Ω selon marque", "4. Mesurer entrefer : max 1,5 mm (roue phonique souvent voilée après choc)", "5. Vérifier câblage capteur (coupure sous la voiture très fréquente sur les pistes en CI)", "6. Si roulement intégré : remplacer roulement complet"], conseil_ci: "Pistes latéritiques d'Abidjan et de l'intérieur = câblage coupé et roue phonique rouillée très fréquent. Inspecter systématiquement le câblage avant de commander un capteur." },
+  injecteurs_diesel: { titre: "Injecteurs diesel (P0201-P0206, déséquilibre)", etapes: ["1. Test balance injecteurs avec valise (contribution de chaque cylindre)", "2. Mesurer résistance bobine injecteur common rail : 0,5-1 Ω (piezo) ou 0,3-1 Ω (solénoïde)", "3. Test retour injecteurs (mesurer débit retour à la pompe — injecteur fuyant = débit retour élevé)", "4. Vérifier pression rail carburant (doit tenir à 1600-2000 bar selon moteur)", "5. Nettoyage ultrason avant remplacement (économise 80% du coût)", "6. Après remplacement : reprogrammation codes IMA/QR avec valise"], conseil_ci: "Diesel de mauvaise qualité = usure prématurée injecteurs. Recommander filtre à carburant changé tous les 30 000 km et séparateur eau/huile." },
+  can_communication: { titre: "Défaut réseau CAN / communication (U0xxx)", etapes: ["1. Vérifier alimentation et masse de TOUS les calculateurs (ECU, ABS, BSI, BVA)", "2. Mesurer résistance réseau CAN entre CAN H et CAN L : doit être 60 Ω (deux terminaisons 120 Ω en parallèle)", "3. Identifier le module déconnecté (valise — liste des modules communicants)", "4. Vérifier connecteurs humides ou oxydés (fréquent sous les ailes et sous plancher en CI)", "5. Chercher court-circuit sur CAN H ou CAN L (masse ou +12V)", "6. Contrôler fusibles alimentation calculateurs"], conseil_ci: "Eau dans les connecteurs = cause numéro 1 des pannes CAN à Abidjan (saison des pluies). Protéger les connecteurs avec de la graisse diélectrique." },
+  pompe_eau: { titre: "Pompe à eau", etapes: ["1. Vérifier jeu axial de la pompe (agiter la poulie — jeu = roulement usé)", "2. Écouter bruit de frottement au démarrage (roulement à sec)", "3. Vérifier fuite au niveau du joint (trace blanche calcaire autour de la pompe)", "4. Inspecter les ailettes de la turbine (aluminium corrodé = débit insuffisant)", "5. Si commandée par courroie de distribution : remplacer SYSTÉMATIQUEMENT avec la courroie", "6. Remplacer joint d'étanchéité + liquide refroidissement complet"], conseil_ci: "Pompes en aluminium à éviter — préférer pompe d'origine ou marque Gates/GMB. Toujours remplacer en même temps que la courroie." },
+  thermostat: { titre: "Thermostat défaillant (P0128)", etapes: ["1. P0128 = thermostat reste ouvert (moteur n'atteint pas 90°C)", "2. Vérifier avec valise la température moteur en route (doit monter à 85-95°C)", "3. Tester le thermostat : plonger dans eau chaude (> 85°C) — doit s'ouvrir", "4. Vérifier capteur ECT (peut donner une fausse indication de basse température)", "5. Remplacer thermostat + joint — opération peu coûteuse", "6. Vider et remplir liquide refroidissement après remplacement"], conseil_ci: "Thermostat souvent retiré par les mécaniciens 'pour éviter la surchauffe' — grave erreur qui empêche le moteur d'atteindre sa température de fonctionnement et augmente la consommation." },
+};
+
+function liveToolGetRepairProcedure(faultType: string, make?: string): string {
+  const normalized = faultType.trim().toLowerCase()
+    .replace(/é|è|ê/g, "e").replace(/à/g, "a").replace(/ô/g, "o").replace(/î|ï/g, "i");
+
+  const KEY_MAP: Record<string, string> = {
+    rate: "rates_allumage", misfir: "rates_allumage", "p0300": "rates_allumage",
+    pauvre: "melange_pauvre", lean: "melange_pauvre", "p0171": "melange_pauvre", "p0174": "melange_pauvre",
+    surchauffe: "surchauffe", chauffe: "surchauffe", temperature: "surchauffe",
+    alternateur: "alternateur", batterie: "alternateur", charge: "alternateur",
+    demarreur: "demarreur", starter: "demarreur", demarre: "demarreur",
+    pmh: "capteur_pmh", vilebrequin: "capteur_pmh", "p0335": "capteur_pmh",
+    maf: "maf_encrase", debitmetre: "maf_encrase", "p0100": "maf_encrase",
+    prechauffage: "bougies_prechauffage", bougie: "bougies_prechauffage", diesel_start: "bougies_prechauffage",
+    egr: "egr_bouche", "p0401": "egr_bouche",
+    turbo: "turbo", suralimentation: "turbo", "p2263": "turbo",
+    distribution: "courroie_distribution", courroie: "courroie_distribution", chaine: "courroie_distribution",
+    abs: "abs_capteur", capteur_roue: "abs_capteur", "c003": "abs_capteur",
+    injecteur: "injecteurs_diesel", injection: "injecteurs_diesel",
+    can: "can_communication", "u0": "can_communication", communication: "can_communication",
+    pompe_eau: "pompe_eau", "water pump": "pompe_eau",
+    thermostat: "thermostat", "p0128": "thermostat",
+  };
+
+  let key: string | undefined;
+  for (const [k, v] of Object.entries(KEY_MAP)) {
+    if (normalized.includes(k)) { key = v; break; }
+  }
+
+  if (!key) {
+    return `Procédure non trouvée pour "${faultType}". Procédures disponibles : ratés d'allumage, mélange pauvre, surchauffe, alternateur, démarreur, capteur PMH, MAF encrassé, bougies préchauffage, EGR bouché, turbo, courroie distribution, ABS capteur, injecteurs diesel, réseau CAN, pompe à eau, thermostat.`;
+  }
+
+  const proc = REPAIR_PROCEDURES[key];
+  const makeNote = make ? ` (${make})` : "";
+  return `Procédure${makeNote} — ${proc.titre}\n${proc.etapes.join("\n")}\nConseil Côte d'Ivoire : ${proc.conseil_ci}`;
 }
 
 // Récupère les N derniers diagnostics enregistrés pour un numéro de téléphone donné.
@@ -1702,6 +1802,27 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
         vehicule: { type: Type.STRING, description: "Marque, modèle et année, ex: 'Toyota Corolla 2015'." },
       },
       required: ["piece", "vehicule"],
+    },
+  },
+  {
+    name: "obtenir_procedure_reparation",
+    description: "Retourne instantanément une procédure de réparation étape par étape pour les 16 pannes les plus fréquentes en Côte d'Ivoire (ratés allumage, surchauffe, alternateur, démarreur, PMH, MAF, EGR, turbo, courroie distribution, ABS, injecteurs diesel, réseau CAN, etc.). À utiliser dès qu'une panne ou un code est identifié pour guider le mécanicien pas à pas.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        panne: { type: Type.STRING, description: "Type de panne ou code DTC, ex: 'surchauffe', 'P0300', 'capteur PMH', 'EGR bouché', 'turbo', 'courroie distribution'." },
+        marque: { type: Type.STRING, description: "Marque du véhicule si connue, ex: 'Toyota', 'Peugeot'. Omettre si inconnu." },
+      },
+      required: ["panne"],
+    },
+  },
+  {
+    name: "lire_resultats_scanner",
+    description: "Lit les résultats du dernier diagnostic effectué par l'Autopilot Scanner DiagAssist sur la tablette. Retourne les codes DTC trouvés et le résumé. À utiliser quand le mécanicien a déjà fait un scan avec la tablette et que tu veux connaître les codes trouvés sans qu'il te les dicte.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+      required: [],
     },
   },
   {
@@ -4662,11 +4783,14 @@ Directives pour ce tour :
   });
 
   // DiagAssist V2 — Screening / Coaching module. Uses the existing authenticated session store.
+  // scannerResultsByPhone lets the live voice agent read scanner autopilot results.
+  const scannerResultsByPhone = new Map<string, { dtcs: string[]; summary: string; completedAt: number }>();
   registerScreening(app, server, {
     requireAuth,
     getEffectivePlan,
     sessions,
     dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
+    scannerResults: scannerResultsByPhone,
   });
 
   // Paiements d'abonnement automatisés (Orange/Wave/MTN/Moov via Jèko) : à la confirmation par
@@ -4935,6 +5059,17 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                                 const lim = Math.min(5, Math.max(1, Number(fc.args?.limite) || 3));
                                 const hist = await liveGetRecentDiagnostics(histPhone, lim);
                                 result = hist || "Aucun diagnostic précédent enregistré pour ce client.";
+                              }
+                            } else if (fc.name === "obtenir_procedure_reparation") {
+                              result = liveToolGetRepairProcedure(String(fc.args?.panne || ""), fc.args?.marque ? String(fc.args.marque) : undefined);
+                            } else if (fc.name === "lire_resultats_scanner") {
+                              const scanPhone = (clientWs as any)._authPhone;
+                              const scanRes = scanPhone ? scannerResultsByPhone.get(scanPhone) : undefined;
+                              if (scanRes && Date.now() - scanRes.completedAt < 3 * 60 * 60 * 1000) {
+                                const age = Math.round((Date.now() - scanRes.completedAt) / 60000);
+                                result = `Résultats scanner (il y a ${age} min) : ${scanRes.summary}. Codes DTC : ${scanRes.dtcs.length > 0 ? scanRes.dtcs.join(", ") : "aucun code détecté"}.`;
+                              } else {
+                                result = "Aucun résultat de scanner récent. Le mécanicien doit d'abord lancer le Scanner DiagAssist et utiliser l'Autopilot sur sa tablette.";
                               }
                             } else if (fc.name === "enregistrer_diagnostic") {
                               const authPhone = (clientWs as any)._authPhone;
