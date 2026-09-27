@@ -75,7 +75,8 @@ async function runAutoPilotStep(
   sid: string,
   clients: Map<string, Set<any>>,
   sendAll: (id: string, msg: any, except?: any) => void,
-  scannerResults?: Map<string, { dtcs: string[]; summary: string; completedAt: number }>
+  scannerResults?: Map<string, { dtcs: string[]; summary: string; completedAt: number }>,
+  dbQuery?: (sql: string, params?: any[]) => Promise<any>
 ): Promise<void> {
   const now = Date.now();
   if (!s.autoPilotActive) return;
@@ -159,8 +160,17 @@ Regarde l'écran et choisis la prochaine action. Utilise exactement un des outil
     const doneDtcs: string[] = args.dtcs || [];
     const doneSummary: string = args.summary || "";
     sendAll(sid, { type: "pilot_done", reason: "done", summary: doneSummary, dtcs: doneDtcs });
+    const completedAt = Date.now();
     if (scannerResults && s.technicianPhone) {
-      scannerResults.set(s.technicianPhone, { dtcs: doneDtcs, summary: doneSummary, completedAt: Date.now() });
+      scannerResults.set(s.technicianPhone, { dtcs: doneDtcs, summary: doneSummary, completedAt });
+    }
+    if (dbQuery && s.technicianPhone) {
+      dbQuery(
+        `INSERT INTO scanner_autopilot_results (technician_phone, dtcs, summary, completed_at)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (technician_phone) DO UPDATE SET dtcs=$2, summary=$3, completed_at=$4`,
+        [s.technicianPhone, JSON.stringify(doneDtcs), doneSummary, completedAt]
+      ).catch((err: any) => console.error("[PILOT][DB] Persist résultat échoué:", err.message));
     }
     return;
   }
@@ -768,7 +778,7 @@ Ne fabrique aucune donnée absente de l'image.`,
           s.lastFrame = m;
           sendAll(sid, m);
           if (s.autoPilotActive) {
-            runAutoPilotStep(s, imageData, sid, clients, sendAll, deps.scannerResults).catch((err: any) =>
+            runAutoPilotStep(s, imageData, sid, clients, sendAll, deps.scannerResults, deps.dbQuery).catch((err: any) =>
               console.error("[PILOT] step error:", err?.message || err)
             );
           }

@@ -392,6 +392,28 @@ async function initDatabase(): Promise<void> {
     );
     ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS jeko_id TEXT;
     CREATE INDEX IF NOT EXISTS idx_jeko_payments_phone ON jeko_payments (phone);
+
+    -- Résultats autopilot scanner : persistés pour survivre aux redémarrages du serveur.
+    CREATE TABLE IF NOT EXISTS scanner_autopilot_results (
+      technician_phone TEXT PRIMARY KEY,
+      dtcs JSONB NOT NULL DEFAULT '[]',
+      summary TEXT NOT NULL DEFAULT '',
+      completed_at BIGINT NOT NULL
+    );
+
+    -- Formations DiagAssist Academy : catalogue géré en base.
+    CREATE TABLE IF NOT EXISTS shop_formations (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      duration TEXT NOT NULL,
+      level TEXT NOT NULL,
+      price_fcfa INTEGER NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      next_date TEXT NOT NULL DEFAULT 'Prochainement',
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT * 1000
+    );
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 
@@ -1266,7 +1288,7 @@ const OBD_CODES: Record<string, { cause: string; action: string }> = {
   P1455: { cause: "[Toyota] Grande fuite système EVAP", action: "Vérifier bouchon réservoir, canister, joints durites EVAP" },
   P1500: { cause: "[Toyota] Circuit signal démarreur — défaillance", action: "Vérifier contacteur de démarrage, câblage signal STA" },
   P1520: { cause: "[Toyota] Circuit interrupteur stop — défaillance", action: "Vérifier contacteur pédale de frein" },
-  P1600: { cause: "[Toyota] Défaillance mémoire ECU / communication série", action: "Réinitialiser ECU, vérifier alimentation ECU (masse propre)" },
+  P1600_T: { cause: "[Toyota] Défaillance mémoire ECU / communication série", action: "Réinitialiser ECU, vérifier alimentation ECU (masse propre)" },
   P1780: { cause: "[Toyota] Circuit interrupteur position boîte (P/N) — défaillance", action: "Vérifier contacteur neutre BVA, câblage" },
   // Peugeot / Citroën codes spécifiques
   P1315: { cause: "[Peugeot] Pré-allumage détecté", action: "Vérifier bougies, qualité carburant, capteur cliquetis" },
@@ -1823,6 +1845,17 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
       type: Type.OBJECT,
       properties: {},
       required: [],
+    },
+  },
+  {
+    name: "chercher_catalogue_boutique",
+    description: "Recherche un produit dans la boutique DiagAssist (valises, outils, accessoires). Retourne le nom, le prix et la disponibilité des produits correspondants. À utiliser quand le mécanicien demande si on vend tel outil, quel est son prix, ou s'il est disponible.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        recherche: { type: Type.STRING, description: "Nom ou type du produit recherché, ex: 'Launch X431', 'valise multimarque', 'scanner Toyota', 'câble OBD2'." },
+      },
+      required: ["recherche"],
     },
   },
   {
@@ -3590,6 +3623,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, product: rows[0] });
   });
 
+  // --- Public : formations ---
+  app.get("/api/shop/formations", async (_req, res) => {
+    if (!dbPool) return res.json({ success: true, formations: [] });
+    const { rows } = await dbPool.query(
+      "SELECT * FROM shop_formations WHERE is_active = true ORDER BY sort_order ASC, id ASC"
+    );
+    res.json({ success: true, formations: rows });
+  });
+
   // Crée/retrouve le client CRM par téléphone (appelé à chaque commande ou demande)
   async function upsertShopCustomer(phone: string, name?: string, city?: string, category?: string) {
     if (!dbPool) return;
@@ -5064,12 +5106,47 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               result = liveToolGetRepairProcedure(String(fc.args?.panne || ""), fc.args?.marque ? String(fc.args.marque) : undefined);
                             } else if (fc.name === "lire_resultats_scanner") {
                               const scanPhone = (clientWs as any)._authPhone;
-                              const scanRes = scanPhone ? scannerResultsByPhone.get(scanPhone) : undefined;
+                              let scanRes = scanPhone ? scannerResultsByPhone.get(scanPhone) : undefined;
+                              // Fallback DB si résultat absent de la map en mémoire (redémarrage serveur)
+                              if (!scanRes && scanPhone && dbPool) {
+                                try {
+                                  const dbRow = await dbPool.query(
+                                    "SELECT dtcs, summary, completed_at FROM scanner_autopilot_results WHERE technician_phone = $1",
+                                    [scanPhone]
+                                  );
+                                  if (dbRow.rows.length > 0) {
+                                    const r = dbRow.rows[0];
+                                    scanRes = { dtcs: r.dtcs || [], summary: r.summary || "", completedAt: Number(r.completed_at) };
+                                    scannerResultsByPhone.set(scanPhone, scanRes);
+                                  }
+                                } catch {}
+                              }
                               if (scanRes && Date.now() - scanRes.completedAt < 3 * 60 * 60 * 1000) {
                                 const age = Math.round((Date.now() - scanRes.completedAt) / 60000);
                                 result = `Résultats scanner (il y a ${age} min) : ${scanRes.summary}. Codes DTC : ${scanRes.dtcs.length > 0 ? scanRes.dtcs.join(", ") : "aucun code détecté"}.`;
                               } else {
                                 result = "Aucun résultat de scanner récent. Le mécanicien doit d'abord lancer le Scanner DiagAssist et utiliser l'Autopilot sur sa tablette.";
+                              }
+                            } else if (fc.name === "chercher_catalogue_boutique") {
+                              if (!dbPool) {
+                                result = "Catalogue indisponible pour le moment.";
+                              } else {
+                                try {
+                                  const { rows: prodRows } = await dbPool.query(
+                                    "SELECT name, price_fcfa, availability FROM shop_products WHERE is_active = true AND name ILIKE $1 ORDER BY name ASC LIMIT 5",
+                                    [`%${String(fc.args?.recherche || "").slice(0, 100)}%`]
+                                  );
+                                  if (prodRows.length === 0) {
+                                    result = `Aucun produit trouvé pour "${fc.args?.recherche}". Dis au mécanicien de contacter la boutique DiagAssist au 0707312797 pour vérifier la disponibilité.`;
+                                  } else {
+                                    const lines = prodRows.map((p: any) =>
+                                      `${p.name} — ${p.price_fcfa ? Number(p.price_fcfa).toLocaleString("fr-FR") + " F CFA" : "Prix à confirmer"} (${p.availability || "disponibilité à confirmer"})`
+                                    );
+                                    result = `Produits trouvés dans la boutique DiagAssist :\n${lines.join("\n")}\nPour commander, appeler le 0707312797.`;
+                                  }
+                                } catch {
+                                  result = "Erreur lors de la recherche dans le catalogue.";
+                                }
                               }
                             } else if (fc.name === "enregistrer_diagnostic") {
                               const authPhone = (clientWs as any)._authPhone;

@@ -1010,27 +1010,20 @@ function ShopTracking() {
 }
 
 // ─── FORMATIONS ───────────────────────────────────────────────────────────────
+const FORMATIONS_FALLBACK = [
+  { title: "Diagnostic Électronique Automobile — Niveau 1", duration: "3 jours (21h)", level: "Débutant", price_fcfa: 150000, description: "Bases du diagnostic OBD2, lecture de codes défauts, utilisation d'une valise multimarque sur véhicules réels.", next_date: "Prochainement" },
+  { title: "Diagnostic Avancé — Oscilloscope & Multimètre", duration: "2 jours (14h)", level: "Intermédiaire", price_fcfa: 120000, description: "Analyse de signaux électriques, diagnostic de capteurs, test de circuits sur véhicules.", next_date: "Prochainement" },
+  { title: "Programmation & Codage ECU", duration: "2 jours (14h)", level: "Avancé", price_fcfa: 180000, description: "Reprogrammation d'unités de contrôle, codage de clés, calibration ADAS avec outil J2534.", next_date: "Prochainement" },
+];
+
 function ShopFormations() {
-  const formations = [
-    {
-      title: "Diagnostic Électronique Automobile — Niveau 1",
-      duration: "3 jours (21h)", level: "Débutant", price: 150000,
-      desc: "Bases du diagnostic OBD2, lecture de codes défauts, utilisation d'une valise multimarque sur véhicules réels.",
-      next: "Prochainement",
-    },
-    {
-      title: "Diagnostic Avancé — Oscilloscope & Multimètre",
-      duration: "2 jours (14h)", level: "Intermédiaire", price: 120000,
-      desc: "Analyse de signaux électriques, diagnostic de capteurs, test de circuits sur véhicules.",
-      next: "Prochainement",
-    },
-    {
-      title: "Programmation & Codage ECU",
-      duration: "2 jours (14h)", level: "Avancé", price: 180000,
-      desc: "Reprogrammation d'unités de contrôle, codage de clés, calibration ADAS avec outil J2534.",
-      next: "Prochainement",
-    },
-  ];
+  const [formations, setFormations] = React.useState<any[]>(FORMATIONS_FALLBACK);
+  React.useEffect(() => {
+    fetch("/api/shop/formations")
+      .then(r => r.json())
+      .then(d => { if (d.success && Array.isArray(d.formations) && d.formations.length > 0) setFormations(d.formations); })
+      .catch(() => {});
+  }, []);
 
   return (
     <div style={{ background: C.black }} className="min-h-screen">
@@ -1064,12 +1057,12 @@ function ShopFormations() {
                   <span className="text-[10px] font-black uppercase text-neutral-500">{f.level}</span>
                 </div>
                 <h3 className="text-sm font-black text-white leading-snug">{f.title}</h3>
-                <p className="text-xs text-neutral-400 leading-relaxed">{f.desc}</p>
+                <p className="text-xs text-neutral-400 leading-relaxed">{f.description}</p>
                 <div className="flex flex-wrap gap-2 text-[10px] font-bold text-neutral-400">
                   <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {f.duration}</span>
-                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {f.next}</span>
+                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {f.next_date}</span>
                 </div>
-                <p className="text-base font-black text-white">{fcfa(f.price)}</p>
+                <p className="text-base font-black text-white">{fcfa(f.price_fcfa)}</p>
               </div>
               <div className="p-4 border-t" style={{ borderColor: C.border }}>
                 <a href={waLink(`Bonjour DiagAssist, je souhaite m'inscrire à la formation "${f.title}". Pouvez-vous me donner les détails ?`)}
