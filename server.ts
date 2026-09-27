@@ -205,6 +205,18 @@ async function initDatabase(): Promise<void> {
       timestamp BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_connection_history_timestamp ON connection_history (timestamp DESC);
+    -- État persistant de l'Agent Live : permet de reprendre un diagnostic après coupure/reconnexion.
+    CREATE TABLE IF NOT EXISTS live_agent_sessions (
+      session_id TEXT PRIMARY KEY,
+      phone TEXT NOT NULL,
+      state JSONB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_live_agent_sessions_phone ON live_agent_sessions (phone, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_live_agent_sessions_active ON live_agent_sessions (phone, status, updated_at DESC);
+
     CREATE TABLE IF NOT EXISTS live_diagnostics (
       id SERIAL PRIMARY KEY,
       phone TEXT NOT NULL,
@@ -1174,6 +1186,43 @@ function pilotLiveDiagnostic(args: any, state: LiveAgentState): string {
     prochaine_etape: liveAgentNextStep(state),
     regle: "Une seule action/test à la fois. Aucun remplacement de pièce sans preuve."
   });
+}
+
+async function saveLiveAgentState(phone: string, state: LiveAgentState): Promise<void> {
+  if (!dbPool || !phone) return;
+  const status = state.concluded ? "closed" : "active";
+  try {
+    await dbPool.query(
+      `INSERT INTO live_agent_sessions (session_id, phone, state, status, created_at, updated_at)
+       VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+       ON CONFLICT (session_id) DO UPDATE SET state = EXCLUDED.state, status = EXCLUDED.status, updated_at = EXCLUDED.updated_at`,
+      [state.sessionId, phone, JSON.stringify(state), status, Date.now(), Date.now()]
+    );
+  } catch (err) {
+    console.warn("[Live Agent] Échec persistance état:", err);
+  }
+}
+
+async function resumeLiveAgentState(phone: string, newSessionId: string, context = ""): Promise<LiveAgentState> {
+  const fresh = createLiveAgentState(newSessionId, context);
+  if (!dbPool || !phone) return fresh;
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT state FROM live_agent_sessions
+       WHERE phone = $1 AND status = 'active' AND updated_at > $2
+       ORDER BY updated_at DESC LIMIT 1`,
+      [phone, Date.now() - 24 * 60 * 60 * 1000]
+    );
+    if (!rows[0]?.state) return fresh;
+    const restored = rows[0].state as LiveAgentState;
+    if (!restored || typeof restored !== "object") return fresh;
+    restored.sessionId = newSessionId;
+    liveAgentStates.set(newSessionId, restored);
+    return restored;
+  } catch (err) {
+    console.warn("[Live Agent] Échec reprise état:", err);
+    return fresh;
+  }
 }
 
 const scannerGuideCache = new Map<string,string>();
@@ -4317,8 +4366,10 @@ Directives pour ce tour :
 
         if (message.type === "start") {
           console.log("[WebSocket] Starting Gemini Live Session with context...");
-          liveAgentState = createLiveAgentState(liveAgentSessionId, String(message.diagnosticContext || ""));
-          clientWs.send(JSON.stringify({ type: "agentState", sessionId: liveAgentSessionId, phase: liveAgentState.phase }));
+          const livePhone = (clientWs as any)._authPhone || "";
+          liveAgentState = await resumeLiveAgentState(livePhone, liveAgentSessionId, String(message.diagnosticContext || ""));
+          await saveLiveAgentState(livePhone, liveAgentState);
+          clientWs.send(JSON.stringify({ type: "agentState", sessionId: liveAgentSessionId, phase: liveAgentState.phase, resumed: liveAgentState.tour > 0 }));
           const liveNameInstruction = getNameInstruction((clientWs as any)._authPhone);
           const authPhoneForHistory = (clientWs as any)._authPhone;
           const recentHistory = authPhoneForHistory ? await liveGetRecentDiagnostics(authPhoneForHistory, 3) : "";
@@ -4465,6 +4516,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                             if (fc.name === "piloter_diagnostic") {
                               if (!liveAgentState) liveAgentState = createLiveAgentState(liveAgentSessionId, String(message.diagnosticContext || ""));
                               result = pilotLiveDiagnostic(fc.args || {}, liveAgentState);
+                              await saveLiveAgentState((clientWs as any)._authPhone || "", liveAgentState);
                               clientWs.send(JSON.stringify({ type: "agentState", state: JSON.parse(result) }));
                             } else if (fc.name === "consulter_guide_scanner") {
                               result = liveToolGetScannerGuide(String(fc.args?.scanner || ""));
