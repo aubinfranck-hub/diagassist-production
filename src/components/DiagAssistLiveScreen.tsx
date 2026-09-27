@@ -161,18 +161,19 @@ export default function DiagAssistLiveScreen({
   // Register Audio Ad Playback Handler for Priority Audio Ads at Natural Pauses
   useEffect(() => {
     globalAdManager.registerAudioPlaybackHandler((ad) => {
+      // Une publicité ne doit JAMAIS s'injecter pendant un appel Live :
+      // elle crée une seconde voix et peut être perçue comme une conversation concurrente.
+      if (callState === "live" || callState === "connecting") return;
       console.log("[DiagAssistLiveScreen] Playing priority audio ad at natural pause:", ad.title);
       setToast(`📢 Annonce vocale insérée en pause naturelle : ${ad.title}`);
       if (ad.mp3Url) {
         const audio = new Audio(ad.mp3Url);
-        audio.play().catch(() => {
-          speakText(ad.vocalScript);
-        });
+        audio.play().catch(() => speakText(ad.vocalScript));
       } else if (ad.vocalScript) {
         speakText(ad.vocalScript);
       }
     });
-  }, []);
+  }, [callState]);
 
   // ---------------------------------------------------------------------------
   // SECTION 10: CLIENT-SIDE DIAGNOSTIC LOOP FUNCTIONS
@@ -361,6 +362,8 @@ export default function DiagAssistLiveScreen({
   // Reconnexion automatique si la connexion WebSocket coupe de façon inattendue (courant en
   // 4G dégradée/3G) pendant un appel toujours en cours — jusqu'à 2 tentatives.
   const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const callGenerationRef = useRef(0);
   const audioCtxInputRef = useRef<AudioContext | null>(null);
   const audioCtxOutputRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -583,6 +586,18 @@ export default function DiagAssistLiveScreen({
 
   // Start real-time Gemini Live WebSocket call
   const startLiveCallSession = async () => {
+    const generation = ++callGenerationRef.current;
+    // Ne jamais laisser une ancienne session audio/WebSocket survivre à une reconnexion.
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    stopAllAudioPlayback();
+    if (ttsAudioRef.current) {
+      try { ttsAudioRef.current.pause(); } catch {}
+      ttsAudioRef.current = null;
+    }
+    try { window.speechSynthesis?.cancel(); } catch {}
     setCallState("connecting");
     setLiveWhatsappUrl(null);
     playMicStartSound();
@@ -614,6 +629,10 @@ export default function DiagAssistLiveScreen({
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (generation !== callGenerationRef.current || wsRef.current !== ws) {
+          try { ws.close(); } catch {}
+          return;
+        }
         console.log("[LiveWS] Connected to Gemini Live server.");
         reconnectAttemptsRef.current = 0; // connexion réussie, on réinitialise le compteur
 
@@ -651,9 +670,8 @@ Codes DTC: ${dtcCodes}`;
           } else if (msg.type === "text") {
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "DiagAssist: " + msg.text);
           } else if (msg.type === "turnComplete") {
-            // End of AI turn: Gemini is silent -> update status and trigger priority audio queue at natural pause
+            // En Live, aucune publicité ou autre voix ne doit être injectée.
             globalAdManager.setGeminiSpeakingStatus(false);
-            maybeTriggerAutomaticVocalAd();
           } else if (msg.type === "whatsappLink") {
             // Le diagnostic vient d'être enregistré côté serveur ; le mécanicien envoie lui-même
             // le récapitulatif en un tap (pas d'envoi automatique côté serveur, par choix explicite).
@@ -668,9 +686,8 @@ Codes DTC: ${dtcCodes}`;
 
       ws.onerror = (err) => {
         console.warn("WebSocket Live error:", err);
-        setToast("Réseau vocal indisponible. Mode vocal par synthèse activé.");
-        setCallState("live");
-        setIsLiveActive(true);
+        // Ne pas lancer une deuxième voix locale ici : on attend onclose et sa reconnexion.
+        setToast("Connexion vocale instable — reconnexion en cours...");
       };
 
       ws.onclose = () => {
@@ -681,11 +698,23 @@ Codes DTC: ${dtcCodes}`;
         if (wsRef.current === ws && reconnectAttemptsRef.current < 2) {
           reconnectAttemptsRef.current += 1;
           setToast(`Connexion vocale interrompue — nouvelle tentative (${reconnectAttemptsRef.current}/2)...`);
-          setTimeout(() => {
-            if (wsRef.current === ws) {
+          reconnectTimerRef.current = setTimeout(() => {
+            reconnectTimerRef.current = null;
+            if (wsRef.current === ws && generation === callGenerationRef.current && isLiveActive) {
+              // Nettoyage complet avant de recréer le WebSocket et les AudioContexts.
+              wsRef.current = null;
+              try { micStreamRef.current?.getTracks().forEach((track) => track.stop()); } catch {}
+              micStreamRef.current = null;
+              try { processorRef.current?.disconnect(); } catch {}
+              processorRef.current = null;
+              try { audioCtxInputRef.current?.close(); } catch {}
+              audioCtxInputRef.current = null;
+              try { audioCtxOutputRef.current?.close(); } catch {}
+              audioCtxOutputRef.current = null;
+              stopAllAudioPlayback();
               startLiveCallSession();
             }
-          }, 1200);
+          }, 900);
         }
       };
 
@@ -728,6 +757,11 @@ Codes DTC: ${dtcCodes}`;
   const stopLiveCallSession = () => {
     playMicStopSound();
 
+    callGenerationRef.current++;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     if (wsRef.current) {
       try { wsRef.current.close(); } catch (e) {}
       wsRef.current = null;
@@ -790,6 +824,8 @@ Codes DTC: ${dtcCodes}`;
 
   // Automatic Vocal Ad Triggering between AI messages (respects priority, interval, and max limits)
   const maybeTriggerAutomaticVocalAd = () => {
+    // Les appels Live sont strictement mono-voix : aucune annonce commerciale pendant le duplex.
+    if (callState === "live" || callState === "connecting") return;
     const queuedAd = globalAdManager.playAudioAd({
       userPlan: isPremiumActive ? "premium" : undefined,
       force: false
