@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { AnimatePresence } from "motion/react";
 import { 
-  Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText, 
+  Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText,
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench, Chrome,
-  Sun, Moon, Monitor, Users
+  Sun, Moon, Monitor, Users, ShoppingBag
 } from "lucide-react";
 
 import DiagnosticForm from "./components/DiagnosticForm";
@@ -830,6 +830,23 @@ export default function App() {
                   </div>
                   {activeTab === "prices" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                 </button>
+
+                {/* Boutique DiagAssist — lien externe avec badge clignotant */}
+                <a
+                  href="/boutique"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer bg-red-600/10 border border-red-500/30 text-red-400 hover:bg-red-600/20 hover:text-red-300 group"
+                >
+                  <div className="flex items-center gap-3">
+                    <ShoppingBag className="w-4.5 h-4.5 text-red-400 group-hover:animate-bounce" />
+                    <span>Boutique</span>
+                  </div>
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                  </span>
+                </a>
               </nav>
             </div>
 
@@ -1117,6 +1134,21 @@ export default function App() {
               {isAdminAccount ? <Users className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
               <span className="text-[9px] font-black uppercase tracking-wider">{isAdminAccount ? "Clients" : "Offres"}</span>
             </button>
+
+            {/* Boutique mobile */}
+            <a
+              href="/boutique"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer text-red-400 relative"
+            >
+              <ShoppingBag className="w-5 h-5 animate-pulse" />
+              <span className="text-[9px] font-black uppercase tracking-wider">Boutique</span>
+              <span className="absolute top-1 right-3 flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
+              </span>
+            </a>
           </nav>
 
           {/* MAIN CONTAINER PANEL */}
