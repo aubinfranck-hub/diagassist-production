@@ -56,7 +56,9 @@ async function loginIfNeeded() {
   const current = p.url();
   if (current.startsWith(HP_WEB_URL) && !/login|signin|connexion/i.test(current) && lastLoginAt) return p;
 
+  console.log(`[HP-Web] Opening ${HP_WEB_URL}`);
   await p.goto(HP_WEB_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
+  console.log(`[HP-Web] Login page URL=${p.url()} title=${await p.title().catch(() => "")}`);
   await p.waitForTimeout(500);
 
   const user = p.locator('input[type="email"], input[name*="user" i], input[name*="login" i], input[autocomplete="username"]').first();
@@ -72,6 +74,7 @@ async function loginIfNeeded() {
     await p.waitForTimeout(800);
   }
 
+  console.log(`[HP-Web] After login URL=${p.url()} title=${await p.title().catch(() => "")}`);
   if (/login|signin|connexion/i.test(p.url())) {
     throw new Error("HP-Web login could not be completed; selectors need discovery");
   }
@@ -86,6 +89,7 @@ async function searchByDom(query) {
   const searchText = [query.vin, query.make, query.model, query.year, query.engine, query.q]
     .map(normalize).filter(Boolean).join(" ");
 
+  console.log(`[HP-Web] Search page URL=${p.url()} title=${await p.title().catch(() => "")}`);
   const inputs = p.locator('input:not([type="password"]), textarea').filter({ visible: true });
   const count = await inputs.count();
   let searchInput = null;
@@ -103,6 +107,7 @@ async function searchByDom(query) {
   }
   if (!searchInput && count) searchInput = inputs.nth(0);
   if (!searchInput) throw new Error("HP-Web search field not discovered");
+  console.log(`[HP-Web] Search input discovered for query=${searchText}`);
 
   await searchInput.fill(searchText);
   await searchInput.press("Enter").catch(() => {});
