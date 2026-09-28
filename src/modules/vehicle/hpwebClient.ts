@@ -36,7 +36,7 @@ export class HpWebGateway implements VehicleDataGateway {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4500);
+    const timeout = setTimeout(() => controller.abort(), 20000);
 
     try {
       const response = await fetch(base + "/vehicle/search", {
