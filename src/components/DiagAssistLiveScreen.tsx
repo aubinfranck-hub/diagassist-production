@@ -493,8 +493,12 @@ export default function DiagAssistLiveScreen({
       let startTime = nextStartTimeRef.current;
       // BUG/AMÉLIORATION : marge de sécurité augmentée (0.02s → 0.12s) pour absorber les à-coups
       // réseau en 4G dégradée/3G. Un peu plus de latence au profit d'une voix qui ne hache plus.
+      // Le tout premier chunk de l'appel (accueil "DiagAssist, je t'écoute…") part avec une marge
+      // plus large (0.35s) : c'est le moment où la connexion WebSocket/Gemini Live est la moins
+      // stable, donc le plus exposé aux micro-coupures qui rendaient l'accueil haché/inintelligible.
       if (startTime < now) {
-        startTime = now + 0.12;
+        const isFirstChunkOfCall = nextStartTimeRef.current === 0;
+        startTime = now + (isFirstChunkOfCall ? 0.35 : 0.12);
       }
       source.start(startTime);
       nextStartTimeRef.current = startTime + buffer.duration;

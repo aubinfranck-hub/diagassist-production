@@ -5166,7 +5166,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                   role: "user",
                   parts: [
                     {
-                      text: "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'DiagAssist, je t'écoute.' puis rappelle brièvement le symptôme majeur ou code défaut de ce véhicule."
+                      text: "Dis EXACTEMENT ces mots en premier, sans les modifier : « DiagAssist, je t'écoute. » Puis, dans la même phrase ou la suivante, rappelle en une phrase courte le symptôme majeur ou code défaut de ce véhicule."
                     }
                   ]
                 }
