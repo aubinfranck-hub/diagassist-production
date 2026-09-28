@@ -5165,7 +5165,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             // Identification HP-Web automatique : si le contexte Live contient un VIN,
             // la recherche véhicule démarre immédiatement, sans attendre que le modèle
             // décide d'appeler l'outil. Le résultat est ensuite injecté dans le contexte Live.
-            const contextVinMatch = String(message.diagnosticContext || "").toUpperCase().match(/\\b[A-HJ-NPR-Z0-9]{17}\\b/);
+            const contextVinMatch = String(message.diagnosticContext || "").toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/);
             if (contextVinMatch) {
               const contextVin = contextVinMatch[0];
               console.log("[HP-Web] Recherche automatique au démarrage Live pour VIN:", contextVin);
