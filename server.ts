@@ -4881,6 +4881,8 @@ Directives pour ce tour :
   wss.on("connection", (clientWs) => {
     console.log("[WebSocket] Client connected to real-time voice bridge.");
     let geminiSession: any = null;
+    let deepSeekFallbackActive = false;
+    let deepSeekFallbackSystemInstruction = "";
     let isClosed = false;
     const liveAgentSessionId = crypto.randomBytes(12).toString("hex");
     let liveAgentState: LiveAgentState | null = null;
@@ -4961,6 +4963,7 @@ question technique ponctuelle sans diagnostic global établi.
 
 FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisques, pas de hashtags, pas de puces). Rédige uniquement de simples phrases fluides et naturelles.`;
 
+          deepSeekFallbackSystemInstruction = systemInstruction;
           try {
             geminiSession = await getAIClient().live.connect({
               model: "gemini-3.1-flash-live-preview",
@@ -5175,8 +5178,26 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
 
           } catch (err: any) {
             console.error("[WebSocket] Failed to connect to Gemini Live:", err);
-            clientWs.send(JSON.stringify({ type: "error", message: "Impossible de démarrer la session vocale Gemini Live: " + err.message }));
-            clientWs.close();
+            const deepSeekKeyConfigured = Boolean((process.env.DEEPSEEK_API_KEY || "").trim());
+            if (deepSeekKeyConfigured) {
+              try {
+                deepSeekFallbackActive = true;
+                console.warn("[Fallback Live] Gemini Live indisponible/quota: activation du mode texte DeepSeek.");
+                const fallbackPrompt = "La session vocale Gemini Live est indisponible. Accueille immédiatement le mécanicien en 1 à 2 phrases et demande-lui son symptôme, son code défaut ou sa question. Reste dans le cadre du diagnostic automobile.";
+                const fallback = await callDeepSeekFallback(fallbackPrompt, {
+                  systemInstruction: deepSeekFallbackSystemInstruction,
+                });
+                clientWs.send(JSON.stringify({ type: "connected", fallback: "deepseek" }));
+                clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
+              } catch (dsErr: any) {
+                console.error("[DeepSeek Live Fallback] Échec:", dsErr.message || dsErr);
+                clientWs.send(JSON.stringify({ type: "error", message: "Gemini Live et le mode secours DeepSeek sont indisponibles." }));
+                clientWs.close();
+              }
+            } else {
+              clientWs.send(JSON.stringify({ type: "error", message: "Gemini Live est indisponible et DEEPSEEK_API_KEY n'est pas configuré." }));
+              clientWs.close();
+            }
           }
         } else if (message.type === "audio") {
           if (geminiSession) {
@@ -5226,6 +5247,16 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                 }
               ]
             });
+          } else if (deepSeekFallbackActive) {
+            try {
+              const fallback = await callDeepSeekFallback(String(message.text || ""), {
+                systemInstruction: deepSeekFallbackSystemInstruction,
+              });
+              clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
+            } catch (dsErr: any) {
+              console.error("[DeepSeek Live Fallback] Erreur sur message texte:", dsErr.message || dsErr);
+              clientWs.send(JSON.stringify({ type: "error", message: "Le mode secours DeepSeek n'a pas pu répondre." }));
+            }
           }
         }
       } catch (err: any) {
