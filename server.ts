@@ -5162,6 +5162,38 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             console.log("[WebSocket] Gemini Live session connected successfully.");
             clientWs.send(JSON.stringify({ type: "connected" }));
 
+            // Identification HP-Web automatique : si le contexte Live contient un VIN,
+            // la recherche véhicule démarre immédiatement, sans attendre que le modèle
+            // décide d'appeler l'outil. Le résultat est ensuite injecté dans le contexte Live.
+            const contextVinMatch = String(message.diagnosticContext || "").toUpperCase().match(/\\b[A-HJ-NPR-Z0-9]{17}\\b/);
+            if (contextVinMatch) {
+              const contextVin = contextVinMatch[0];
+              console.log("[HP-Web] Recherche automatique au démarrage Live pour VIN:", contextVin);
+              searchHpWeb({ vin: contextVin })
+                .then((results) => {
+                  console.log("[HP-Web] Recherche automatique terminée:", results.length, "résultat(s)");
+                  if (results.length && liveAgentState) {
+                    const vehicle = results[0];
+                    liveAgentState.vehicle = [vehicle.make, vehicle.model, vehicle.year, vehicle.engine].filter(Boolean).join(" ");
+                    liveAgentState.evidence.push("Identification HP-Web automatique : " + JSON.stringify(vehicle).slice(0, 5000));
+                    saveLiveAgentState((clientWs as any)._authPhone || "", liveAgentState).catch(() => {});
+                    clientWs.send(JSON.stringify({ type: "agentState", state: liveAgentState }));
+                  }
+                  if (!isClosed && geminiSession) {
+                    const hpContext = JSON.stringify(results).slice(0, 8000);
+                    geminiSession.sendClientContent({
+                      turns: [{
+                        role: "user",
+                        parts: [{ text: "IDENTIFICATION HP-WEB AUTOMATIQUE POUR LE VIN " + contextVin + ": " + hpContext + "\nUtilise ces données comme contexte véhicule confirmé par HP-Web." }]
+                      }]
+                    });
+                  }
+                })
+                .catch((hpErr: any) => {
+                  console.error("[HP-Web] Recherche automatique échouée:", hpErr?.message || hpErr);
+                });
+            }
+
             // Send an initial prompt to make the agent speak immediately!
             geminiSession.sendClientContent({
               turns: [
