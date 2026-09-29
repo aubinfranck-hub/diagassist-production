@@ -141,6 +141,7 @@ export default function DiagAssistLiveScreen({
   const [speakerEnabled, setSpeakerEnabled] = useState(true);
   const [liveTranscript, setLiveTranscript] = useState<string>("");
   const [liveWhatsappUrl, setLiveWhatsappUrl] = useState<string | null>(null);
+  const [livePartCards, setLivePartCards] = useState<Array<{ name: string; slug: string; priceFcfa: number | null; availability: string; photo: string | null; warranty: string | null; compatibility: string | null }>>([]);
   const [liveInputText, setLiveInputText] = useState("");
   const [currentlySpeakingId, setCurrentlySpeakingId] = useState<string | null>(null);
 
@@ -782,10 +783,18 @@ Codes DTC: ${dtcCodes}`;
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "Mécano: " + msg.text);
           } else if (msg.type === "text") {
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "DiagAssist: " + msg.text);
+            // Mode secours (DeepSeek, texte seul) : pas d'audio natif, on lit la réponse à voix haute
+            // via /api/tts (Gemini TTS), avec repli sur la voix locale du navigateur.
+            if (msg.fallback === "deepseek" && msg.text) {
+              speakText(String(msg.text));
+            }
           } else if (msg.type === "turnComplete") {
             transcriptSpeakerRef.current = null;
             // En Live, aucune publicité ou autre voix ne doit être injectée.
             globalAdManager.setGeminiSpeakingStatus(false);
+          } else if (msg.type === "partCards") {
+            // Cartes pièces envoyées par l'agent (photo, prix, disponibilité).
+            if (Array.isArray(msg.cards)) setLivePartCards(msg.cards.slice(0, 3));
           } else if (msg.type === "whatsappLink") {
             // Le diagnostic vient d'être enregistré côté serveur ; le mécanicien envoie lui-même
             // le récapitulatif en un tap (pas d'envoi automatique côté serveur, par choix explicite).
@@ -871,6 +880,7 @@ Codes DTC: ${dtcCodes}`;
   // Stop real-time call
   const stopLiveCallSession = () => {
     resumeHandleRef.current = null; // un nouvel appel repart d'une session neuve
+    setLivePartCards([]);
     playMicStopSound();
 
     callGenerationRef.current++;
@@ -1537,6 +1547,46 @@ Codes DTC: ${dtcCodes}`;
           </button>
         )}
       </div>
+
+      {/* PIÈCES AFFICHÉES PAR L'AGENT LIVE */}
+      {livePartCards.length > 0 && (
+        <div style={{ padding: "0 16px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ color: T.confirm, fontSize: 10, fontWeight: 700 }}>🔧 PIÈCES</span>
+            <button
+              onClick={() => setLivePartCards([])}
+              style={{ background: "transparent", border: "none", color: T.muted, fontSize: 12, cursor: "pointer" }}
+              aria-label="Masquer les pièces"
+            >
+              ✕
+            </button>
+          </div>
+          {livePartCards.map((c, i) => {
+            const dispo = c.availability === "disponible" ? "Disponible" : c.availability === "sur_commande" ? "Sur commande" : "En rupture";
+            const wa = `https://wa.me/2250707312797?text=${encodeURIComponent(`Bonjour, je souhaite commander : ${c.name}`)}`;
+            return (
+              <div key={c.slug || i} style={{ display: "flex", gap: 10, padding: 10, borderRadius: 10, background: T.panel, border: `1px solid ${T.border}` }}>
+                {c.photo ? (
+                  <img src={c.photo} alt={c.name} style={{ width: 84, height: 84, objectFit: "contain", borderRadius: 8, background: "#fff", flexShrink: 0 }} />
+                ) : (
+                  <div style={{ width: 84, height: 84, borderRadius: 8, background: T.border, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, flexShrink: 0 }}>🔧</div>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
+                  <div style={{ color: T.text, fontSize: 13, fontWeight: 700 }}>{c.name}</div>
+                  <div style={{ color: T.confirm, fontSize: 12, fontWeight: 700 }}>
+                    {c.priceFcfa ? `${c.priceFcfa.toLocaleString("fr-FR")} F CFA` : "Prix sur demande"} · {dispo}
+                  </div>
+                  {c.compatibility && <div style={{ color: T.muted, fontSize: 11 }}>{c.compatibility}</div>}
+                  {c.warranty && <div style={{ color: T.muted, fontSize: 11 }}>Garantie : {c.warranty}</div>}
+                  <a href={wa} target="_blank" rel="noopener noreferrer" style={{ color: T.confirm, fontSize: 11, fontWeight: 700, textDecoration: "underline" }}>
+                    Commander / contacter le 0707312797
+                  </a>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* HISTORIQUE DE DIALOGUE AVEC LECTURE VOCALE */}
       <div style={{ padding: "0 16px 10px", maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>

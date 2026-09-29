@@ -1008,13 +1008,27 @@ async function liveToolCheckPartAvailability(
   query: string,
   phone?: string,
   vehicule?: string
-): Promise<{ text: string; orderRequestCreated: boolean; waConfirmUrl?: string }> {
+): Promise<{ text: string; orderRequestCreated: boolean; waConfirmUrl?: string; cards?: any[] }> {
   if (!dbPool) return { text: "La boutique de pièces n'est pas configurée sur ce serveur.", orderRequestCreated: false };
   try {
     const { rows } = await dbPool.query(
-      "SELECT name, price_fcfa, availability FROM shop_products WHERE is_active = true AND name ILIKE $1 ORDER BY name ASC LIMIT 5",
+      "SELECT name, slug, price_fcfa, availability, photos, warranty, compatibility FROM shop_products WHERE is_active = true AND name ILIKE $1 ORDER BY name ASC LIMIT 5",
       [`%${query}%`]
     );
+    // Cartes affichées à l'écran du mécanicien (photo, prix, disponibilité) — 3 max. Les photos
+    // en data-URL très lourdes sont ignorées pour ne pas saturer le WebSocket.
+    const cards = rows.slice(0, 3).map((r: any) => {
+      const photo = Array.isArray(r.photos) ? r.photos.find((u: any) => typeof u === "string" && u.length < 400000) : undefined;
+      return {
+        name: r.name,
+        slug: r.slug,
+        priceFcfa: r.price_fcfa ?? null,
+        availability: r.availability,
+        photo: photo || null,
+        warranty: r.warranty || null,
+        compatibility: r.compatibility ? String(r.compatibility).slice(0, 200) : null,
+      };
+    });
     const availabilityLabel: Record<string, string> = {
       disponible: "disponible",
       rupture: "en rupture de stock",
@@ -1025,7 +1039,7 @@ async function liveToolCheckPartAvailability(
     const dispo = rows.filter((r: any) => r.availability === "disponible" || r.availability === "sur_commande");
     if (dispo.length > 0) {
       const lines = dispo.map((r: any) => `${r.name} : ${r.price_fcfa ? `${r.price_fcfa} F CFA` : "prix non renseigné"} (${availabilityLabel[r.availability] || r.availability})`);
-      return { text: `Pièces trouvées dans la boutique : ${lines.join(" | ")}.`, orderRequestCreated: false };
+      return { text: `Pièces trouvées dans la boutique : ${lines.join(" | ")}. Une carte avec la photo et le prix est affichée à l'écran du mécanicien.`, orderRequestCreated: false, cards };
     }
 
     // Pièce introuvable ou en rupture — enregistrer une demande de commande
@@ -1058,6 +1072,7 @@ async function liveToolCheckPartAvailability(
       text: `${notFoundMsg} Une demande de commande a été enregistrée${phone ? ` pour le numéro ${phone}` : ""}. Le client sera recontacté dès qu'elle arrive.`,
       orderRequestCreated: true,
       waConfirmUrl,
+      cards,
     };
   } catch (err) {
     console.warn("[Live Tool] Erreur requête boutique pièces:", err);
@@ -1946,6 +1961,9 @@ async function callDeepSeekFallback(userContent: string | any[], config: any): P
   const messages: any[] = [];
   if (config?.systemInstruction) {
     messages.push({ role: "system", content: String(config.systemInstruction) });
+  }
+  if (Array.isArray(config?.history)) {
+    for (const h of config.history) messages.push(h);
   }
   messages.push({ role: "user", content: finalContent });
 
@@ -5061,6 +5079,18 @@ Directives pour ce tour :
     let geminiSession: any = null;
     let deepSeekFallbackActive = false;
     let deepSeekFallbackSystemInstruction = "";
+    // Mémoire courte du mode de secours (texte uniquement, 10 derniers messages) : sans elle
+    // chaque réponse DeepSeek repartait de zéro.
+    const deepSeekHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+    const deepSeekReply = async (userContent: string | any[], historyLabel: string) => {
+      const fallback = await callDeepSeekFallback(userContent, {
+        systemInstruction: deepSeekFallbackSystemInstruction,
+        history: deepSeekHistory.slice(-10),
+      });
+      deepSeekHistory.push({ role: "user", content: historyLabel });
+      deepSeekHistory.push({ role: "assistant", content: fallback.text });
+      return fallback;
+    };
     let isClosed = false;
     const liveAgentSessionId = crypto.randomBytes(12).toString("hex");
     let liveAgentState: LiveAgentState | null = null;
@@ -5126,6 +5156,7 @@ résultat → nouvelle étape → confirmation de la cause → réparation → v
 - Étape 2 (Vérification du symptôme) : Confirme qu'il est reproductible et dans quelles conditions (froid/chaud, vitesse, charge) avant d'aller plus loin.
 - Étape 3 (Inspection visuelle) : Avant tout test électronique, fais vérifier rapidement fusibles, connecteurs, fuites visibles, niveaux — gratuit et souvent suffisant.
 - Sécurité hybride/électrique (avant l'étape 3, si applicable) : si le véhicule est hybride/électrique ou si sa motorisation n'est pas connue, demande d'abord le modèle exact avant toute inspection — les procédures haute tension varient par modèle. Une fois confirmé : avertis qu'il faut consigner le circuit haute tension et porter l'équipement isolant avant tout contact avec les câbles orange. Ne s'applique pas à un véhicule thermique classique.
+- Affichage des pièces : quand tu vérifies une pièce avec verifier_disponibilite_piece, une carte (photo, prix, disponibilité) s'affiche à l'écran du mécanicien. Dis-le en une courte phrase ("je vous affiche la pièce à l'écran").
 - Étape 4 (Outils) : Privilégie la lampe témoin 12V, le compressiomètre, la jauge carburant, le stéthoscope tournevis.
   Si un outil manque, intègre UNE SEULE FOIS l'invitation d'achat structurée : "Je comprends que vous n'ayez pas de [nom de l'outil] sous la main. Cet outil est précieux ici car il va nous permettre de [rappel très bref de ce que ce test va révéler]. Si vous souhaitez vous en procurer un rapidement, nous pouvons vous le fournir : il vous suffit de contacter le 0707312797. Sinon, dites-le-moi et je verrai avec vous s'il existe une autre façon de procéder."
 - Étape 5 (Codes et données figées) : Si un code est donné, demande aussi les données figées (régime, température, vitesse au moment du code) si la valise les affiche.
@@ -5296,6 +5327,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               const partVehicule = liveAgentState?.vehicle || undefined;
                               const partResult = await liveToolCheckPartAvailability(String(fc.args?.piece || ""), partPhone, partVehicule);
                               result = partResult.text;
+                              if (partResult.cards && partResult.cards.length > 0) {
+                                clientWs.send(JSON.stringify({ type: "partCards", cards: partResult.cards }));
+                              }
                               if (partResult.orderRequestCreated && partResult.waConfirmUrl) {
                                 clientWs.send(JSON.stringify({ type: "orderRequestCreated", url: partResult.waConfirmUrl }));
                               }
@@ -5477,9 +5511,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                 deepSeekFallbackActive = true;
                 console.warn("[Fallback Live] Gemini Live indisponible/quota: activation du mode texte DeepSeek.");
                 const fallbackPrompt = "La session vocale Gemini Live est indisponible. Accueille immédiatement le mécanicien en 1 à 2 phrases et demande-lui son symptôme, son code défaut ou sa question. Reste dans le cadre du diagnostic automobile.";
-                const fallback = await callDeepSeekFallback(fallbackPrompt, {
-                  systemInstruction: deepSeekFallbackSystemInstruction,
-                });
+                const fallback = await deepSeekReply(fallbackPrompt, fallbackPrompt);
                 clientWs.send(JSON.stringify({ type: "connected", fallback: "deepseek" }));
                 clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
               } catch (dsErr: any) {
@@ -5509,6 +5541,31 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             } catch (err: any) {
               console.error("[WebSocket] Failed to send realtime image to Gemini Live:", err);
               clientWs.send(JSON.stringify({ type: "error", message: "Impossible d'envoyer la photo à Gemini Live: " + err.message }));
+            }
+          } else if (deepSeekFallbackActive) {
+            // DeepSeek (deepseek-flash) accepte les images : on lui transmet la photo du mécanicien.
+            const mime = String(message.mimeType || "image/jpeg").toLowerCase();
+            const b64 = String(message.data || message.image || "");
+            const okMime = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mime);
+            if (!okMime || !b64 || b64.length > 6_000_000) {
+              clientWs.send(JSON.stringify({ type: "error", message: "Photo non prise en charge par le mode secours (JPEG, PNG, GIF ou WebP, taille limitée)." }));
+            } else {
+              try {
+                const caption = String(message.text || message.caption || "").slice(0, 1000);
+                const prompt = caption || "Voici une photo du véhicule/de la pièce. Analyse-la et dis ce que tu observes d'utile pour le diagnostic.";
+                const fallback = await deepSeekReply(
+                  [
+                    { type: "text", text: prompt },
+                    { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } },
+                  ],
+                  `[photo envoyée] ${prompt}`
+                );
+                clientWs.send(JSON.stringify({ type: "mediaAck", status: "ok", message: "Photo analysée par le mode secours." }));
+                clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
+              } catch (dsErr: any) {
+                console.error("[DeepSeek Live Fallback] Erreur sur photo:", dsErr.message || dsErr);
+                clientWs.send(JSON.stringify({ type: "error", message: "Le mode secours n'a pas pu analyser la photo." }));
+              }
             }
           } else {
             clientWs.send(JSON.stringify({ type: "error", message: "Session Gemini Live non active sur le serveur." }));
@@ -5542,9 +5599,8 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             });
           } else if (deepSeekFallbackActive) {
             try {
-              const fallback = await callDeepSeekFallback(String(message.text || "").slice(0, 4000), {
-                systemInstruction: deepSeekFallbackSystemInstruction,
-              });
+              const userText = String(message.text || "").slice(0, 4000);
+              const fallback = await deepSeekReply(userText, userText);
               clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
             } catch (dsErr: any) {
               console.error("[DeepSeek Live Fallback] Erreur sur message texte:", dsErr.message || dsErr);
