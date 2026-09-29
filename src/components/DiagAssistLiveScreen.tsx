@@ -494,7 +494,7 @@ export default function DiagAssistLiveScreen({
       // BUG/AMÉLIORATION : marge de sécurité augmentée (0.02s → 0.12s) pour absorber les à-coups
       // réseau en 4G dégradée/3G. Un peu plus de latence au profit d'une voix qui ne hache plus.
       if (startTime < now) {
-        startTime = now + 0.12;
+        startTime = now + 0.3;
       }
       source.start(startTime);
       nextStartTimeRef.current = startTime + buffer.duration;
@@ -615,13 +615,45 @@ export default function DiagAssistLiveScreen({
         sentinel = lock;
       } catch (e) {}
     };
-    const onVisible = () => { if (document.visibilityState === "visible") acquire(); };
+    // Élément audio silencieux en boucle + MediaSession : le navigateur considère la page comme
+    // "en lecture" et suspend moins agressivement l'audio quand on change de fenêtre.
+    let keepAlive: HTMLAudioElement | null = null;
+    try {
+      const sr = 8000;
+      const wav = new Uint8Array(44 + sr); // 1 s de silence 8 bits mono
+      const dv = new DataView(wav.buffer);
+      const str = (o: number, t: string) => { for (let i = 0; i < t.length; i++) dv.setUint8(o + i, t.charCodeAt(i)); };
+      str(0, "RIFF"); dv.setUint32(4, 36 + sr, true); str(8, "WAVEfmt ");
+      dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+      dv.setUint32(24, sr, true); dv.setUint32(28, sr, true); dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+      str(36, "data"); dv.setUint32(40, sr, true); wav.fill(128, 44);
+      let bin = ""; wav.forEach((b) => { bin += String.fromCharCode(b); });
+      keepAlive = new Audio(`data:audio/wav;base64,${btoa(bin)}`);
+      keepAlive.loop = true;
+      keepAlive.volume = 0.01;
+      keepAlive.play().catch(() => {});
+      if ("mediaSession" in navigator) {
+        (navigator as any).mediaSession.metadata = new (window as any).MediaMetadata({ title: "DiagAssist - appel en cours" });
+      }
+    } catch (e) {}
+    const resumeAudio = () => {
+      for (const ref of [audioCtxOutputRef, audioCtxInputRef]) {
+        const c = ref.current;
+        if (c && c.state === "suspended") c.resume().catch(() => {});
+      }
+      keepAlive?.play().catch(() => {});
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") acquire();
+      resumeAudio();
+    };
     acquire();
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisible);
       try { sentinel?.release(); } catch (e) {}
+      try { keepAlive?.pause(); } catch (e) {}
     };
   }, [callState]);
 
