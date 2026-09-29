@@ -341,7 +341,7 @@ export default function IntegratedVoiceController({
       {
         id: "intro",
         title: "Introduction",
-        text: `DiagAssist, je t'écoute. Véhicule ${diagnosis.brandModelInfo || "détecté"}. Panne ${diagnosis.severity}. Laisse-moi t'expliquer.`
+        text: `Je suis DiagAssist, à votre écoute. Véhicule ${diagnosis.brandModelInfo || "détecté"}. Panne ${diagnosis.severity}. Laisse-moi t'expliquer.`
       },
       {
         id: "explanation",

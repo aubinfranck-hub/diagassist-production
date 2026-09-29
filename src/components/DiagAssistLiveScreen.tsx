@@ -780,7 +780,7 @@ Codes DTC: ${dtcCodes}`;
       setIsLiveActive(true);
       setToast("Avis : Duplex micro local actif (Synthèse vocale Gemini active).");
       // Initial greeting aloud
-      speakText("DiagAssist, je t'écoute. Je suis connecté pour t'accompagner en atelier.");
+      speakText("Je suis DiagAssist, à votre écoute.");
     }
   };
 

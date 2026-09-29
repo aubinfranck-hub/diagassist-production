@@ -22,7 +22,7 @@ export default function VisualRepairAssistant({ diagnosis, currentPlan, onUpgrad
   // Voice simulation state
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [vocalHistory, setVocalHistory] = useState<{ role: "user" | "assistant"; text: string }[]>([
-    { role: "assistant", text: "DiagAssist, je t'écoute. Dis-moi ce que tu veux tester." }
+    { role: "assistant", text: "Je suis DiagAssist, à votre écoute. Dis-moi ce que tu veux tester." }
   ]);
 
   const isPremiumActive = currentPlan === "free_trial" || currentPlan === "premium" || currentPlan === "payg_active";
