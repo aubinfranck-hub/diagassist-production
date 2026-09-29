@@ -600,6 +600,31 @@ export default function DiagAssistLiveScreen({
     }
   };
 
+  // Garde l'écran allumé pendant l'appel live : sinon le téléphone se verrouille et le navigateur
+  // coupe le son jusqu'au déverrouillage. Le verrou est perdu quand l'onglet passe en arrière-plan,
+  // donc on le redemande au retour.
+  useEffect(() => {
+    if (callState !== "live") return;
+    let sentinel: any = null;
+    let cancelled = false;
+    const acquire = async () => {
+      try {
+        if (!("wakeLock" in navigator) || document.visibilityState !== "visible") return;
+        const lock = await (navigator as any).wakeLock.request("screen");
+        if (cancelled) { lock.release().catch(() => {}); return; }
+        sentinel = lock;
+      } catch (e) {}
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") acquire(); };
+    acquire();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      try { sentinel?.release(); } catch (e) {}
+    };
+  }, [callState]);
+
   // Auto-read new model responses from chatHistory when not in live WS mode
   useEffect(() => {
     if (callState === "live") return; // During Live WS session, Gemini sends audio PCM directly
