@@ -3,6 +3,7 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { WebSocketServer } from "ws";
 import { GoogleGenAI, Type } from "@google/genai";
+import { getGeminiKeys } from "../../utils/geminiKeys";
 
 const sessions = new Map<string, any>();
 const clients = new Map<string, Set<any>>();
@@ -61,8 +62,9 @@ function sendAll(id: string, msg: any, except?: any) {
 }
 
 function getVisionClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY non configurée.");
+  const keys = getGeminiKeys();
+  if (keys.length === 0) throw new Error("GEMINI_API_KEY non configurée.");
+  const apiKey = keys[Math.floor(Math.random() * keys.length)];
   return new GoogleGenAI({
     apiKey,
     httpOptions: { headers: { "User-Agent": "aistudio-build" } },
@@ -86,8 +88,9 @@ async function runAutoPilotStep(
     return;
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return;
+  const keys = getGeminiKeys();
+  if (keys.length === 0) return;
+  const apiKey = keys[Math.floor(Math.random() * keys.length)];
   s.lastPilotAt = now;
   s.pilotSteps = (s.pilotSteps || 0) + 1;
 

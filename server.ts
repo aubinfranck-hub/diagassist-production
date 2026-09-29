@@ -16,6 +16,7 @@ import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
 import { searchHpWeb } from "./src/modules/vehicle/hpwebClient";
+import { getGeminiKeys } from "./src/utils/geminiKeys";
 
 dotenv.config();
 
@@ -824,15 +825,6 @@ function checkAndIncrementUsage(phone: string, plan: string): { allowed: boolean
 // Support de plusieurs clés Gemini (rotation automatique en cas de quota dépassé sur l'une
 // d'elles) : GEMINI_API_KEY peut contenir une seule clé, ou plusieurs séparées par des virgules ;
 // GEMINI_API_KEY_2 est acceptée en plus pour plus de clarté côté variables d'environnement Render.
-function getGeminiKeys(): string[] {
-  const raw = [process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_2]
-    .filter(Boolean)
-    .flatMap((v) => String(v).split(","))
-    .map((k) => k.trim())
-    .filter(Boolean);
-  return Array.from(new Set(raw));
-}
-
 let currentGeminiKeyIndex = 0;
 const aiInstancesByKey = new Map<string, GoogleGenAI>();
 
@@ -2821,16 +2813,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         });
       }
 
-      // Google Cloud TTS route - fallback to GEMINI_API_KEY if GOOGLE_CLOUD_API_KEY is not set
-      const apiKey = process.env.GOOGLE_CLOUD_API_KEY || process.env.GEMINI_API_KEY;
-      if (!apiKey) {
+      // Google Cloud TTS route - GOOGLE_CLOUD_API_KEY puis clés Gemini (essai de la suivante si échec)
+      const ttsKeys = Array.from(new Set([process.env.GOOGLE_CLOUD_API_KEY, ...getGeminiKeys()].filter(Boolean) as string[]));
+      if (ttsKeys.length === 0) {
         return res.status(400).json({ 
           success: false, 
           message: "La clé API de synthèse vocale n'est pas configurée dans les variables d'environnement. Utilisation de la synthèse vocale locale gratuite." 
         });
       }
 
-      const googleTtsUrl = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
       const payload = {
         input: { text },
         voice: {
@@ -2844,24 +2835,27 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         }
       };
 
-      const response = await fetch(googleTtsUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "aistudio-build-tts"
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Google Cloud TTS API Error (${response.status}): ${errText}`);
+      let data: any = null;
+      let lastError = "";
+      for (const apiKey of ttsKeys) {
+        const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "aistudio-build-tts"
+          },
+          body: JSON.stringify(payload)
+        });
+        if (response.ok) {
+          data = await response.json();
+          if (data.audioContent) break;
+          lastError = "L'API Google Cloud TTS n'a pas renvoyé d'audio.";
+          data = null;
+        } else {
+          lastError = `Google Cloud TTS API Error (${response.status}): ${await response.text()}`;
+        }
       }
-
-      const data: any = await response.json();
-      if (!data.audioContent) {
-        throw new Error("L'API Google Cloud TTS n'a pas renvoyé d'audio.");
-      }
+      if (!data) throw new Error(lastError);
 
       res.json({
         success: true,
