@@ -1008,13 +1008,27 @@ async function liveToolCheckPartAvailability(
   query: string,
   phone?: string,
   vehicule?: string
-): Promise<{ text: string; orderRequestCreated: boolean; waConfirmUrl?: string }> {
+): Promise<{ text: string; orderRequestCreated: boolean; waConfirmUrl?: string; cards?: any[] }> {
   if (!dbPool) return { text: "La boutique de pièces n'est pas configurée sur ce serveur.", orderRequestCreated: false };
   try {
     const { rows } = await dbPool.query(
-      "SELECT name, price_fcfa, availability FROM shop_products WHERE is_active = true AND name ILIKE $1 ORDER BY name ASC LIMIT 5",
+      "SELECT name, slug, price_fcfa, availability, photos, warranty, compatibility FROM shop_products WHERE is_active = true AND name ILIKE $1 ORDER BY name ASC LIMIT 5",
       [`%${query}%`]
     );
+    // Cartes affichées à l'écran du mécanicien (photo, prix, disponibilité) — 3 max. Les photos
+    // en data-URL très lourdes sont ignorées pour ne pas saturer le WebSocket.
+    const cards = rows.slice(0, 3).map((r: any) => {
+      const photo = Array.isArray(r.photos) ? r.photos.find((u: any) => typeof u === "string" && u.length < 400000) : undefined;
+      return {
+        name: r.name,
+        slug: r.slug,
+        priceFcfa: r.price_fcfa ?? null,
+        availability: r.availability,
+        photo: photo || null,
+        warranty: r.warranty || null,
+        compatibility: r.compatibility ? String(r.compatibility).slice(0, 200) : null,
+      };
+    });
     const availabilityLabel: Record<string, string> = {
       disponible: "disponible",
       rupture: "en rupture de stock",
@@ -1025,7 +1039,7 @@ async function liveToolCheckPartAvailability(
     const dispo = rows.filter((r: any) => r.availability === "disponible" || r.availability === "sur_commande");
     if (dispo.length > 0) {
       const lines = dispo.map((r: any) => `${r.name} : ${r.price_fcfa ? `${r.price_fcfa} F CFA` : "prix non renseigné"} (${availabilityLabel[r.availability] || r.availability})`);
-      return { text: `Pièces trouvées dans la boutique : ${lines.join(" | ")}.`, orderRequestCreated: false };
+      return { text: `Pièces trouvées dans la boutique : ${lines.join(" | ")}. Une carte avec la photo et le prix est affichée à l'écran du mécanicien.`, orderRequestCreated: false, cards };
     }
 
     // Pièce introuvable ou en rupture — enregistrer une demande de commande
@@ -1058,6 +1072,7 @@ async function liveToolCheckPartAvailability(
       text: `${notFoundMsg} Une demande de commande a été enregistrée${phone ? ` pour le numéro ${phone}` : ""}. Le client sera recontacté dès qu'elle arrive.`,
       orderRequestCreated: true,
       waConfirmUrl,
+      cards,
     };
   } catch (err) {
     console.warn("[Live Tool] Erreur requête boutique pièces:", err);
@@ -5126,6 +5141,7 @@ résultat → nouvelle étape → confirmation de la cause → réparation → v
 - Étape 2 (Vérification du symptôme) : Confirme qu'il est reproductible et dans quelles conditions (froid/chaud, vitesse, charge) avant d'aller plus loin.
 - Étape 3 (Inspection visuelle) : Avant tout test électronique, fais vérifier rapidement fusibles, connecteurs, fuites visibles, niveaux — gratuit et souvent suffisant.
 - Sécurité hybride/électrique (avant l'étape 3, si applicable) : si le véhicule est hybride/électrique ou si sa motorisation n'est pas connue, demande d'abord le modèle exact avant toute inspection — les procédures haute tension varient par modèle. Une fois confirmé : avertis qu'il faut consigner le circuit haute tension et porter l'équipement isolant avant tout contact avec les câbles orange. Ne s'applique pas à un véhicule thermique classique.
+- Affichage des pièces : quand tu vérifies une pièce avec verifier_disponibilite_piece, une carte (photo, prix, disponibilité) s'affiche à l'écran du mécanicien. Dis-le en une courte phrase ("je vous affiche la pièce à l'écran").
 - Étape 4 (Outils) : Privilégie la lampe témoin 12V, le compressiomètre, la jauge carburant, le stéthoscope tournevis.
   Si un outil manque, intègre UNE SEULE FOIS l'invitation d'achat structurée : "Je comprends que vous n'ayez pas de [nom de l'outil] sous la main. Cet outil est précieux ici car il va nous permettre de [rappel très bref de ce que ce test va révéler]. Si vous souhaitez vous en procurer un rapidement, nous pouvons vous le fournir : il vous suffit de contacter le 0707312797. Sinon, dites-le-moi et je verrai avec vous s'il existe une autre façon de procéder."
 - Étape 5 (Codes et données figées) : Si un code est donné, demande aussi les données figées (régime, température, vitesse au moment du code) si la valise les affiche.
@@ -5296,6 +5312,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               const partVehicule = liveAgentState?.vehicle || undefined;
                               const partResult = await liveToolCheckPartAvailability(String(fc.args?.piece || ""), partPhone, partVehicule);
                               result = partResult.text;
+                              if (partResult.cards && partResult.cards.length > 0) {
+                                clientWs.send(JSON.stringify({ type: "partCards", cards: partResult.cards }));
+                              }
                               if (partResult.orderRequestCreated && partResult.waConfirmUrl) {
                                 clientWs.send(JSON.stringify({ type: "orderRequestCreated", url: partResult.waConfirmUrl }));
                               }
