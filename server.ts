@@ -2246,7 +2246,7 @@ L'utilisateur est un conducteur/propriétaire, pas un professionnel. Adapte-toi 
       const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
 ${nameInstruction}
 COURTOISIE ET TON OBLIGATOIRES (EN TOUTE CIRCONSTANCE) :
-- Tu commences toujours la première interaction par une salutation chaleureuse et professionnelle : "Bonjour, je suis DiagAssist, votre assistant de diagnostic. Je vais vous accompagner étape par étape pour trouver la cause de votre problème."
+- Tu commences toujours la première interaction par une salutation chaleureuse et professionnelle : "Je suis DiagAssist, à votre écoute."
 - Tu vouvoies TOUJOURS l'utilisateur avec respect et bienveillance, même s'il est bref, impatient ou frustré.
 - Ton calme, professionnel et bienveillant (sans pour autant remercier à chaque phrase).
 
@@ -2329,7 +2329,7 @@ Maintiens mentalement et dans ton raisonnement la structure d'état de la sessio
 { vehicule, historique_intervention, symptome, outils_disponibles, outils_invitation_envoyee, codes_releves, hypotheses, prerequisites, current_test, tests_done, hypotheses_ecartees, diagnostic_final }.
 
 RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
-- Identité : Tu es DiagAssist. Si demandé qui tu es : "Bonjour, je suis DiagAssist, votre assistant de diagnostic. Je vous écoute."
+- Identité : Tu es DiagAssist. Si demandé qui tu es : "Je suis DiagAssist, à votre écoute."
 - Vouvoiement constant, langage professionnel, bienveillant et fluide.
 - FORMATAGE SANS MARKDOWN DANS 'explanationText' ET LES CHAMPS VOCAUX : Ne génère AUCUN caractère markdown (pas d'astérisques, pas de gras, pas de hashtags, pas de puces avec tirets). Écris en phrases fluides et naturelles directement lisibles à haute voix.`;
 
@@ -2572,7 +2572,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
 ${chatNameInstruction}
 COURTOISIE ET TON OBLIGATOIRES (EN TOUTE CIRCONSTANCE) :
-- Tu commences toujours par une salutation chaleureuse et professionnelle lors des premiers échanges : "Bonjour, je suis DiagAssist, votre assistant de diagnostic. Je vais vous accompagner étape par étape pour trouver la cause de votre problème."
+- Tu commences toujours par une salutation chaleureuse et professionnelle lors des premiers échanges : "Je suis DiagAssist, à votre écoute."
 - Tu vouvoies TOUJOURS l'utilisateur avec respect et bienveillance, même s'il est bref, impatient ou frustré.
 - Ton calme, professionnel et bienveillant (sans pour autant remercier à chaque message).
 
@@ -2750,7 +2750,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // code source. Cette clé doit être révoquée/régénérée dans votre compte ElevenLabs sans délai.
   app.post("/api/tts", requireAuth, async (req: any, res) => {
     try {
-      const { text, voiceName } = req.body;
+      const { text: rawText, voiceName } = req.body;
+      // Prononciation : "DiagAssist" collé est lu "diagnostic" par la synthèse vocale.
+      const text = typeof rawText === "string" ? rawText.replace(/diag\s*assist(?!\w)/gi, "Diag Assist") : rawText;
       if (!text) {
         return res.status(400).json({ success: false, message: "Le texte est requis." });
       }
@@ -4930,7 +4932,8 @@ Directives pour ce tour :
           const systemInstruction = `Tu es DiagAssist, un technicien automobile expérimenté qui accompagne un mécanicien ou un particulier étape par étape dans un diagnostic réel, avec des outils simples et accessibles en Afrique francophone (Côte d'Ivoire / Abidjan). Tu ne réponds jamais comme un dictionnaire de codes défauts. Tu mènes une enquête.
 ${liveNameInstruction}
 RÈGLE D'IDENTITÉ & NOM :
-- Ton nom est DiagAssist. Si on te demande qui tu es, réponds : "DiagAssist, je t'écoute."
+- Ton nom est DiagAssist. Si on te demande qui tu es, réponds : "Je suis DiagAssist, à votre écoute."
+- Prononciation : dis toujours "Diag Assist" (deux syllabes brèves "Diag" puis "Assist"), jamais "diagnostic".
 
 MODULE PUBLICITAIRE VOCAL & DEUX IDENTITÉS VOCALES (RÈGLE STRICTE) :
 1. VOIX DE DIAGNOSTIC (Par défaut) :
@@ -4943,7 +4946,7 @@ MODULE PUBLICITAIRE VOCAL & DEUX IDENTITÉS VOCALES (RÈGLE STRICTE) :
    - Ne réinitialise jamais le contexte du diagnostic (véhicule, VIN, DTC, symptômes, photos).
 
 COURTOISIE ET TON OBLIGATOIRES EN LIVE VOCAL :
-- Salue l'utilisateur au début de l'échange : "Bonjour, je suis DiagAssist, votre assistant de diagnostic. Je vais vous accompagner étape par étape pour trouver la cause de votre problème."
+- Salue l'utilisateur au début de l'échange : "Je suis DiagAssist, à votre écoute."
 - Tu vouvoies TOUJOURS l'utilisateur avec respect, calme et bienveillance.
 - Réponses courtes (1 à 2 phrases max) pour un échange vocal dynamique.
 
@@ -5225,7 +5228,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                   role: "user",
                   parts: [
                     {
-                      text: "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'DiagAssist, je t'écoute.' puis rappelle brièvement le symptôme majeur ou code défaut de ce véhicule."
+                      text: "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'Je suis DiagAssist, à votre écoute.' puis rappelle brièvement le symptôme majeur ou code défaut de ce véhicule."
                     }
                   ]
                 }
