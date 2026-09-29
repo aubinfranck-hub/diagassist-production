@@ -1962,6 +1962,9 @@ async function callDeepSeekFallback(userContent: string | any[], config: any): P
   if (config?.systemInstruction) {
     messages.push({ role: "system", content: String(config.systemInstruction) });
   }
+  if (Array.isArray(config?.history)) {
+    for (const h of config.history) messages.push(h);
+  }
   messages.push({ role: "user", content: finalContent });
 
   const res = await fetch("https://api.deepseek.com/chat/completions", {
@@ -5076,6 +5079,18 @@ Directives pour ce tour :
     let geminiSession: any = null;
     let deepSeekFallbackActive = false;
     let deepSeekFallbackSystemInstruction = "";
+    // Mémoire courte du mode de secours (texte uniquement, 10 derniers messages) : sans elle
+    // chaque réponse DeepSeek repartait de zéro.
+    const deepSeekHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+    const deepSeekReply = async (userContent: string | any[], historyLabel: string) => {
+      const fallback = await callDeepSeekFallback(userContent, {
+        systemInstruction: deepSeekFallbackSystemInstruction,
+        history: deepSeekHistory.slice(-10),
+      });
+      deepSeekHistory.push({ role: "user", content: historyLabel });
+      deepSeekHistory.push({ role: "assistant", content: fallback.text });
+      return fallback;
+    };
     let isClosed = false;
     const liveAgentSessionId = crypto.randomBytes(12).toString("hex");
     let liveAgentState: LiveAgentState | null = null;
@@ -5496,9 +5511,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                 deepSeekFallbackActive = true;
                 console.warn("[Fallback Live] Gemini Live indisponible/quota: activation du mode texte DeepSeek.");
                 const fallbackPrompt = "La session vocale Gemini Live est indisponible. Accueille immédiatement le mécanicien en 1 à 2 phrases et demande-lui son symptôme, son code défaut ou sa question. Reste dans le cadre du diagnostic automobile.";
-                const fallback = await callDeepSeekFallback(fallbackPrompt, {
-                  systemInstruction: deepSeekFallbackSystemInstruction,
-                });
+                const fallback = await deepSeekReply(fallbackPrompt, fallbackPrompt);
                 clientWs.send(JSON.stringify({ type: "connected", fallback: "deepseek" }));
                 clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
               } catch (dsErr: any) {
@@ -5528,6 +5541,31 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             } catch (err: any) {
               console.error("[WebSocket] Failed to send realtime image to Gemini Live:", err);
               clientWs.send(JSON.stringify({ type: "error", message: "Impossible d'envoyer la photo à Gemini Live: " + err.message }));
+            }
+          } else if (deepSeekFallbackActive) {
+            // DeepSeek (deepseek-flash) accepte les images : on lui transmet la photo du mécanicien.
+            const mime = String(message.mimeType || "image/jpeg").toLowerCase();
+            const b64 = String(message.data || message.image || "");
+            const okMime = ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mime);
+            if (!okMime || !b64 || b64.length > 6_000_000) {
+              clientWs.send(JSON.stringify({ type: "error", message: "Photo non prise en charge par le mode secours (JPEG, PNG, GIF ou WebP, taille limitée)." }));
+            } else {
+              try {
+                const caption = String(message.text || message.caption || "").slice(0, 1000);
+                const prompt = caption || "Voici une photo du véhicule/de la pièce. Analyse-la et dis ce que tu observes d'utile pour le diagnostic.";
+                const fallback = await deepSeekReply(
+                  [
+                    { type: "text", text: prompt },
+                    { type: "image_url", image_url: { url: `data:${mime};base64,${b64}` } },
+                  ],
+                  `[photo envoyée] ${prompt}`
+                );
+                clientWs.send(JSON.stringify({ type: "mediaAck", status: "ok", message: "Photo analysée par le mode secours." }));
+                clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
+              } catch (dsErr: any) {
+                console.error("[DeepSeek Live Fallback] Erreur sur photo:", dsErr.message || dsErr);
+                clientWs.send(JSON.stringify({ type: "error", message: "Le mode secours n'a pas pu analyser la photo." }));
+              }
             }
           } else {
             clientWs.send(JSON.stringify({ type: "error", message: "Session Gemini Live non active sur le serveur." }));
@@ -5561,9 +5599,8 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             });
           } else if (deepSeekFallbackActive) {
             try {
-              const fallback = await callDeepSeekFallback(String(message.text || "").slice(0, 4000), {
-                systemInstruction: deepSeekFallbackSystemInstruction,
-              });
+              const userText = String(message.text || "").slice(0, 4000);
+              const fallback = await deepSeekReply(userText, userText);
               clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
             } catch (dsErr: any) {
               console.error("[DeepSeek Live Fallback] Erreur sur message texte:", dsErr.message || dsErr);
