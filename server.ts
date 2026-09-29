@@ -383,6 +383,17 @@ async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_coach ON screening_sessions (coach_phone);
     CREATE INDEX IF NOT EXISTS idx_screening_sessions_created ON screening_sessions (created_at DESC);
 
+    -- Derniers résultats du Scanner DiagAssist (Autopilot) par profil : persistés pour que l'agent
+    -- live s'en souvienne après un redémarrage ou d'une session à l'autre.
+    CREATE TABLE IF NOT EXISTS scanner_results (
+      id SERIAL PRIMARY KEY,
+      phone TEXT NOT NULL,
+      dtcs JSONB NOT NULL DEFAULT '[]',
+      summary TEXT,
+      completed_at BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_scanner_results_phone ON scanner_results (phone, completed_at DESC);
+
     -- Paiements d'abonnement via Jèko (Mobile Money / carte) : persistance pour que le webhook
     -- retrouve la commande même si le serveur a redémarré entre la création et la confirmation.
     CREATE TABLE IF NOT EXISTS jeko_payments (
@@ -1427,6 +1438,40 @@ async function liveGetRecentDiagnostics(phone: string, limit = 3): Promise<strin
   } catch (err) {
     console.warn("[Live] Erreur lecture historique diagnostics:", err);
     return "";
+  }
+}
+
+type ScannerResult = { dtcs: string[]; summary: string; completedAt: number };
+
+async function persistScannerResult(phone: string, r: ScannerResult): Promise<void> {
+  if (!dbPool || !phone) return;
+  try {
+    await dbPool.query(
+      `INSERT INTO scanner_results (phone, dtcs, summary, completed_at) VALUES ($1, $2::jsonb, $3, $4)`,
+      [phone, JSON.stringify(r.dtcs || []), r.summary || "", r.completedAt]
+    );
+  } catch (err) {
+    console.warn("[Scanner] Échec de l'enregistrement du résultat de scan:", err);
+  }
+}
+
+// Dernier scan du profil (mémoire d'abord, sinon base), au plus maxAgeMs.
+async function getLatestScannerResult(phone: string, memory: Map<string, ScannerResult>, maxAgeMs: number): Promise<ScannerResult | undefined> {
+  if (!phone) return undefined;
+  const mem = memory.get(phone);
+  if (mem && Date.now() - mem.completedAt < maxAgeMs) return mem;
+  if (!dbPool) return undefined;
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT dtcs, summary, completed_at FROM scanner_results WHERE phone = $1 AND completed_at > $2 ORDER BY completed_at DESC LIMIT 1`,
+      [phone, Date.now() - maxAgeMs]
+    );
+    if (rows.length === 0) return undefined;
+    const r = rows[0];
+    return { dtcs: Array.isArray(r.dtcs) ? r.dtcs : [], summary: r.summary || "", completedAt: Number(r.completed_at) };
+  } catch (err) {
+    console.warn("[Scanner] Erreur lecture dernier scan:", err);
+    return undefined;
   }
 }
 
@@ -4828,7 +4873,12 @@ Directives pour ce tour :
 
   // DiagAssist V2 — Screening / Coaching module. Uses the existing authenticated session store.
   // scannerResultsByPhone lets the live voice agent read scanner autopilot results.
-  const scannerResultsByPhone = new Map<string, { dtcs: string[]; summary: string; completedAt: number }>();
+  const scannerResultsByPhone = new Map<string, ScannerResult>();
+  const scannerMapSet = scannerResultsByPhone.set.bind(scannerResultsByPhone);
+  scannerResultsByPhone.set = (phone: string, r: ScannerResult) => {
+    persistScannerResult(phone, r).catch(() => {});
+    return scannerMapSet(phone, r);
+  };
   registerScreening(app, server, {
     requireAuth,
     getEffectivePlan,
@@ -4926,6 +4976,10 @@ Directives pour ce tour :
           const liveNameInstruction = getNameInstruction((clientWs as any)._authPhone);
           const authPhoneForHistory = (clientWs as any)._authPhone;
           const recentHistory = authPhoneForHistory ? await liveGetRecentDiagnostics(authPhoneForHistory, 3) : "";
+          const lastScan = authPhoneForHistory ? await getLatestScannerResult(authPhoneForHistory, scannerResultsByPhone, 30 * 24 * 60 * 60 * 1000) : undefined;
+          const lastScanSection = lastScan
+            ? `\nDERNIER SCAN DU PROFIL (${new Date(lastScan.completedAt).toLocaleDateString("fr-FR")}) : ${lastScan.summary}. Codes DTC : ${lastScan.dtcs.length > 0 ? lastScan.dtcs.join(", ") : "aucun"}.\nSi le mécanicien parle du même véhicule ou d'un scan précédent, appuie-toi dessus sans le lui faire répéter.`
+            : "";
           const historySection = recentHistory
             ? `\nHISTORIQUE DES APPELS PRÉCÉDENTS DE CE CLIENT :\n${recentHistory}\nUtilise cet historique pour personnaliser le suivi (ex: "Lors de votre dernier appel, vous aviez un problème de capteur PMH sur votre Toyota..."). Si le véhicule actuel correspond à un appel précédent, signale-le discrètement.`
             : "";
@@ -4980,7 +5034,7 @@ sans base constructeur officielle, et invite à vérifier sur la carte grise.
 
 FICHE TECHNIQUE ET DIAGNOSTIC ACTUEL DU VÉHICULE :
 ${message.diagnosticContext}
-${historySection}
+${historySection}${lastScanSection}
 ENREGISTREMENT DU DIAGNOSTIC (OBLIGATOIRE) : dès qu'un diagnostic clair se dégage (cause probable
 identifiée et action recommandée établie), appelle l'outil enregistrer_diagnostic UNE SEULE FOIS pour
 le sauvegarder. Ça prépare un lien WhatsApp prérempli avec le récapitulatif, affiché au mécanicien
@@ -5132,10 +5186,11 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               result = liveToolGetRepairProcedure(String(fc.args?.panne || ""), fc.args?.marque ? String(fc.args.marque) : undefined);
                             } else if (fc.name === "lire_resultats_scanner") {
                               const scanPhone = (clientWs as any)._authPhone;
-                              const scanRes = scanPhone ? scannerResultsByPhone.get(scanPhone) : undefined;
-                              if (scanRes && Date.now() - scanRes.completedAt < 3 * 60 * 60 * 1000) {
-                                const age = Math.round((Date.now() - scanRes.completedAt) / 60000);
-                                result = `Résultats scanner (il y a ${age} min) : ${scanRes.summary}. Codes DTC : ${scanRes.dtcs.length > 0 ? scanRes.dtcs.join(", ") : "aucun code détecté"}.`;
+                              const scanRes = scanPhone ? await getLatestScannerResult(scanPhone, scannerResultsByPhone, 30 * 24 * 60 * 60 * 1000) : undefined;
+                              if (scanRes) {
+                                const ageMin = Math.round((Date.now() - scanRes.completedAt) / 60000);
+                                const age = ageMin < 120 ? `il y a ${ageMin} min` : ageMin < 2880 ? `il y a ${Math.round(ageMin / 60)} h` : `il y a ${Math.round(ageMin / 1440)} jours`;
+                                result = `Résultats scanner (${age}) : ${scanRes.summary}. Codes DTC : ${scanRes.dtcs.length > 0 ? scanRes.dtcs.join(", ") : "aucun code détecté"}.`;
                               } else {
                                 result = "Aucun résultat de scanner récent. Le mécanicien doit d'abord lancer le Scanner DiagAssist et utiliser l'Autopilot sur sa tablette.";
                               }
