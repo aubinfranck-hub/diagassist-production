@@ -2750,7 +2750,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // code source. Cette clé doit être révoquée/régénérée dans votre compte ElevenLabs sans délai.
   app.post("/api/tts", requireAuth, async (req: any, res) => {
     try {
-      const { text, voiceName } = req.body;
+      const { text: rawText, voiceName } = req.body;
+      // Prononciation : "DiagAssist" collé est lu "diagnostic" par la synthèse vocale.
+      const text = typeof rawText === "string" ? rawText.replace(/diag\s*assist(?!\w)/gi, "Diag Assist") : rawText;
       if (!text) {
         return res.status(400).json({ success: false, message: "Le texte est requis." });
       }
@@ -4931,6 +4933,7 @@ Directives pour ce tour :
 ${liveNameInstruction}
 RÈGLE D'IDENTITÉ & NOM :
 - Ton nom est DiagAssist. Si on te demande qui tu es, réponds : "DiagAssist, je t'écoute."
+- Prononciation : dis toujours "Diag Assist" (deux syllabes brèves "Diag" puis "Assist"), jamais "diagnostic".
 
 MODULE PUBLICITAIRE VOCAL & DEUX IDENTITÉS VOCALES (RÈGLE STRICTE) :
 1. VOIX DE DIAGNOSTIC (Par défaut) :
