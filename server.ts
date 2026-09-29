@@ -2813,55 +2813,85 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         });
       }
 
-      // Google Cloud TTS route - GOOGLE_CLOUD_API_KEY puis clés Gemini (essai de la suivante si échec)
-      const ttsKeys = Array.from(new Set([process.env.GOOGLE_CLOUD_API_KEY, ...getGeminiKeys()].filter(Boolean) as string[]));
-      if (ttsKeys.length === 0) {
+      // 1) Google Cloud TTS si GOOGLE_CLOUD_API_KEY est définie (MP3)
+      // 2) sinon / en cas d'échec : Gemini TTS avec toutes les clés Gemini (rotation), audio PCM 24 kHz
+      //    encapsulé en WAV (le client le lit via un data URI, le navigateur détecte le format).
+      const cloudKey = (process.env.GOOGLE_CLOUD_API_KEY || "").trim();
+      const geminiKeys = getGeminiKeys();
+      if (!cloudKey && geminiKeys.length === 0) {
         return res.status(400).json({ 
           success: false, 
           message: "La clé API de synthèse vocale n'est pas configurée dans les variables d'environnement. Utilisation de la synthèse vocale locale gratuite." 
         });
       }
 
-      const payload = {
-        input: { text },
-        voice: {
-          languageCode: "fr-FR",
-          name: requestedVoice
-        },
-        audioConfig: {
-          audioEncoding: "MP3",
-          speakingRate: 1.1,
-          sampleRateHertz: 24000
-        }
-      };
-
-      let data: any = null;
       let lastError = "";
-      for (const apiKey of ttsKeys) {
-        const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
+      if (cloudKey) {
+        const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${cloudKey}`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent": "aistudio-build-tts"
-          },
-          body: JSON.stringify(payload)
+          headers: { "Content-Type": "application/json", "User-Agent": "aistudio-build-tts" },
+          body: JSON.stringify({
+            input: { text },
+            voice: { languageCode: "fr-FR", name: requestedVoice },
+            audioConfig: { audioEncoding: "MP3", speakingRate: 1.1, sampleRateHertz: 24000 }
+          })
         });
         if (response.ok) {
-          data = await response.json();
-          if (data.audioContent) break;
-          lastError = "L'API Google Cloud TTS n'a pas renvoyé d'audio.";
-          data = null;
+          const data: any = await response.json();
+          if (data.audioContent) {
+            return res.json({ success: true, audioContent: data.audioContent, modelUsed: requestedVoice });
+          }
         } else {
           lastError = `Google Cloud TTS API Error (${response.status}): ${await response.text()}`;
         }
       }
-      if (!data) throw new Error(lastError);
 
-      res.json({
-        success: true,
-        audioContent: data.audioContent,
-        modelUsed: requestedVoice
-      });
+      const geminiTtsModel = process.env.GEMINI_TTS_MODEL || "gemini-3.1-flash-tts-preview";
+      const geminiVoice = process.env.GEMINI_TTS_VOICE || "Kore";
+      for (const apiKey of geminiKeys) {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiTtsModel}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey, "User-Agent": "aistudio-build-tts" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text }] }],
+            generationConfig: {
+              responseModalities: ["AUDIO"],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: geminiVoice } } }
+            }
+          })
+        });
+        if (!response.ok) {
+          lastError = `Gemini TTS API Error (${response.status}): ${await response.text()}`;
+          continue;
+        }
+        const data: any = await response.json();
+        const pcmBase64 = data?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data)?.inlineData?.data;
+        if (!pcmBase64) {
+          lastError = "L'API Gemini TTS n'a pas renvoyé d'audio.";
+          continue;
+        }
+        const pcm = Buffer.from(pcmBase64, "base64");
+        const header = Buffer.alloc(44);
+        header.write("RIFF", 0);
+        header.writeUInt32LE(36 + pcm.length, 4);
+        header.write("WAVEfmt ", 8);
+        header.writeUInt32LE(16, 16);
+        header.writeUInt16LE(1, 20);
+        header.writeUInt16LE(1, 22);
+        header.writeUInt32LE(24000, 24);
+        header.writeUInt32LE(48000, 28);
+        header.writeUInt16LE(2, 32);
+        header.writeUInt16LE(16, 34);
+        header.write("data", 36);
+        header.writeUInt32LE(pcm.length, 40);
+        return res.json({
+          success: true,
+          audioContent: Buffer.concat([header, pcm]).toString("base64"),
+          mimeType: "audio/wav",
+          modelUsed: `${geminiTtsModel} - ${geminiVoice}`
+        });
+      }
+      throw new Error(lastError || "Aucune clé TTS disponible.");
     } catch (error: any) {
       console.log("TTS Generation Fallback - Local or client voice synthesis will be used.", error.message);
       res.status(500).json({
