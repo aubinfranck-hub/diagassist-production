@@ -783,6 +783,11 @@ Codes DTC: ${dtcCodes}`;
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "Mécano: " + msg.text);
           } else if (msg.type === "text") {
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "DiagAssist: " + msg.text);
+            // Mode secours (DeepSeek, texte seul) : pas d'audio natif, on lit la réponse à voix haute
+            // via /api/tts (Gemini TTS), avec repli sur la voix locale du navigateur.
+            if (msg.fallback === "deepseek" && msg.text) {
+              speakText(String(msg.text));
+            }
           } else if (msg.type === "turnComplete") {
             transcriptSpeakerRef.current = null;
             // En Live, aucune publicité ou autre voix ne doit être injectée.
