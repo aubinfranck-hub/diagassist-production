@@ -1450,6 +1450,11 @@ async function persistScannerResult(phone: string, r: ScannerResult): Promise<vo
       `INSERT INTO scanner_results (phone, dtcs, summary, completed_at) VALUES ($1, $2::jsonb, $3, $4)`,
       [phone, JSON.stringify(r.dtcs || []), r.summary || "", r.completedAt]
     );
+    // Garde seulement les 20 derniers scans par profil.
+    await dbPool.query(
+      `DELETE FROM scanner_results WHERE phone = $1 AND id NOT IN (SELECT id FROM scanner_results WHERE phone = $1 ORDER BY completed_at DESC LIMIT 20)`,
+      [phone]
+    );
   } catch (err) {
     console.warn("[Scanner] Échec de l'enregistrement du résultat de scan:", err);
   }
@@ -2348,7 +2353,7 @@ Analyse le problème, les conditions (à froid/chaud, au démarrage/en roulant),
 ÉTAPE 3 — INVENTAIRE DES OUTILS DISPONIBLES :
 Ne présume JAMAIS que l'utilisateur a un multimètre. Demande quels outils simples il possède (lampe témoin 12V, compressiomètre, jauge de pression carburant, tournevis/tige métallique en stéthoscope).
 Si un outil nécessaire manque, intègre UNE SEULE FOIS par outil manquant l'invitation d'achat structurée TOUJOURS APRÈS l'explication du rôle du test :
-"Je comprends que vous n'ayez pas de [nom de l'outil] sous la main. Cet outil est précieux ici car il va nous permettre de [rappel très bref de ce que ce test va révéler]. Si vous souhaitez vous en procurer un rapidement, nous pouvons vous le fournir : il vous suffit de contacter le 0707312797. Sinon, dites-le-moi et je verrai avec vous s'il existe une autre façon de procéder."
+"Il vous manque [nom de l'outil]. Cet outil est précieux ici car il va nous permettre de [rappel très bref de ce que ce test va révéler]. Si vous souhaitez vous en procurer un rapidement, nous pouvons vous le fournir : il vous suffit de contacter le 0707312797. Sinon, dites-le-moi et je verrai avec vous s'il existe une autre façon de procéder."
 
 ÉTAPE 4 — LECTURE DES CODES :
 Distingue codes génériques EOBD/OBD (P0xxx) et codes constructeur. Regroupe les codes par cause électrique ou mécanique commune en amont.
@@ -4923,8 +4928,58 @@ Directives pour ce tour :
     });
   }
 
+  // --- Garde-fous du Live (coût IA) ---
+  // Durée max d'une session, sessions simultanées par profil et temps cumulé par jour et par forfait.
+  const LIVE_MODEL = (process.env.LIVE_MODEL || "gemini-3.1-flash-live-preview").trim();
+  const LIVE_VOICE = (process.env.LIVE_VOICE || "Puck").trim();
+  const LIVE_MAX_SESSION_MS = (Number(process.env.LIVE_MAX_SESSION_MIN) || 20) * 60 * 1000;
+  const LIVE_MAX_CONCURRENT = Number(process.env.LIVE_MAX_CONCURRENT) || 2;
+  const LIVE_DAILY_MS: Record<string, number> = {
+    free_trial: 10 * 60 * 1000,
+    owner_week: 60 * 60 * 1000,
+    lite: 120 * 60 * 1000,
+    payg_active: 480 * 60 * 1000,
+    premium: 480 * 60 * 1000,
+  };
+  const liveUsage = new Map<string, { day: string; usedMs: number }>();
+  const liveConnections = new Map<string, Set<any>>();
+  const todayKey = () => new Date().toISOString().slice(0, 10);
+  const getLiveUsedMs = (phone: string) => {
+    const u = liveUsage.get(phone);
+    return u && u.day === todayKey() ? u.usedMs : 0;
+  };
+  const addLiveUsage = (phone: string, ms: number) => {
+    if (!phone || ms <= 0) return;
+    liveUsage.set(phone, { day: todayKey(), usedMs: getLiveUsedMs(phone) + ms });
+  };
+
+  // Ouvre la session Gemini Live ; si la clé échoue (quota, clé invalide) et qu'une autre clé existe,
+  // on tourne sur la clé suivante avant de renoncer.
+  async function connectLiveWithRotation(params: any): Promise<any> {
+    const attempts = Math.max(1, getGeminiKeys().length);
+    let lastErr: any;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await getAIClient().live.connect(params);
+      } catch (err) {
+        lastErr = err;
+        if (i < attempts - 1 && rotateGeminiKey()) continue;
+        break;
+      }
+    }
+    throw lastErr;
+  }
+
   // Create standard WebSocketServer for low-latency live audio streaming
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: 8 * 1024 * 1024,
+    // Le token de session voyage dans le sous-protocole "auth.<token>" (plutôt que dans l'URL).
+    handleProtocols: (protocols: Set<string>) => {
+      for (const p of protocols) if (p.startsWith("auth.")) return p;
+      return false;
+    },
+  });
 
   server.on("upgrade", (request, socket, head) => {
     const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
@@ -4932,7 +4987,9 @@ Directives pour ce tour :
       // FAILLE CORRIGÉE : ce endpoint WebSocket (assistant vocal live via Gemini) n'exigeait
       // aucune authentification — n'importe qui pouvait s'y connecter directement et consommer
       // l'API Gemini à volonté, sans compte, sans forfait, sans limite, aux frais de l'opérateur.
-      const token = searchParams.get("token") || "";
+      const protoToken = String(request.headers["sec-websocket-protocol"] || "")
+        .split(",").map((x) => x.trim()).find((x) => x.startsWith("auth."))?.slice(5);
+      const token = protoToken || searchParams.get("token") || "";
       const session = sessions.get(token);
       if (!token || !session) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -4945,8 +5002,15 @@ Directives pour ce tour :
         socket.destroy();
         return;
       }
+      const dailyCap = LIVE_DAILY_MS[effectivePlan] ?? 0;
+      if (getLiveUsedMs(session.phone) >= dailyCap) {
+        socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
         (ws as any)._authPhone = session.phone;
+        (ws as any)._plan = effectivePlan;
         wss.emit("connection", ws, request);
       });
     } else {
@@ -4956,6 +5020,44 @@ Directives pour ce tour :
 
   wss.on("connection", (clientWs) => {
     console.log("[WebSocket] Client connected to real-time voice bridge.");
+    const connPhone: string = (clientWs as any)._authPhone || "";
+    const connPlan: string = (clientWs as any)._plan || "";
+    const connStartedAt = Date.now();
+    let startInProgress = false;
+    let resumeHandle: string | undefined;
+    let liveGen = 0;
+    let reconnects = 0;
+    let usageCounted = false;
+
+    // Sessions simultanées : au-delà de la limite, on ferme la plus ancienne.
+    const mySet = liveConnections.get(connPhone) || new Set<any>();
+    liveConnections.set(connPhone, mySet);
+    mySet.add(clientWs);
+    if (mySet.size > LIVE_MAX_CONCURRENT) {
+      const oldest = mySet.values().next().value;
+      if (oldest && oldest !== clientWs) {
+        try { oldest.send(JSON.stringify({ type: "limit", message: "Session fermée : appel ouvert sur un autre appareil." })); oldest.close(4009, "concurrent"); } catch {}
+        mySet.delete(oldest);
+      }
+    }
+
+    // Durée max = min(durée d'une session, budget quotidien restant).
+    const remainingBudget = Math.max(0, (LIVE_DAILY_MS[connPlan] ?? 0) - getLiveUsedMs(connPhone));
+    const limitTimer = setTimeout(() => {
+      try { clientWs.send(JSON.stringify({ type: "limit", message: "Durée maximale de l'appel atteinte pour aujourd'hui ou pour cette session." })); clientWs.close(4008, "limit"); } catch {}
+    }, Math.min(LIVE_MAX_SESSION_MS, remainingBudget));
+
+    // Ping/pong : détecte les connexions mortes (proxy, réseau mobile).
+    let isAlive = true;
+    clientWs.on("pong", () => { isAlive = true; });
+    // Sans listener, une erreur WebSocket (ex : message trop gros avec maxPayload) ferait planter le process.
+    clientWs.on("error", (err) => console.warn("[WebSocket] Erreur client:", err.message));
+    const heartbeat = setInterval(() => {
+      if (!isAlive) { try { clientWs.terminate(); } catch {} return; }
+      isAlive = false;
+      try { clientWs.ping(); } catch {}
+    }, 25000);
+
     let geminiSession: any = null;
     let deepSeekFallbackActive = false;
     let deepSeekFallbackSystemInstruction = "";
@@ -4968,9 +5070,14 @@ Directives pour ce tour :
         const message = JSON.parse(data.toString());
 
         if (message.type === "start") {
+          if (startInProgress || geminiSession || deepSeekFallbackActive) return; // un seul start par connexion
+          startInProgress = true;
           console.log("[WebSocket] Starting Gemini Live Session with context...");
+          const diagnosticContext = String(message.diagnosticContext || "").slice(0, 4000);
+          const incomingResume = typeof message.resumeHandle === "string" && message.resumeHandle.length <= 512 ? message.resumeHandle : undefined;
+          if (incomingResume) resumeHandle = incomingResume;
           const livePhone = (clientWs as any)._authPhone || "";
-          liveAgentState = await resumeLiveAgentState(livePhone, liveAgentSessionId, String(message.diagnosticContext || ""));
+          liveAgentState = await resumeLiveAgentState(livePhone, liveAgentSessionId, diagnosticContext);
           await saveLiveAgentState(livePhone, liveAgentState);
           clientWs.send(JSON.stringify({ type: "agentState", sessionId: liveAgentSessionId, phase: liveAgentState.phase, resumed: liveAgentState.tour > 0 }));
           const liveNameInstruction = getNameInstruction((clientWs as any)._authPhone);
@@ -5000,9 +5107,12 @@ MODULE PUBLICITAIRE VOCAL & DEUX IDENTITÉS VOCALES (RÈGLE STRICTE) :
    - Ne réinitialise jamais le contexte du diagnostic (véhicule, VIN, DTC, symptômes, photos).
 
 COURTOISIE ET TON OBLIGATOIRES EN LIVE VOCAL :
-- Salue l'utilisateur au début de l'échange : "Je suis DiagAssist, à votre écoute."
-- Tu vouvoies TOUJOURS l'utilisateur avec respect, calme et bienveillance.
-- Réponses courtes (1 à 2 phrases max) pour un échange vocal dynamique.
+- Salue l'utilisateur UNE SEULE FOIS au début de l'échange : "Je suis DiagAssist, à votre écoute."
+- Tu vouvoies TOUJOURS l'utilisateur avec respect et calme.
+- Aucune politesse superflue : pas de "Je comprends", pas de "Comment puis-je vous aider ?". Entre directement dans l'action.
+- Réponses courtes (2 phrases max) : diagnostic rapide, puis action physique immédiate.
+- Silence actif : si le mécanicien ne pose pas de question, ne dis rien et laisse-le travailler.
+- Donnée manquante : demande uniquement "Code défaut ?" ou "Symptôme exact ?".
 
 RÈGLE D'OR (NON NÉGOCIABLE) :
 NE JAMAIS SAUTER DIRECTEMENT D'UN CODE DÉFAUT OU D'UN SYMPTÔME À UNE PIÈCE À REMPLACER.
@@ -5033,7 +5143,7 @@ confirmé" vs "c'est probable mais pas certain"). Pour un décodage VIN, précis
 sans base constructeur officielle, et invite à vérifier sur la carte grise.
 
 FICHE TECHNIQUE ET DIAGNOSTIC ACTUEL DU VÉHICULE :
-${message.diagnosticContext}
+${diagnosticContext}
 ${historySection}${lastScanSection}
 ENREGISTREMENT DU DIAGNOSTIC (OBLIGATOIRE) : dès qu'un diagnostic clair se dégage (cause probable
 identifiée et action recommandée établie), appelle l'outil enregistrer_diagnostic UNE SEULE FOIS pour
@@ -5046,14 +5156,19 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
 
           deepSeekFallbackSystemInstruction = systemInstruction;
           try {
-            geminiSession = await getAIClient().live.connect({
-              model: "gemini-3.1-flash-live-preview",
+            const buildLiveConnect = (resumeFrom?: string) => {
+              const gen = ++liveGen;
+              return {
+              model: LIVE_MODEL,
               config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
-                  voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } }, // 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
+                  voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } }, // 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
                 },
                 systemInstruction: systemInstruction,
+                // Reprise de session + compression du contexte : les appels longs ne coupent plus net.
+                sessionResumption: resumeFrom ? { handle: resumeFrom } : {},
+                contextWindowCompression: { slidingWindow: {} },
                 tools: [{ functionDeclarations: LIVE_AGENT_TOOL_DECLARATIONS }],
                 outputAudioTranscription: {},
                 inputAudioTranscription: {},
@@ -5065,16 +5180,28 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                 realtimeInputConfig: {
                   automaticActivityDetection: {
                     disabled: false,
-                    startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+                    // Atelier bruyant : un départ de parole trop sensible faisait couper la voix de l'IA
+                    // sur de simples bruits. On garde une fin de parole rapide mais un départ moins nerveux.
+                    startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
                     endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
-                    prefixPaddingMs: 20,
-                    silenceDurationMs: 300,
+                    prefixPaddingMs: 100,
+                    silenceDurationMs: 500,
                   },
                 },
               },
               callbacks: {
                 onmessage: (msg: any) => {
-                  if (isClosed) return;
+                  if (isClosed || gen !== liveGen) return;
+
+                  // Reprise de session : mémorise le dernier handle et prépare une reconnexion sur goAway.
+                  const upd = msg.sessionResumptionUpdate;
+                  if (upd?.resumable && typeof upd.newHandle === "string") {
+                    resumeHandle = upd.newHandle;
+                    try { clientWs.send(JSON.stringify({ type: "resumeHandle", handle: upd.newHandle })); } catch {}
+                  }
+                  if (msg.goAway) {
+                    reconnectGemini("goAway");
+                  }
 
                   // Handle Model Output Turn (audio & transcription)
                   const modelParts = msg.serverContent?.modelTurn?.parts;
@@ -5082,7 +5209,11 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                     for (const part of modelParts) {
                       const audio = part.inlineData?.data;
                       if (audio) {
-                        clientWs.send(JSON.stringify({ type: "audio", audio }));
+                        // Contre-pression : si le client est en retard (réseau lent), on jette l'audio
+                        // au lieu d'accumuler de la mémoire.
+                        if (clientWs.bufferedAmount < 1_000_000) {
+                          clientWs.send(JSON.stringify({ type: "audio", audio }));
+                        }
                       }
                       const text = part.text;
                       if (text) {
@@ -5101,6 +5232,13 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                       }
                     }
                   }
+
+                  // Transcriptions audio (activées dans la config) : c'est par là que passe le texte de
+                  // la conversation avec le modèle audio natif — sans ça, l'écran Live reste vide.
+                  const outTranscript = msg.serverContent?.outputTranscription?.text;
+                  if (outTranscript) clientWs.send(JSON.stringify({ type: "outputTranscript", text: outTranscript }));
+                  const inTranscript = msg.serverContent?.inputTranscription?.text;
+                  if (inTranscript) clientWs.send(JSON.stringify({ type: "inputTranscript", text: inTranscript }));
 
                   // Handle Interruption
                   if (msg.serverContent?.interrupted) {
@@ -5123,7 +5261,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                           let result: string;
                           try {
                             if (fc.name === "piloter_diagnostic") {
-                              if (!liveAgentState) liveAgentState = createLiveAgentState(liveAgentSessionId, String(message.diagnosticContext || ""));
+                              if (!liveAgentState) liveAgentState = createLiveAgentState(liveAgentSessionId, diagnosticContext);
                               result = pilotLiveDiagnostic(fc.args || {}, liveAgentState);
                               await saveLiveAgentState((clientWs as any)._authPhone || "", liveAgentState);
                               clientWs.send(JSON.stringify({ type: "agentState", state: JSON.parse(result) }));
@@ -5226,20 +5364,61 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                   }
                 },
                 onclose: () => {
+                  if (gen !== liveGen) return; // ancienne session déjà remplacée
                   console.log("[WebSocket] Gemini Live session closed.");
-                  if (!isClosed) {
+                  if (isClosed) return;
+                  if (resumeHandle && reconnects < 3) {
+                    reconnectGemini("close");
+                    return;
+                  }
+                  geminiSession = null;
+                  try {
                     clientWs.send(JSON.stringify({ type: "closed" }));
                     clientWs.close();
-                  }
+                  } catch {}
                 },
                 onerror: (err: any) => {
+                  if (gen !== liveGen) return;
                   console.error("[WebSocket] Gemini Live error:", err);
-                  if (!isClosed) {
-                    clientWs.send(JSON.stringify({ type: "error", message: "Erreur de connexion vocale avec l'IA." }));
+                  if (isGeminiQuotaError(err)) rotateGeminiKey();
+                  if (isClosed) return;
+                  if (resumeHandle && reconnects < 3) {
+                    reconnectGemini("error");
+                    return;
                   }
+                  // Session inutilisable : on ne garde pas une référence morte.
+                  const dead = geminiSession;
+                  geminiSession = null;
+                  try { dead?.close(); } catch {}
+                  try {
+                    clientWs.send(JSON.stringify({ type: "error", message: "Erreur de connexion vocale avec l'IA." }));
+                    clientWs.close();
+                  } catch {}
                 }
               }
-            });
+              };
+            };
+
+            // Reconnexion transparente côté serveur (goAway / coupure) avec le handle de reprise.
+            const reconnectGemini = async (reason: string) => {
+              if (isClosed || !resumeHandle) return;
+              reconnects += 1;
+              console.warn(`[WebSocket] Reconnexion Gemini Live (${reason}) ${reconnects}/3 avec reprise de session.`);
+              const previous = geminiSession;
+              try {
+                geminiSession = await connectLiveWithRotation(buildLiveConnect(resumeHandle));
+                try { previous?.close(); } catch {}
+              } catch (err) {
+                console.error("[WebSocket] Reconnexion Gemini Live échouée:", err);
+                geminiSession = null;
+                try {
+                  clientWs.send(JSON.stringify({ type: "error", message: "Connexion vocale perdue." }));
+                  clientWs.close();
+                } catch {}
+              }
+            };
+
+            geminiSession = await connectLiveWithRotation(buildLiveConnect(incomingResume));
 
             console.log("[WebSocket] Gemini Live session connected successfully.");
             clientWs.send(JSON.stringify({ type: "connected" }));
@@ -5247,8 +5426,8 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             // Identification HP-Web automatique : si le contexte Live contient un VIN,
             // la recherche véhicule démarre immédiatement, sans attendre que le modèle
             // décide d'appeler l'outil. Le résultat est ensuite injecté dans le contexte Live.
-            const contextVinMatch = String(message.diagnosticContext || "").toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/);
-            if (contextVinMatch) {
+            const contextVinMatch = diagnosticContext.toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/);
+            if (contextVinMatch && !incomingResume) {
               const contextVin = contextVinMatch[0];
               console.log("[HP-Web] Recherche automatique au démarrage Live pour VIN:", contextVin);
               searchHpWeb({ vin: contextVin })
@@ -5276,8 +5455,8 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                 });
             }
 
-            // Send an initial prompt to make the agent speak immediately!
-            geminiSession.sendClientContent({
+            // Send an initial prompt to make the agent speak immediately! (pas après une reprise de session)
+            if (!incomingResume) geminiSession.sendClientContent({
               turns: [
                 {
                   role: "user",
@@ -5314,7 +5493,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             }
           }
         } else if (message.type === "audio") {
-          if (geminiSession) {
+          if (geminiSession && typeof message.audio === "string" && message.audio.length <= 200000) {
             geminiSession.sendRealtimeInput({
               audio: { data: message.audio, mimeType: "audio/pcm;rate=16000" }
             });
@@ -5337,7 +5516,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
         } else if (message.type === "triggerVocalAd") {
           if (geminiSession) {
             console.log("[WebSocket] Delivering 100% vocal ad instruction to Gemini Live...");
-            const adPrompt = message.adVoicePrompt || `[INSTRUCTION VOCALE PUBLICITAIRE] Adopte un ton commercial, dynamique et professionnel (voix publicitaire) pour prononcer l'annonce suivante : "${message.offerScript || 'Si vous souhaitez vous équiper pour vos prochains diagnostics, découvrez nos scanners automobiles sans tablette à partir de 80 000 FCFA.'}" Puis reprends immédiatement ta voix de diagnostic calme et technique.`;
+            const adPrompt = (message.adVoicePrompt ? String(message.adVoicePrompt).slice(0, 1500) : "") || `[INSTRUCTION VOCALE PUBLICITAIRE] Adopte un ton commercial, dynamique et professionnel (voix publicitaire) pour prononcer l'annonce suivante : "${String(message.offerScript || '').slice(0, 500) || 'Si vous souhaitez vous équiper pour vos prochains diagnostics, découvrez nos scanners automobiles sans tablette à partir de 80 000 FCFA.'}" Puis reprends immédiatement ta voix de diagnostic calme et technique.`;
             geminiSession.sendClientContent({
               turns: [
                 {
@@ -5356,14 +5535,14 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                 {
                   role: "user",
                   parts: [
-                    { text: message.text }
+                    { text: String(message.text || "").slice(0, 4000) }
                   ]
                 }
               ]
             });
           } else if (deepSeekFallbackActive) {
             try {
-              const fallback = await callDeepSeekFallback(String(message.text || ""), {
+              const fallback = await callDeepSeekFallback(String(message.text || "").slice(0, 4000), {
                 systemInstruction: deepSeekFallbackSystemInstruction,
               });
               clientWs.send(JSON.stringify({ type: "text", text: fallback.text, fallback: "deepseek" }));
@@ -5381,6 +5560,14 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
     clientWs.on("close", () => {
       console.log("[WebSocket] Client disconnected from real-time voice bridge.");
       isClosed = true;
+      clearTimeout(limitTimer);
+      clearInterval(heartbeat);
+      mySet.delete(clientWs);
+      if (mySet.size === 0) liveConnections.delete(connPhone);
+      if (!usageCounted) {
+        usageCounted = true;
+        addLiveUsage(connPhone, Date.now() - connStartedAt);
+      }
       if (geminiSession) {
         try {
           geminiSession.close();

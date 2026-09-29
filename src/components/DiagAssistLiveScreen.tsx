@@ -362,6 +362,8 @@ export default function DiagAssistLiveScreen({
   // Reconnexion automatique si la connexion WebSocket coupe de façon inattendue (courant en
   // 4G dégradée/3G) pendant un appel toujours en cours — jusqu'à 2 tentatives.
   const reconnectAttemptsRef = useRef(0);
+  const resumeHandleRef = useRef<string | null>(null);
+  const transcriptSpeakerRef = useRef<"user" | "model" | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inactivityHandledRef = useRef(false);
@@ -710,8 +712,11 @@ export default function DiagAssistLiveScreen({
       // 3. Connect WebSocket
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const authToken = localStorage.getItem("auth_session_token") || "";
-      const wsUrl = `${protocol}//${window.location.host}/api/live-ws?token=${encodeURIComponent(authToken)}`;
-      const ws = new WebSocket(wsUrl);
+      // Le token voyage dans le sous-protocole (pas dans l'URL, donc pas dans les journaux de proxy).
+      const wsUrl = `${protocol}//${window.location.host}/api/live-ws`;
+      const ws = /^[A-Za-z0-9]+$/.test(authToken)
+        ? new WebSocket(wsUrl, [`auth.${authToken}`])
+        : new WebSocket(`${wsUrl}?token=${encodeURIComponent(authToken)}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -733,7 +738,8 @@ Codes DTC: ${dtcCodes}`;
 
         ws.send(JSON.stringify({
           type: "start",
-          diagnosticContext: contextText
+          diagnosticContext: contextText,
+          resumeHandle: resumeHandleRef.current || undefined
         }));
 
         setCallState("live");
@@ -749,15 +755,35 @@ Codes DTC: ${dtcCodes}`;
           if (msg.type === "audio") {
             globalAdManager.setGeminiSpeakingStatus(true);
             playAudioChunk(msg.audio);
+          } else if (msg.type === "resumeHandle") {
+            resumeHandleRef.current = typeof msg.handle === "string" ? msg.handle : null;
+          } else if (msg.type === "limit") {
+            // Limite atteinte côté serveur : pas de reconnexion automatique.
+            reconnectAttemptsRef.current = 99;
+            setToast(msg.message || "Limite d'appel atteinte.");
           } else if (msg.type === "interrupted") {
             globalAdManager.setGeminiSpeakingStatus(false);
             stopAllAudioPlayback();
+          } else if (msg.type === "outputTranscript" || msg.type === "inputTranscript") {
+            // Fragments de transcription : on complète la ligne en cours tant que le même
+            // interlocuteur parle, puis on passe à la ligne quand la parole change.
+            const speaker = msg.type === "outputTranscript" ? "model" : "user";
+            const frag = String(msg.text || "");
+            if (frag) {
+              if (speaker === "user") resetLiveInactivityTimer();
+              const sameSpeaker = transcriptSpeakerRef.current === speaker;
+              transcriptSpeakerRef.current = speaker;
+              setLiveTranscript((prev) =>
+                sameSpeaker ? prev + frag : prev + (prev ? "\n" : "") + (speaker === "model" ? "DiagAssist: " : "Mécano: ") + frag.trimStart()
+              );
+            }
           } else if (msg.type === "userTranscript") {
             if (msg.text?.trim()) resetLiveInactivityTimer();
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "Mécano: " + msg.text);
           } else if (msg.type === "text") {
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "DiagAssist: " + msg.text);
           } else if (msg.type === "turnComplete") {
+            transcriptSpeakerRef.current = null;
             // En Live, aucune publicité ou autre voix ne doit être injectée.
             globalAdManager.setGeminiSpeakingStatus(false);
           } else if (msg.type === "whatsappLink") {
@@ -778,8 +804,9 @@ Codes DTC: ${dtcCodes}`;
         setToast("Connexion vocale instable — reconnexion en cours...");
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         console.log("[LiveWS] WebSocket closed.");
+        if (ev.code === 4008 || ev.code === 4009) reconnectAttemptsRef.current = 99;
         // Reconnexion automatique uniquement si la coupure est INATTENDUE (l'utilisateur n'a pas
         // raccroché lui-même — stopLiveCallSession met wsRef.current à null avant de fermer).
         // Jusqu'à 2 tentatives, avec un court délai, pour survivre à une coupure 4G/3G passagère.
@@ -843,6 +870,7 @@ Codes DTC: ${dtcCodes}`;
 
   // Stop real-time call
   const stopLiveCallSession = () => {
+    resumeHandleRef.current = null; // un nouvel appel repart d'une session neuve
     playMicStopSound();
 
     callGenerationRef.current++;
