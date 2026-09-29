@@ -575,7 +575,7 @@ export default function DiagAssistLiveScreen({
       const data = await response.json();
       if (!data.success || !data.audioContent) throw new Error(data.message || "Pas d'audio renvoyé.");
 
-      const audioObj = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+      const audioObj = new Audio(`data:${data.mimeType || "audio/mp3"};base64,${data.audioContent}`);
       ttsAudioRef.current = audioObj;
 
       audioObj.onplay = () => {
