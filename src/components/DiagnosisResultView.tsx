@@ -149,7 +149,7 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
 
         const data = await response.json();
         if (data.success && data.audioContent) {
-          const audioUrl = `data:audio/mp3;base64,${data.audioContent}`;
+          const audioUrl = `data:${data.mimeType || "audio/mp3"};base64,${data.audioContent}`;
           const audioObj = new Audio(audioUrl);
           
           audioObj.onplay = () => {
