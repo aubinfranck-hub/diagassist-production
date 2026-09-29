@@ -363,6 +363,7 @@ export default function DiagAssistLiveScreen({
   // 4G dégradée/3G) pendant un appel toujours en cours — jusqu'à 2 tentatives.
   const reconnectAttemptsRef = useRef(0);
   const resumeHandleRef = useRef<string | null>(null);
+  const transcriptSpeakerRef = useRef<"user" | "model" | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inactivityHandledRef = useRef(false);
@@ -763,12 +764,26 @@ Codes DTC: ${dtcCodes}`;
           } else if (msg.type === "interrupted") {
             globalAdManager.setGeminiSpeakingStatus(false);
             stopAllAudioPlayback();
+          } else if (msg.type === "outputTranscript" || msg.type === "inputTranscript") {
+            // Fragments de transcription : on complète la ligne en cours tant que le même
+            // interlocuteur parle, puis on passe à la ligne quand la parole change.
+            const speaker = msg.type === "outputTranscript" ? "model" : "user";
+            const frag = String(msg.text || "");
+            if (frag) {
+              if (speaker === "user") resetLiveInactivityTimer();
+              const sameSpeaker = transcriptSpeakerRef.current === speaker;
+              transcriptSpeakerRef.current = speaker;
+              setLiveTranscript((prev) =>
+                sameSpeaker ? prev + frag : prev + (prev ? "\n" : "") + (speaker === "model" ? "DiagAssist: " : "Mécano: ") + frag.trimStart()
+              );
+            }
           } else if (msg.type === "userTranscript") {
             if (msg.text?.trim()) resetLiveInactivityTimer();
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "Mécano: " + msg.text);
           } else if (msg.type === "text") {
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "DiagAssist: " + msg.text);
           } else if (msg.type === "turnComplete") {
+            transcriptSpeakerRef.current = null;
             // En Live, aucune publicité ou autre voix ne doit être injectée.
             globalAdManager.setGeminiSpeakingStatus(false);
           } else if (msg.type === "whatsappLink") {

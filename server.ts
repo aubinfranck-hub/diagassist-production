@@ -5233,6 +5233,13 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                     }
                   }
 
+                  // Transcriptions audio (activées dans la config) : c'est par là que passe le texte de
+                  // la conversation avec le modèle audio natif — sans ça, l'écran Live reste vide.
+                  const outTranscript = msg.serverContent?.outputTranscription?.text;
+                  if (outTranscript) clientWs.send(JSON.stringify({ type: "outputTranscript", text: outTranscript }));
+                  const inTranscript = msg.serverContent?.inputTranscription?.text;
+                  if (inTranscript) clientWs.send(JSON.stringify({ type: "inputTranscript", text: inTranscript }));
+
                   // Handle Interruption
                   if (msg.serverContent?.interrupted) {
                     clientWs.send(JSON.stringify({ type: "interrupted" }));
