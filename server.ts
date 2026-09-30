@@ -318,6 +318,11 @@ async function initDatabase(): Promise<void> {
     ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS price_eur NUMERIC(12,2);
     CREATE INDEX IF NOT EXISTS idx_shop_products_category ON shop_products (category_id);
     CREATE INDEX IF NOT EXISTS idx_shop_products_brand_model ON shop_products (brand, model);
+    -- Produits repris d'un fournisseur (ex : ivoirelite) ; sert au suivi de la commission reversee a la main
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS supplier TEXT;
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS supplier_ref TEXT;
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS supplier_url TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shop_products_supplier_ref ON shop_products (supplier, supplier_ref) WHERE supplier IS NOT NULL;
     -- Clients CRM: identifies par numero de telephone
     CREATE TABLE IF NOT EXISTS shop_customers (
       phone TEXT PRIMARY KEY,
@@ -4278,6 +4283,41 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     query += " ORDER BY o.created_at DESC LIMIT 200";
     const { rows } = await dbPool.query(query, params);
     res.json({ success: true, orders: rows });
+  });
+
+  // --- Admin : commission fournisseur (reversee hors systeme, a verifier a la main) ---
+  // Ventes des produits d'un fournisseur sur une periode, avec la commission qui revient a la boutique.
+  // Due = commandes livrees ; a venir = commandes confirmees / en cours. Taux : SUPPLIER_COMMISSION_PCT (defaut 15).
+  app.get("/api/admin/shop/commissions", requireAdminAuth, async (req, res) => {
+    const supplier = String(req.query.supplier || "ivoirelite").toLowerCase();
+    const pct = Number(req.query.pct ?? process.env.SUPPLIER_COMMISSION_PCT ?? 15);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return res.status(400).json({ success: false, message: "Pourcentage invalide." });
+    const isDate = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const from = isDate(req.query.from) ? String(req.query.from) : "1970-01-01";
+    const to = isDate(req.query.to) ? String(req.query.to) : "2999-12-31";
+    if (!dbPool) return res.json({ success: true, supplier, pct, lines: [], totals: { due: 0, upcoming: 0, sales: 0 } });
+    const { rows } = await dbPool.query(
+      `SELECT o.id, o.order_ref, o.created_at, o.status, o.customer_phone,
+              COALESCE(o.product_name_snapshot, p.name) AS product, p.supplier_ref, p.supplier_url,
+              COALESCE(o.quantity, 1) AS quantity, COALESCE(o.unit_price_snapshot, 0) AS unit_price,
+              COALESCE(o.unit_price_snapshot, 0) * COALESCE(o.quantity, 1) AS total
+         FROM shop_orders o JOIN shop_products p ON p.id = o.product_id
+        WHERE lower(p.supplier) = $1 AND o.status <> 'annulee'
+          AND o.created_at::date BETWEEN $2::date AND $3::date
+        ORDER BY o.created_at DESC LIMIT 1000`,
+      [supplier, from, to],
+    );
+    const commission = (total: number) => Math.round((total * pct) / 100);
+    const lines = rows.map((r: any) => ({ ...r, commission: commission(Number(r.total)), settled_basis: r.status === "livree" ? "due" : "a_venir" }));
+    const sum = (f: (l: any) => boolean, k: string) => lines.filter(f).reduce((a: number, l: any) => a + Number(l[k]), 0);
+    res.json({
+      success: true, supplier, pct, from, to, lines,
+      totals: {
+        sales: sum(() => true, "total"),
+        due: sum((l) => l.status === "livree", "commission"),
+        upcoming: sum((l) => l.status !== "livree", "commission"),
+      },
+    });
   });
 
   app.patch("/api/admin/shop/orders/:id", requireAdminAuth, async (req, res) => {
