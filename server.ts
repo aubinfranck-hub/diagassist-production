@@ -899,7 +899,10 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries = 3, initial
         error.message?.includes("high demand") ||
         error.message?.includes("overloaded");
       
-      if (!isTransient || attempt >= maxRetries) {
+      // Quota épuisé (pas un simple pic) : réessayer sur la même clé est inutile, on laisse l'appelant
+      // tourner vers une autre clé / retirer la recherche web.
+      const quotaExhausted = /exceeded your current quota|check your plan and billing/i.test(String(error.message || ""));
+      if (!isTransient || quotaExhausted || attempt >= maxRetries) {
         throw error;
       }
       const delay = initialDelayMs * Math.pow(2, attempt - 1) * (0.8 + Math.random() * 0.4);
@@ -2020,6 +2023,20 @@ async function generateContentWithFallbackAndRetry(
 ): Promise<any> {
   const modelsToTry = [primaryModel, "gemini-3.1-flash-lite", "gemini-flash-latest"];
   let lastError: any = null;
+  // Le quota de la recherche web (grounding) est distinct du quota de génération : quand il est
+  // épuisé, tous les modèles répondent 429 alors que la même requête sans recherche passe.
+  // On retire alors l'outil googleSearch et on retente (une seule fois) au lieu d'échouer.
+  let activeConfig = config;
+  let searchStripped = false;
+  const stripSearchTool = (): boolean => {
+    const tools = activeConfig?.tools;
+    if (searchStripped || !Array.isArray(tools) || !tools.some((t: any) => t && t.googleSearch)) return false;
+    const rest = tools.filter((t: any) => !(t && t.googleSearch));
+    activeConfig = { ...activeConfig, tools: rest.length > 0 ? rest : undefined };
+    searchStripped = true;
+    console.warn("[Gemini API] Quota de la recherche web épuisé : nouvelle tentative sans googleSearch.");
+    return true;
+  };
 
   for (const modelName of modelsToTry) {
     // Une erreur de quota sur ce modèle avec la clé active fait tourner vers la clé suivante et
@@ -2034,7 +2051,7 @@ async function generateContentWithFallbackAndRetry(
           return await getAIClient().models.generateContent({
             model: modelName,
             contents,
-            config,
+            config: activeConfig,
           });
         }, 3, 1000);
 
@@ -2053,6 +2070,9 @@ async function generateContentWithFallbackAndRetry(
           keyRotations++;
           continue;
         }
+        if (isGeminiQuotaError(error) && stripSearchTool()) {
+          continue; // même modèle, sans recherche web
+        }
         break;
       }
     }
@@ -2064,7 +2084,7 @@ async function generateContentWithFallbackAndRetry(
   if (deepSeekContent && process.env.DEEPSEEK_API_KEY) {
     try {
       console.warn("[Fallback] Tous les modèles Gemini ont échoué, tentative de repli avec DeepSeek...");
-      return await callDeepSeekFallback(deepSeekContent, config);
+      return await callDeepSeekFallback(deepSeekContent, activeConfig);
     } catch (dsErr: any) {
       console.error("[DeepSeek Fallback] Échec:", dsErr.message || dsErr);
     }
@@ -2775,10 +2795,20 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       // texte libre — le modèle peut donc chercher sur le web et répondre en un seul appel, ce qui
       // lui permet de se comporter en agent sur les questions factuelles précises (localisation
       // d'une pièce, décodage VIN, couples de serrage, bulletins constructeur...).
+      // Mémoire du profil : derniers diagnostics enregistrés et dernier scan, pour que le chat de suivi
+      // puisse répondre à "tu te souviens de la dernière panne ?" au lieu de repartir de zéro.
+      const chatHistoryText = chatPhone ? await liveGetRecentDiagnostics(chatPhone, 3) : "";
+      const chatLastScan = chatPhone ? await getLatestScannerResult(chatPhone, scannerResultsByPhone, 30 * 24 * 60 * 60 * 1000) : undefined;
+      const chatMemory =
+        (chatHistoryText ? `\n\nHISTORIQUE DES DIAGNOSTICS PRÉCÉDENTS DE CE CLIENT (à utiliser s'il évoque une panne passée) :\n${chatHistoryText}` : "") +
+        (chatLastScan
+          ? `\n\nDERNIER SCAN DU PROFIL (${new Date(chatLastScan.completedAt).toLocaleDateString("fr-FR")}) : ${chatLastScan.summary}. Codes DTC : ${chatLastScan.dtcs.length > 0 ? chatLastScan.dtcs.join(", ") : "aucun"}.`
+          : "");
+
       const response = await generateContentWithFallbackAndRetry(
         contentsPayload,
         {
-          systemInstruction,
+          systemInstruction: systemInstruction + chatMemory,
           tools: [{ googleSearch: {} }],
         }
       );
