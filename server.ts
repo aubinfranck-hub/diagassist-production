@@ -14,9 +14,28 @@ import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
+import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
-import { searchHpWeb } from "./src/modules/vehicle/hpwebClient";
+import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
 import { getGeminiKeys } from "./src/utils/geminiKeys";
+
+// Navigation HP-Web : l'extension du navigateur de l'utilisateur (sa session, sa licence) est
+// prioritaire ; le gateway serveur ne sert que de repli, Cloudflare le bloque souvent.
+const HP_NAV_TIMEOUT_MS = 35000;
+function hpWebNavViaClient(clientWs: any, action: string, args: Record<string, unknown>): Promise<HpWebPage> {
+  return new Promise((resolve, reject) => {
+    const pending: Map<string, (m: any) => void> = (clientWs._hpPending ||= new Map());
+    const id = crypto.randomBytes(6).toString("hex");
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error("Extension HP-Web sans réponse")); }, HP_NAV_TIMEOUT_MS);
+    pending.set(id, (m) => {
+      clearTimeout(timer);
+      if (m.ok && m.page) resolve(m.page as HpWebPage);
+      else reject(new Error(m.error || "Échec de la navigation HP-Web"));
+    });
+    clientWs.send(JSON.stringify({ type: "hpwebCommand", id, action, args }));
+  });
+}
+
 
 dotenv.config();
 
@@ -300,6 +319,11 @@ async function initDatabase(): Promise<void> {
     ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS price_eur NUMERIC(12,2);
     CREATE INDEX IF NOT EXISTS idx_shop_products_category ON shop_products (category_id);
     CREATE INDEX IF NOT EXISTS idx_shop_products_brand_model ON shop_products (brand, model);
+    -- Produits repris d'un fournisseur (ex : ivoirelite) ; sert au suivi de la commission reversee a la main
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS supplier TEXT;
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS supplier_ref TEXT;
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS supplier_url TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shop_products_supplier_ref ON shop_products (supplier, supplier_ref) WHERE supplier IS NOT NULL;
     -- Clients CRM: identifies par numero de telephone
     CREATE TABLE IF NOT EXISTS shop_customers (
       phone TEXT PRIMARY KEY,
@@ -327,6 +351,12 @@ async function initDatabase(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_shop_orders_customer ON shop_orders (customer_phone);
     CREATE INDEX IF NOT EXISTS idx_shop_orders_status ON shop_orders (status);
+    -- Produits importes sur commande (ex : scanners AliExpress) : acompte % verse dans nos locaux, delai en jours ouvrables
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS deposit_pct INTEGER DEFAULT 0;
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS lead_time_days INTEGER;
+    ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS deposit_fcfa INTEGER DEFAULT 0;
+    ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS deposit_status TEXT DEFAULT 'non_requis'; -- non_requis | en_attente | recu
+    ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS deposit_received_at TIMESTAMP;
     -- Compteur pour generer les references de commande DA-AAAA-NNNNNN sans collision
     CREATE TABLE IF NOT EXISTS shop_order_counter (
       year INTEGER PRIMARY KEY,
@@ -1862,6 +1892,50 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
       },
       required: [],
     },
+  },
+  {
+    name: "hpweb_page",
+    description: "Ouvre HP-Web dans le navigateur du mécanicien (ou relit la page courante) et renvoie son contenu et ses éléments numérotés. À appeler en premier pour naviguer dans HP-Web : marque, modèle, année, moteur, puis rubrique demandée. Réponds uniquement avec ce que la page contient réellement, sans rien inventer. Si HP-Web demande une connexion, dis au mécanicien de se connecter lui-même ; ne demande jamais son mot de passe.",
+    parameters: { type: Type.OBJECT, properties: {}, required: [] },
+  },
+  {
+    name: "hpweb_cliquer",
+    description: "Clique sur un élément de la page HP-Web courante (menu, lien, bouton) par son numéro de référence, puis renvoie la nouvelle page.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: { ref: { type: Type.NUMBER, description: "Numéro de l'élément dans la dernière page reçue." } },
+      required: ["ref"],
+    },
+  },
+  {
+    name: "hpweb_saisir",
+    description: "Saisit du texte dans un champ de la page HP-Web courante (par exemple la recherche véhicule) et valide si demandé.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        ref: { type: Type.NUMBER, description: "Numéro du champ dans la dernière page reçue." },
+        texte: { type: Type.STRING, description: "Texte à saisir." },
+        valider: { type: Type.BOOLEAN, description: "Appuyer sur Entrée après la saisie." },
+      },
+      required: ["ref", "texte"],
+    },
+  },
+  {
+    name: "hpweb_choisir",
+    description: "Choisit une option dans une liste déroulante de la page HP-Web courante (marque, modèle, année, moteur, rubrique).",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        ref: { type: Type.NUMBER, description: "Numéro de la liste dans la dernière page reçue." },
+        libelle: { type: Type.STRING, description: "Libellé de l'option à choisir." },
+      },
+      required: ["ref", "libelle"],
+    },
+  },
+  {
+    name: "hpweb_retour",
+    description: "Revient à la page HP-Web précédente.",
+    parameters: { type: Type.OBJECT, properties: {}, required: [] },
   },
   {
     name: "verifier_base_vehicules",
@@ -4023,14 +4097,31 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
     await upsertShopCustomer(cleanPhone, name, city, "produit");
     const orderRef = await nextOrderRef();
+    const dep = depositFor(product, quantity || 1);
     const orderRes = await dbPool.query(
-      `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null]
+      `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes, deposit_fcfa, deposit_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null, dep.amount, dep.status]
     );
     await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order" });
-    res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_id: orderRes.rows[0].id, order_ref: orderRef });
+    const days = product.lead_time_days ? Number(product.lead_time_days) : null;
+    res.json({
+      success: true,
+      message: dep.amount > 0 ? "Commande enregistrée. " + depositMessage(dep.amount, days) : "Commande enregistrée. Nous vous contacterons sous peu.",
+      order_id: orderRes.rows[0].id, order_ref: orderRef, deposit_total: dep.amount, lead_time_days: days,
+    });
   });
+
+  // Acompte d'un produit sur commande : pourcentage du total de la ligne, verse en boutique.
+  function depositFor(product: any, quantity: number): { amount: number; status: "non_requis" | "en_attente" } {
+    const pct = Number(product.deposit_pct || 0);
+    const price = Number(product.price_fcfa || 0);
+    if (!(pct > 0) || !(price > 0)) return { amount: 0, status: "non_requis" };
+    return { amount: Math.round((price * Math.max(1, Number(quantity) || 1) * pct) / 100), status: "en_attente" };
+  }
+  const depositMessage = (amount: number, days: number | null) =>
+    `Un acompte de ${amount.toLocaleString("fr-FR")} FCFA est à verser dans nos locaux pour lancer la commande.` +
+    (days ? ` Livraison sous environ ${days} jours ouvrables après l'acompte.` : "");
 
   // Génère une référence de commande sans collision : DA-AAAA-NNNNNN, compteur atomique par année.
   async function nextOrderRef(): Promise<string> {
@@ -4048,10 +4139,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : panier multi-produits -> commande groupée (checkout) ---
   app.post("/api/shop/checkout", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { phone, name, city, address, items } = req.body as {
-      phone: string; name?: string; city?: string; address?: string;
-      items: { product_id: number; quantity: number }[];
-    };
+    // La boutique envoie customer_phone / customer_name / shipping_address ; les anciens noms restent acceptes.
+    const body = req.body as any;
+    const phone: string = body.phone ?? body.customer_phone;
+    const name: string | undefined = body.name ?? body.customer_name;
+    const city: string | undefined = body.city;
+    const address: string | undefined = body.address ?? body.shipping_address;
+    const items: { product_id: number; quantity: number }[] = body.items;
     if (!phone || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Téléphone et au moins un article requis." });
     }
@@ -4061,14 +4155,19 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const orderRef = await nextOrderRef();
 
     const createdIds: number[] = [];
+    let depositTotal = 0;
+    let leadDays: number | null = null;
     for (const item of items) {
       const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [item.product_id]);
       if (productRes.rows.length === 0) continue; // ignore un produit devenu introuvable plutôt que d'annuler toute la commande
       const product = productRes.rows[0];
+      const dep = depositFor(product, item.quantity || 1);
+      depositTotal += dep.amount;
+      if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
       const orderRes = await dbPool.query(
-        `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null]
+        `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address, deposit_fcfa, deposit_status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null, dep.amount, dep.status]
       );
       createdIds.push(orderRes.rows[0].id);
     }
@@ -4080,7 +4179,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       productName: firstProductName.rows[0]?.product_name_snapshot || undefined,
       kind: "order",
     });
-    res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_ref: orderRef, order_ids: createdIds });
+    res.json({
+      success: true,
+      message: depositTotal > 0 ? "Commande enregistrée. " + depositMessage(depositTotal, leadDays) : "Commande enregistrée. Nous vous contacterons sous peu.",
+      order_ref: orderRef, order_ids: createdIds, deposit_total: depositTotal, lead_time_days: leadDays,
+    });
   });
 
   // --- Public : suivi de commande par référence + téléphone ---
@@ -4150,13 +4253,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       [category_id || null, name, slug, brand || null, model || null, normalizedPriceEur, convertedPriceFcfa, description || null, specs || null, compatibility || null,
        box_contents || null, warranty || null, availability || "disponible", JSON.stringify(photos || []), JSON.stringify(videos || [])]
     );
+    const depPct = Number(req.body.deposit_pct), leadDays = Number(req.body.lead_time_days);
+    if ((depPct > 0 && depPct <= 100) || leadDays > 0) {
+      await dbPool.query("UPDATE shop_products SET deposit_pct = $1, lead_time_days = $2 WHERE id = $3",
+        [depPct > 0 && depPct <= 100 ? Math.round(depPct) : 0, leadDays > 0 ? Math.round(leadDays) : null, result.rows[0].id]);
+    }
     res.json({ success: true, id: result.rows[0].id, slug });
   });
 
   app.patch("/api/admin/shop/products/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const fields = req.body;
-    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active"];
+    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active", "deposit_pct", "lead_time_days"];
     const jsonFields = ["photos", "videos"];
     const sets: string[] = [];
     const values: any[] = [];
@@ -4218,16 +4326,120 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, orders: rows });
   });
 
+  // --- Admin : import du catalogue Ivoirelite (pages publiques, revendeur) ---
+  // Corps : { categories: [{ url, name }], dryRun?: boolean, markupPct?: number }.
+  // dryRun = lit et compte sans rien ecrire. Limite a ivoirelite.net, 10 categories par appel.
+  app.post("/api/admin/shop/import/ivoirelite", requireAdminAuth, async (req, res) => {
+    const list = Array.isArray(req.body?.categories) ? req.body.categories.slice(0, 10) : [];
+    if (!list.length) return res.status(400).json({ success: false, message: "categories requis : [{ url, name }]." });
+    const markupPct = Number(req.body?.markupPct ?? process.env.IVOIRELITE_MARKUP_PCT ?? 15); // marge ajoutee au prix fournisseur
+    try {
+      if (req.body?.dryRun) {
+        const out = [];
+        for (const c of list) {
+          const items = await fetchCategory(String(c.url));
+          out.push({ category: c.name, found: items.length, sample: items.slice(0, 3).map((i) => ({ ref: i.ref, name: i.name, priceFcfa: i.priceFcfa })) });
+        }
+        return res.json({ success: true, dryRun: true, results: out });
+      }
+      if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+      const results = [];
+      for (const c of list) results.push(await importCategory(dbPool, { url: String(c.url), name: String(c.name || "Ivoirelite"), markupPct }));
+      res.json({ success: true, results });
+    } catch (e: any) {
+      console.error("[Import Ivoirelite]", e?.message || e);
+      res.status(502).json({ success: false, message: String(e?.message || "Import impossible.").slice(0, 200) });
+    }
+  });
+
+  // --- Admin : import du catalogue 3H Autoparts (flux produits public WooCommerce, revendeur) ---
+  // Sans "categories" : renvoie la liste des categories disponibles. Sinon corps :
+  // { categories: [{ id, name }], dryRun?: boolean, markupPct?: number }.
+  app.post("/api/admin/shop/import/3hautoparts", requireAdminAuth, async (req, res) => {
+    const list = Array.isArray(req.body?.categories) ? req.body.categories.slice(0, 10) : [];
+    const markupPct = Number(req.body?.markupPct ?? process.env.H3_MARKUP_PCT ?? 15); // marge ajoutee au prix fournisseur
+    try {
+      if (!list.length) return res.json({ success: true, availableCategories: await fetch3hCategories() });
+      if (req.body?.dryRun) {
+        const out = [];
+        for (const c of list) {
+          const items = await fetch3hProducts(Number(c.id) || undefined);
+          out.push({ category: c.name, found: items.length, sample: items.slice(0, 3).map((i) => ({ ref: i.ref, name: i.name, priceFcfa: i.priceFcfa, inStock: i.inStock })) });
+        }
+        return res.json({ success: true, dryRun: true, results: out });
+      }
+      if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+      const results = [];
+      for (const c of list) results.push(await import3hCategory(dbPool, { categoryId: Number(c.id) || undefined, name: String(c.name || "3H Autoparts"), markupPct }));
+      res.json({ success: true, results });
+    } catch (e: any) {
+      console.error("[Import 3H]", e?.message || e);
+      res.status(502).json({ success: false, message: String(e?.message || "Import impossible.").slice(0, 200) });
+    }
+  });
+
+  // --- Admin : marge sur les produits d'un fournisseur ---
+  // Les prix importes incluent deja la marge (defaut 15 %, ajoutee au prix fournisseur). Ce rapport liste les ventes
+  // sur une periode avec la marge realisee et le montant a payer au fournisseur (prix de vente / (1 + marge)).
+  // mode=commission : le taux est alors une part du prix de vente reversee hors systeme.
+  // Due = commandes livrees ; a venir = commandes confirmees / en cours. Taux : SUPPLIER_COMMISSION_PCT (defaut 15).
+  app.get("/api/admin/shop/commissions", requireAdminAuth, async (req, res) => {
+    const supplier = String(req.query.supplier || "ivoirelite").toLowerCase();
+    const pct = Number(req.query.pct ?? process.env.SUPPLIER_COMMISSION_PCT ?? 15);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return res.status(400).json({ success: false, message: "Pourcentage invalide." });
+    const isDate = (v: unknown) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const from = isDate(req.query.from) ? String(req.query.from) : "1970-01-01";
+    const to = isDate(req.query.to) ? String(req.query.to) : "2999-12-31";
+    if (!dbPool) return res.json({ success: true, supplier, pct, lines: [], totals: { due: 0, upcoming: 0, sales: 0 } });
+    const { rows } = await dbPool.query(
+      `SELECT o.id, o.order_ref, o.created_at, o.status, o.customer_phone,
+              COALESCE(o.product_name_snapshot, p.name) AS product, p.supplier_ref, p.supplier_url,
+              COALESCE(o.quantity, 1) AS quantity, COALESCE(o.unit_price_snapshot, 0) AS unit_price,
+              COALESCE(o.unit_price_snapshot, 0) * COALESCE(o.quantity, 1) AS total
+         FROM shop_orders o JOIN shop_products p ON p.id = o.product_id
+        WHERE lower(p.supplier) = $1 AND o.status <> 'annulee'
+          AND o.created_at::date BETWEEN $2::date AND $3::date
+        ORDER BY o.created_at DESC LIMIT 1000`,
+      [supplier, from, to],
+    );
+    const mode = req.query.mode === "commission" ? "commission" : "marge";
+    // marge : prix de vente = cout fournisseur x (1 + pct/100) ; commission : part pct % du prix de vente
+    const commission = (total: number) => Math.round(mode === "marge" ? total - total / (1 + pct / 100) : (total * pct) / 100);
+    const lines = rows.map((r: any) => ({
+      ...r,
+      commission: commission(Number(r.total)),
+      supplier_cost: Number(r.total) - commission(Number(r.total)),
+      settled_basis: r.status === "livree" ? "due" : "a_venir",
+    }));
+    const sum = (f: (l: any) => boolean, k: string) => lines.filter(f).reduce((a: number, l: any) => a + Number(l[k]), 0);
+    res.json({
+      success: true, supplier, pct, mode, from, to, lines,
+      totals: {
+        sales: sum(() => true, "total"),
+        supplier_cost: sum(() => true, "supplier_cost"),
+        due: sum((l) => l.status === "livree", "commission"),
+        upcoming: sum((l) => l.status !== "livree", "commission"),
+      },
+    });
+  });
+
   app.patch("/api/admin/shop/orders/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { status, notes } = req.body;
+    const { status, notes, deposit_status } = req.body;
+    if (deposit_status !== undefined && !["non_requis", "en_attente", "recu"].includes(deposit_status)) {
+      return res.status(400).json({ success: false, message: "Statut d'acompte invalide." });
+    }
     const sets: string[] = ["updated_at = CURRENT_TIMESTAMP"];
     const values: any[] = [];
     let i = 1;
+    if (deposit_status !== undefined) {
+      sets.push(`deposit_status = $${i++}`); values.push(deposit_status);
+      sets.push(deposit_status === "recu" ? "deposit_received_at = CURRENT_TIMESTAMP" : "deposit_received_at = NULL");
+    }
     if (status !== undefined) { sets.push(`status = $${i++}`); values.push(status); }
     if (notes !== undefined) { sets.push(`notes = $${i++}`); values.push(notes); }
     values.push(req.params.id);
-    await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = ${i}`, values);
+    await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = $${i}`, values);
     if (["confirmee", "en_traitement", "prete", "livree", "annulee"].includes(status)) {
       await dbPool.query(
         `UPDATE shop_followups SET status = CASE
@@ -5480,6 +5692,27 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                                 clientWs.send(JSON.stringify({ type: "agentState", state: liveAgentState }));
                               }
                               result = JSON.stringify({ source: "HP-Web", count: results.length, results });
+                            } else if (typeof fc.name === "string" && fc.name.startsWith("hpweb_")) {
+                              const navSpec: Record<string, [ "open" | "click" | "type" | "select" | "back", Record<string, unknown> ]> = {
+                                hpweb_page: ["open", {}],
+                                hpweb_cliquer: ["click", { ref: Number(fc.args?.ref) }],
+                                hpweb_saisir: ["type", { ref: Number(fc.args?.ref), text: String(fc.args?.texte || ""), submit: fc.args?.valider !== false }],
+                                hpweb_choisir: ["select", { ref: Number(fc.args?.ref), label: String(fc.args?.libelle || "") }],
+                                hpweb_retour: ["back", {}],
+                              };
+                              const spec = navSpec[fc.name as string];
+                              if (!spec) throw new Error("Outil HP-Web inconnu : " + fc.name);
+                              const page = (clientWs as any)._hpExt
+                                ? await hpWebNavViaClient(clientWs, spec[0], spec[1])
+                                : await hpWebNav(spec[0], spec[1]);
+                              if (page.loginRequired) {
+                                result = "HP-Web demande une connexion. Dis au mécanicien de se connecter lui-même à HP-Web dans l'onglet ouvert, sans jamais lui demander son mot de passe, puis relis la page.";
+                                clientWs.send(JSON.stringify({ type: "hpwebStep", tool: fc.name, url: page.url, title: page.title, loginRequired: true }));
+                              } else {
+                                // Le panneau d'étapes de l'app suit la navigation en direct.
+                                clientWs.send(JSON.stringify({ type: "hpwebStep", tool: fc.name, url: page.url, title: page.title }));
+                                result = formatHpWebPage(page);
+                              }
                             } else if (fc.name === "verifier_base_vehicules") {
                               result = await liveToolCheckVehicleDatabase(String(fc.args?.marque || ""), fc.args?.modele ? String(fc.args.modele) : undefined);
                             } else if (fc.name === "chercher_mecanicien_pres") {
@@ -5687,6 +5920,11 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
               clientWs.close();
             }
           }
+        } else if (message.type === "hpwebExtension") {
+          (clientWs as any)._hpExt = message.ready === true;
+        } else if (message.type === "hpwebResult") {
+          const cb = (clientWs as any)._hpPending?.get(String(message.id));
+          if (cb) { (clientWs as any)._hpPending.delete(String(message.id)); cb(message); }
         } else if (message.type === "audio") {
           if (geminiSession && typeof message.audio === "string" && message.audio.length <= 200000) {
             geminiSession.sendRealtimeInput({

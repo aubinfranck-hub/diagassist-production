@@ -42,6 +42,7 @@ const ETAT_VEHICULE_LABELS: Record<"contact_on" | "moteur_tournant" | "moteur_et
   moteur_eteint: "moteur éteint",
 };
 import { globalAdManager } from "../services/adManager";
+import { attachHpWebBridge } from "../services/hpwebExtensionBridge";
 
 
 // ---------------------------------------------------------------------------
@@ -719,6 +720,7 @@ export default function DiagAssistLiveScreen({
         ? new WebSocket(wsUrl, [`auth.${authToken}`])
         : new WebSocket(`${wsUrl}?token=${encodeURIComponent(authToken)}`);
       wsRef.current = ws;
+      attachHpWebBridge(ws); // navigation HP-Web via l'extension du navigateur, si installée
 
       ws.onopen = () => {
         if (generation !== callGenerationRef.current || wsRef.current !== ws) {

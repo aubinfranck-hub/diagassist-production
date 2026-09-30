@@ -30,12 +30,14 @@ interface ShopProduct {
   specs: string | null; compatibility: string | null; box_contents: string | null;
   warranty: string | null; availability: string; photos: string[];
   videos: string[]; category_name: string | null; category_slug: string | null;
+  deposit_pct?: number | null; lead_time_days?: number | null;
 }
 interface ShopCategory { id: number; name: string; slug: string; type: string; }
 interface CartItem { product_id: number; name: string; price_fcfa: number | null; photo: string | null; quantity: number; }
 type Page = "home" | "catalog" | "product" | "checkout" | "tracking" | "formations";
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
+const isInStock = (a: string) => a === "in_stock" || a === "available" || a === "disponible";
 function fcfa(n: number | null) {
   return n == null ? "Prix sur demande" : n.toLocaleString("fr-FR") + " FCFA";
 }
@@ -347,7 +349,7 @@ function ProductCard({
 }) {
   const inCart = cart.items.some(i => i.product_id === product.id);
   const photo = product.photos?.[0];
-  const available = product.availability === "in_stock" || product.availability === "available";
+  const available = isInStock(product.availability);
 
   return (
     <div className="group rounded-xl border overflow-hidden flex flex-col transition-all hover:-translate-y-0.5 hover:shadow-xl"
@@ -415,7 +417,7 @@ function ShopCatalog({
       }
       if (catSlug && p.category_slug !== catSlug) return false;
       if (brand && p.brand !== brand) return false;
-      if (inStockOnly && p.availability !== "in_stock" && p.availability !== "available") return false;
+      if (inStockOnly && !isInStock(p.availability)) return false;
       return true;
     });
     if (sort === "price-asc") res = [...res].sort((a, b) => (a.price_fcfa || 0) - (b.price_fcfa || 0));
@@ -611,11 +613,24 @@ function ProductDetailModal({
             <p className="text-2xl font-black text-white">{fcfa(product.price_fcfa)}</p>
 
             <div className="flex items-center gap-2">
-              <span className={`text-xs font-bold px-2 py-1 rounded-full ${product.availability === "in_stock" || product.availability === "available" ? "text-green-400 bg-green-900/30" : "text-yellow-400 bg-yellow-900/30"}`}>
-                {product.availability === "in_stock" || product.availability === "available" ? "En stock" : "Sur commande"}
+              <span className={`text-xs font-bold px-2 py-1 rounded-full ${isInStock(product.availability) ? "text-green-400 bg-green-900/30" : "text-yellow-400 bg-yellow-900/30"}`}>
+                {isInStock(product.availability) ? "En stock" : product.availability === "rupture" ? "Rupture" : "Sur commande"}
               </span>
               {product.warranty && <span className="text-xs text-neutral-400">{product.warranty}</span>}
             </div>
+
+            {Number(product.deposit_pct) > 0 && (
+              <div className="rounded-xl border p-3 text-sm space-y-1" style={{ borderColor: C.border, background: "rgba(234,179,8,0.08)" }}>
+                <p className="font-bold text-yellow-300">
+                  Produit importé sur commande : acompte de {product.deposit_pct} %
+                  {product.price_fcfa ? ` (${Math.round((product.price_fcfa * Number(product.deposit_pct)) / 100).toLocaleString("fr-FR")} FCFA)` : ""}
+                </p>
+                <p className="text-neutral-300">
+                  L'acompte se verse dans nos locaux, le solde à la livraison.
+                  {product.lead_time_days ? ` Livraison en général sous ${product.lead_time_days} jours ouvrables.` : ""}
+                </p>
+              </div>
+            )}
 
             <button onClick={() => { onAdd(product); }}
               className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-extrabold transition-all ${inCart ? "border" : ""}`}
@@ -738,6 +753,7 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
   });
   const [loading, setLoading] = useState(false);
   const [orderRef, setOrderRef] = useState("");
+  const [depositInfo, setDepositInfo] = useState<{ amount: number; days: number | null } | null>(null);
   const [err, setErr] = useState("");
 
   const shipping = form.shipping_method === "showroom" ? 0 : form.shipping_method === "abidjan" ? 3000 : form.shipping_method === "interieur" ? 5000 : 15000;
@@ -767,10 +783,11 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
       const data = await r.json();
       if (data.success) {
         setOrderRef(data.order_ref || data.id || "");
+        setDepositInfo(Number(data.deposit_total) > 0 ? { amount: Number(data.deposit_total), days: data.lead_time_days ? Number(data.lead_time_days) : null } : null);
         cart.clear();
         setStep(3);
       } else {
-        setErr(data.error || "Erreur lors de la commande.");
+        setErr(data.error || data.message || "Erreur lors de la commande.");
       }
     } catch {
       setErr("Erreur réseau. Réessayez ou commandez via WhatsApp.");
@@ -787,7 +804,14 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
           <h2 className="text-xl font-black text-white">Commande enregistrée !</h2>
           <p className="text-sm text-neutral-400 mt-1">Référence : <span className="font-bold text-white">{orderRef}</span></p>
         </div>
-        <p className="text-sm text-neutral-300">Notre équipe vous contacte dans les plus brefs délais pour confirmer la commande et le paiement.</p>
+        {depositInfo ? (
+          <p className="text-sm text-yellow-300">
+            Acompte à verser dans nos locaux : <span className="font-black">{depositInfo.amount.toLocaleString("fr-FR")} FCFA</span>.
+            {depositInfo.days ? ` Livraison en général sous ${depositInfo.days} jours ouvrables après l'acompte.` : ""}
+          </p>
+        ) : (
+          <p className="text-sm text-neutral-300">Notre équipe vous contacte dans les plus brefs délais pour confirmer la commande et le paiement.</p>
+        )}
         <div className="flex flex-col gap-3">
           <a href={waLink(`Bonjour DiagAssist, j'ai passé commande (réf. ${orderRef}). Pouvez-vous confirmer ?`)} target="_blank" rel="noreferrer"
             className="flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-white text-sm" style={{ background: "#16a34a" }}>

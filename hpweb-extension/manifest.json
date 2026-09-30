@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "DiagAssist × HP-Web",
+  "version": "0.1.0",
+  "description": "Permet à l'assistant vocal DiagAssist de naviguer dans HP-Web avec votre propre session et votre propre licence.",
+  "permissions": ["tabs"],
+  "host_permissions": ["*://*.hp-web.in/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["*://*.hp-web.in/*"],
+      "js": ["content-hpweb.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://diagassist-production.onrender.com/*",
+        "https://www.diagassist.app/*",
+        "https://diagassist.app/*",
+        "http://localhost:3000/*"
+      ],
+      "js": ["content-bridge.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
