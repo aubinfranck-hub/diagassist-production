@@ -15,8 +15,26 @@ import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
-import { searchHpWeb, hpWebNav, formatHpWebPage } from "./src/modules/vehicle/hpwebClient";
+import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
 import { getGeminiKeys } from "./src/utils/geminiKeys";
+
+// Navigation HP-Web : l'extension du navigateur de l'utilisateur (sa session, sa licence) est
+// prioritaire ; le gateway serveur ne sert que de repli, Cloudflare le bloque souvent.
+const HP_NAV_TIMEOUT_MS = 35000;
+function hpWebNavViaClient(clientWs: any, action: string, args: Record<string, unknown>): Promise<HpWebPage> {
+  return new Promise((resolve, reject) => {
+    const pending: Map<string, (m: any) => void> = (clientWs._hpPending ||= new Map());
+    const id = crypto.randomBytes(6).toString("hex");
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error("Extension HP-Web sans réponse")); }, HP_NAV_TIMEOUT_MS);
+    pending.set(id, (m) => {
+      clearTimeout(timer);
+      if (m.ok && m.page) resolve(m.page as HpWebPage);
+      else reject(new Error(m.error || "Échec de la navigation HP-Web"));
+    });
+    clientWs.send(JSON.stringify({ type: "hpwebCommand", id, action, args }));
+  });
+}
+
 
 dotenv.config();
 
@@ -1865,7 +1883,7 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
   },
   {
     name: "hpweb_page",
-    description: "Ouvre HP-Web (ou relit la page courante) et renvoie son contenu et ses éléments numérotés. À appeler en premier pour naviguer dans HP-Web. Réponds uniquement avec ce que la page contient réellement, sans rien inventer.",
+    description: "Ouvre HP-Web dans le navigateur du mécanicien (ou relit la page courante) et renvoie son contenu et ses éléments numérotés. À appeler en premier pour naviguer dans HP-Web : marque, modèle, année, moteur, puis rubrique demandée. Réponds uniquement avec ce que la page contient réellement, sans rien inventer. Si HP-Web demande une connexion, dis au mécanicien de se connecter lui-même ; ne demande jamais son mot de passe.",
     parameters: { type: Type.OBJECT, properties: {}, required: [] },
   },
   {
@@ -5525,18 +5543,26 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               }
                               result = JSON.stringify({ source: "HP-Web", count: results.length, results });
                             } else if (typeof fc.name === "string" && fc.name.startsWith("hpweb_")) {
-                              const nav = {
-                                hpweb_page: () => hpWebNav("open"),
-                                hpweb_cliquer: () => hpWebNav("click", { ref: Number(fc.args?.ref) }),
-                                hpweb_saisir: () => hpWebNav("type", { ref: Number(fc.args?.ref), text: String(fc.args?.texte || ""), submit: fc.args?.valider !== false }),
-                                hpweb_choisir: () => hpWebNav("select", { ref: Number(fc.args?.ref), label: String(fc.args?.libelle || "") }),
-                                hpweb_retour: () => hpWebNav("back"),
-                              }[fc.name as string];
-                              if (!nav) throw new Error("Outil HP-Web inconnu : " + fc.name);
-                              const page = await nav();
-                              // Le panneau d'étapes de l'app suit la navigation en direct.
-                              clientWs.send(JSON.stringify({ type: "hpwebStep", tool: fc.name, url: page.url, title: page.title }));
-                              result = formatHpWebPage(page);
+                              const navSpec: Record<string, [ "open" | "click" | "type" | "select" | "back", Record<string, unknown> ]> = {
+                                hpweb_page: ["open", {}],
+                                hpweb_cliquer: ["click", { ref: Number(fc.args?.ref) }],
+                                hpweb_saisir: ["type", { ref: Number(fc.args?.ref), text: String(fc.args?.texte || ""), submit: fc.args?.valider !== false }],
+                                hpweb_choisir: ["select", { ref: Number(fc.args?.ref), label: String(fc.args?.libelle || "") }],
+                                hpweb_retour: ["back", {}],
+                              };
+                              const spec = navSpec[fc.name as string];
+                              if (!spec) throw new Error("Outil HP-Web inconnu : " + fc.name);
+                              const page = (clientWs as any)._hpExt
+                                ? await hpWebNavViaClient(clientWs, spec[0], spec[1])
+                                : await hpWebNav(spec[0], spec[1]);
+                              if (page.loginRequired) {
+                                result = "HP-Web demande une connexion. Dis au mécanicien de se connecter lui-même à HP-Web dans l'onglet ouvert, sans jamais lui demander son mot de passe, puis relis la page.";
+                                clientWs.send(JSON.stringify({ type: "hpwebStep", tool: fc.name, url: page.url, title: page.title, loginRequired: true }));
+                              } else {
+                                // Le panneau d'étapes de l'app suit la navigation en direct.
+                                clientWs.send(JSON.stringify({ type: "hpwebStep", tool: fc.name, url: page.url, title: page.title }));
+                                result = formatHpWebPage(page);
+                              }
                             } else if (fc.name === "verifier_base_vehicules") {
                               result = await liveToolCheckVehicleDatabase(String(fc.args?.marque || ""), fc.args?.modele ? String(fc.args.modele) : undefined);
                             } else if (fc.name === "chercher_mecanicien_pres") {
@@ -5744,6 +5770,11 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
               clientWs.close();
             }
           }
+        } else if (message.type === "hpwebExtension") {
+          (clientWs as any)._hpExt = message.ready === true;
+        } else if (message.type === "hpwebResult") {
+          const cb = (clientWs as any)._hpPending?.get(String(message.id));
+          if (cb) { (clientWs as any)._hpPending.delete(String(message.id)); cb(message); }
         } else if (message.type === "audio") {
           if (geminiSession && typeof message.audio === "string" && message.audio.length <= 200000) {
             geminiSession.sendRealtimeInput({

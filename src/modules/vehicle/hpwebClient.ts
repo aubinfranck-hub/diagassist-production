@@ -78,6 +78,7 @@ export interface HpWebPage {
   title: string;
   text: string;
   elements: { ref: number; kind: string; label: string; options?: string[] }[];
+  loginRequired?: boolean;
 }
 
 // Navigation pilotée par l'agent : le gateway ne permet que de lire la page courante
