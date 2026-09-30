@@ -351,6 +351,12 @@ async function initDatabase(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_shop_orders_customer ON shop_orders (customer_phone);
     CREATE INDEX IF NOT EXISTS idx_shop_orders_status ON shop_orders (status);
+    -- Produits importes sur commande (ex : scanners AliExpress) : acompte % verse dans nos locaux, delai en jours ouvrables
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS deposit_pct INTEGER DEFAULT 0;
+    ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS lead_time_days INTEGER;
+    ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS deposit_fcfa INTEGER DEFAULT 0;
+    ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS deposit_status TEXT DEFAULT 'non_requis'; -- non_requis | en_attente | recu
+    ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS deposit_received_at TIMESTAMP;
     -- Compteur pour generer les references de commande DA-AAAA-NNNNNN sans collision
     CREATE TABLE IF NOT EXISTS shop_order_counter (
       year INTEGER PRIMARY KEY,
@@ -4091,14 +4097,31 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
     await upsertShopCustomer(cleanPhone, name, city, "produit");
     const orderRef = await nextOrderRef();
+    const dep = depositFor(product, quantity || 1);
     const orderRes = await dbPool.query(
-      `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null]
+      `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes, deposit_fcfa, deposit_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null, dep.amount, dep.status]
     );
     await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order" });
-    res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_id: orderRes.rows[0].id, order_ref: orderRef });
+    const days = product.lead_time_days ? Number(product.lead_time_days) : null;
+    res.json({
+      success: true,
+      message: dep.amount > 0 ? "Commande enregistrée. " + depositMessage(dep.amount, days) : "Commande enregistrée. Nous vous contacterons sous peu.",
+      order_id: orderRes.rows[0].id, order_ref: orderRef, deposit_total: dep.amount, lead_time_days: days,
+    });
   });
+
+  // Acompte d'un produit sur commande : pourcentage du total de la ligne, verse en boutique.
+  function depositFor(product: any, quantity: number): { amount: number; status: "non_requis" | "en_attente" } {
+    const pct = Number(product.deposit_pct || 0);
+    const price = Number(product.price_fcfa || 0);
+    if (!(pct > 0) || !(price > 0)) return { amount: 0, status: "non_requis" };
+    return { amount: Math.round((price * Math.max(1, Number(quantity) || 1) * pct) / 100), status: "en_attente" };
+  }
+  const depositMessage = (amount: number, days: number | null) =>
+    `Un acompte de ${amount.toLocaleString("fr-FR")} FCFA est à verser dans nos locaux pour lancer la commande.` +
+    (days ? ` Livraison sous environ ${days} jours ouvrables après l'acompte.` : "");
 
   // Génère une référence de commande sans collision : DA-AAAA-NNNNNN, compteur atomique par année.
   async function nextOrderRef(): Promise<string> {
@@ -4116,10 +4139,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : panier multi-produits -> commande groupée (checkout) ---
   app.post("/api/shop/checkout", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { phone, name, city, address, items } = req.body as {
-      phone: string; name?: string; city?: string; address?: string;
-      items: { product_id: number; quantity: number }[];
-    };
+    // La boutique envoie customer_phone / customer_name / shipping_address ; les anciens noms restent acceptes.
+    const body = req.body as any;
+    const phone: string = body.phone ?? body.customer_phone;
+    const name: string | undefined = body.name ?? body.customer_name;
+    const city: string | undefined = body.city;
+    const address: string | undefined = body.address ?? body.shipping_address;
+    const items: { product_id: number; quantity: number }[] = body.items;
     if (!phone || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Téléphone et au moins un article requis." });
     }
@@ -4129,14 +4155,19 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const orderRef = await nextOrderRef();
 
     const createdIds: number[] = [];
+    let depositTotal = 0;
+    let leadDays: number | null = null;
     for (const item of items) {
       const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [item.product_id]);
       if (productRes.rows.length === 0) continue; // ignore un produit devenu introuvable plutôt que d'annuler toute la commande
       const product = productRes.rows[0];
+      const dep = depositFor(product, item.quantity || 1);
+      depositTotal += dep.amount;
+      if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
       const orderRes = await dbPool.query(
-        `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null]
+        `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address, deposit_fcfa, deposit_status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null, dep.amount, dep.status]
       );
       createdIds.push(orderRes.rows[0].id);
     }
@@ -4148,7 +4179,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       productName: firstProductName.rows[0]?.product_name_snapshot || undefined,
       kind: "order",
     });
-    res.json({ success: true, message: "Commande enregistrée. Nous vous contacterons sous peu.", order_ref: orderRef, order_ids: createdIds });
+    res.json({
+      success: true,
+      message: depositTotal > 0 ? "Commande enregistrée. " + depositMessage(depositTotal, leadDays) : "Commande enregistrée. Nous vous contacterons sous peu.",
+      order_ref: orderRef, order_ids: createdIds, deposit_total: depositTotal, lead_time_days: leadDays,
+    });
   });
 
   // --- Public : suivi de commande par référence + téléphone ---
@@ -4218,13 +4253,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       [category_id || null, name, slug, brand || null, model || null, normalizedPriceEur, convertedPriceFcfa, description || null, specs || null, compatibility || null,
        box_contents || null, warranty || null, availability || "disponible", JSON.stringify(photos || []), JSON.stringify(videos || [])]
     );
+    const depPct = Number(req.body.deposit_pct), leadDays = Number(req.body.lead_time_days);
+    if ((depPct > 0 && depPct <= 100) || leadDays > 0) {
+      await dbPool.query("UPDATE shop_products SET deposit_pct = $1, lead_time_days = $2 WHERE id = $3",
+        [depPct > 0 && depPct <= 100 ? Math.round(depPct) : 0, leadDays > 0 ? Math.round(leadDays) : null, result.rows[0].id]);
+    }
     res.json({ success: true, id: result.rows[0].id, slug });
   });
 
   app.patch("/api/admin/shop/products/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const fields = req.body;
-    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active"];
+    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active", "deposit_pct", "lead_time_days"];
     const jsonFields = ["photos", "videos"];
     const sets: string[] = [];
     const values: any[] = [];
@@ -4385,14 +4425,21 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   app.patch("/api/admin/shop/orders/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { status, notes } = req.body;
+    const { status, notes, deposit_status } = req.body;
+    if (deposit_status !== undefined && !["non_requis", "en_attente", "recu"].includes(deposit_status)) {
+      return res.status(400).json({ success: false, message: "Statut d'acompte invalide." });
+    }
     const sets: string[] = ["updated_at = CURRENT_TIMESTAMP"];
     const values: any[] = [];
     let i = 1;
+    if (deposit_status !== undefined) {
+      sets.push(`deposit_status = $${i++}`); values.push(deposit_status);
+      sets.push(deposit_status === "recu" ? "deposit_received_at = CURRENT_TIMESTAMP" : "deposit_received_at = NULL");
+    }
     if (status !== undefined) { sets.push(`status = $${i++}`); values.push(status); }
     if (notes !== undefined) { sets.push(`notes = $${i++}`); values.push(notes); }
     values.push(req.params.id);
-    await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = ${i}`, values);
+    await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = $${i}`, values);
     if (["confirmee", "en_traitement", "prete", "livree", "annulee"].includes(status)) {
       await dbPool.query(
         `UPDATE shop_followups SET status = CASE
