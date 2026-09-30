@@ -15,7 +15,7 @@ import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
-import { searchHpWeb } from "./src/modules/vehicle/hpwebClient";
+import { searchHpWeb, hpWebNav, formatHpWebPage } from "./src/modules/vehicle/hpwebClient";
 import { getGeminiKeys } from "./src/utils/geminiKeys";
 
 dotenv.config();
@@ -1862,6 +1862,50 @@ const LIVE_AGENT_TOOL_DECLARATIONS = [
       },
       required: [],
     },
+  },
+  {
+    name: "hpweb_page",
+    description: "Ouvre HP-Web (ou relit la page courante) et renvoie son contenu et ses éléments numérotés. À appeler en premier pour naviguer dans HP-Web. Réponds uniquement avec ce que la page contient réellement, sans rien inventer.",
+    parameters: { type: Type.OBJECT, properties: {}, required: [] },
+  },
+  {
+    name: "hpweb_cliquer",
+    description: "Clique sur un élément de la page HP-Web courante (menu, lien, bouton) par son numéro de référence, puis renvoie la nouvelle page.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: { ref: { type: Type.NUMBER, description: "Numéro de l'élément dans la dernière page reçue." } },
+      required: ["ref"],
+    },
+  },
+  {
+    name: "hpweb_saisir",
+    description: "Saisit du texte dans un champ de la page HP-Web courante (par exemple la recherche véhicule) et valide si demandé.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        ref: { type: Type.NUMBER, description: "Numéro du champ dans la dernière page reçue." },
+        texte: { type: Type.STRING, description: "Texte à saisir." },
+        valider: { type: Type.BOOLEAN, description: "Appuyer sur Entrée après la saisie." },
+      },
+      required: ["ref", "texte"],
+    },
+  },
+  {
+    name: "hpweb_choisir",
+    description: "Choisit une option dans une liste déroulante de la page HP-Web courante (marque, modèle, année, moteur, rubrique).",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        ref: { type: Type.NUMBER, description: "Numéro de la liste dans la dernière page reçue." },
+        libelle: { type: Type.STRING, description: "Libellé de l'option à choisir." },
+      },
+      required: ["ref", "libelle"],
+    },
+  },
+  {
+    name: "hpweb_retour",
+    description: "Revient à la page HP-Web précédente.",
+    parameters: { type: Type.OBJECT, properties: {}, required: [] },
   },
   {
     name: "verifier_base_vehicules",
@@ -5480,6 +5524,19 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                                 clientWs.send(JSON.stringify({ type: "agentState", state: liveAgentState }));
                               }
                               result = JSON.stringify({ source: "HP-Web", count: results.length, results });
+                            } else if (typeof fc.name === "string" && fc.name.startsWith("hpweb_")) {
+                              const nav = {
+                                hpweb_page: () => hpWebNav("open"),
+                                hpweb_cliquer: () => hpWebNav("click", { ref: Number(fc.args?.ref) }),
+                                hpweb_saisir: () => hpWebNav("type", { ref: Number(fc.args?.ref), text: String(fc.args?.texte || ""), submit: fc.args?.valider !== false }),
+                                hpweb_choisir: () => hpWebNav("select", { ref: Number(fc.args?.ref), label: String(fc.args?.libelle || "") }),
+                                hpweb_retour: () => hpWebNav("back"),
+                              }[fc.name as string];
+                              if (!nav) throw new Error("Outil HP-Web inconnu : " + fc.name);
+                              const page = await nav();
+                              // Le panneau d'étapes de l'app suit la navigation en direct.
+                              clientWs.send(JSON.stringify({ type: "hpwebStep", tool: fc.name, url: page.url, title: page.title }));
+                              result = formatHpWebPage(page);
                             } else if (fc.name === "verifier_base_vehicules") {
                               result = await liveToolCheckVehicleDatabase(String(fc.args?.marque || ""), fc.args?.modele ? String(fc.args.modele) : undefined);
                             } else if (fc.name === "chercher_mecanicien_pres") {
