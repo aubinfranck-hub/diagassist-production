@@ -27,6 +27,10 @@ function authorized(req) {
   return !API_KEY || req.get("x-api-key") === API_KEY;
 }
 
+function isLoginUrl(url) {
+  try { return /login|signin|connexion/i.test(new URL(url).pathname); } catch { return false; }
+}
+
 function normalize(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -55,7 +59,7 @@ async function loginIfNeeded() {
   if (!USERNAME || !PASSWORD) throw new Error("HP-Web credentials are not configured");
 
   const current = p.url();
-  if (current.startsWith(HP_WEB_URL) && !/login|signin|connexion/i.test(current) && lastLoginAt) return p;
+  if (current.startsWith(HP_WEB_URL) && !isLoginUrl(current) && lastLoginAt) return p;
 
   console.log(`[HP-Web] Opening ${HP_WEB_URL}`);
   await p.goto(HP_WEB_URL, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
@@ -77,7 +81,7 @@ async function loginIfNeeded() {
 
   console.log(`[HP-Web] After login URL=${p.url()} title=${await p.title().catch(() => "")}`);
   await logDiscovery(p, "after-login");
-  if (/login|signin|connexion/i.test(p.url())) {
+  if (isLoginUrl(p.url())) {
     throw new Error("HP-Web login could not be completed; selectors need discovery");
   }
   lastLoginAt = Date.now();
@@ -204,6 +208,98 @@ async function searchByDom(query) {
     technicalData: { rawResultPreview: bodyText }
   }];
 }
+
+
+// ───────────── Navigation pilotée par l'agent (copilote vocal HP-Web) ─────────────
+// L'agent ne reçoit jamais d'URL arbitraire : il ne peut que lire la page courante et agir
+// sur ses éléments interactifs, numérotés à chaque instantané (ref).
+app.use("/nav", rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false }));
+
+async function snapshot(p) {
+  await p.waitForLoadState("domcontentloaded").catch(() => {});
+  const data = await p.evaluate(() => {
+    document.querySelectorAll("[data-dx]").forEach((el) => el.removeAttribute("data-dx"));
+    const vis = (el) => {
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && st.visibility !== "hidden" && st.display !== "none";
+    };
+    const label = (el) => (el.innerText || el.value || el.getAttribute("aria-label") || el.getAttribute("title") || el.getAttribute("placeholder") || el.getAttribute("alt") || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    const els = [...document.querySelectorAll("a[href], button, [role=button], [role=tab], [role=menuitem], input:not([type=hidden]):not([type=password]), select, textarea, summary")]
+      .filter(vis).slice(0, 120);
+    const elements = els.map((el, i) => {
+      el.setAttribute("data-dx", String(i));
+      const tag = el.tagName.toLowerCase();
+      const kind = tag === "select" ? "select" : (tag === "input" || tag === "textarea") ? "champ" : tag === "a" ? "lien" : "bouton";
+      const out = { ref: i, kind, label: label(el) };
+      if (tag === "select") out.options = [...el.options].slice(0, 40).map((o) => o.text.trim());
+      return out;
+    });
+    return { url: location.href, title: document.title, text: (document.body?.innerText || "").replace(/\n{3,}/g, "\n\n").slice(0, 6000), elements };
+  });
+  return data;
+}
+
+async function withPage(req, res, fn) {
+  if (!authorized(req)) return res.status(401).json({ success: false, error: "Unauthorized" });
+  try {
+    const p = await loginIfNeeded();
+    const out = await fn(p);
+    return res.json({ success: true, ...out });
+  } catch (error) {
+    console.error("[HP-Web][nav] échec:", error?.stack || error?.message || error);
+    return res.status(502).json({ success: false, error: "HP-Web navigation unavailable", detail: String(error?.message || error).slice(0, 300) });
+  }
+}
+
+const target = (p, ref) => p.locator(`[data-dx="${Number(ref)}"]`).first();
+
+app.post("/nav/open", (req, res) => withPage(req, res, async (p) => ({ page: await snapshot(p) })));
+app.post("/nav/snapshot", (req, res) => withPage(req, res, async (p) => ({ page: await snapshot(p) })));
+
+app.post("/nav/click", (req, res) => withPage(req, res, async (p) => {
+  const el = target(p, req.body?.ref);
+  if (!(await el.count())) throw new Error("Élément introuvable : refaire un instantané");
+  console.log(`[HP-Web][nav] click ref=${req.body.ref}`);
+  await el.click();
+  await p.waitForTimeout(900);
+  return { page: await snapshot(p) };
+}));
+
+app.post("/nav/type", (req, res) => withPage(req, res, async (p) => {
+  const el = target(p, req.body?.ref);
+  if (!(await el.count())) throw new Error("Champ introuvable : refaire un instantané");
+  console.log(`[HP-Web][nav] type ref=${req.body.ref} submit=${!!req.body.submit}`);
+  await el.fill(normalize(req.body?.text).slice(0, 200));
+  if (req.body?.submit) await el.press("Enter");
+  await p.waitForTimeout(900);
+  return { page: await snapshot(p) };
+}));
+
+app.post("/nav/select", (req, res) => withPage(req, res, async (p) => {
+  const el = target(p, req.body?.ref);
+  if (!(await el.count())) throw new Error("Liste introuvable : refaire un instantané");
+  const wanted = normalize(req.body?.label).toLowerCase();
+  const labels = await el.locator("option").allInnerTexts();
+  const hit = labels.find((l) => l.trim().toLowerCase() === wanted) || labels.find((l) => l.toLowerCase().includes(wanted));
+  if (!hit) throw new Error(`Option introuvable : ${wanted}`);
+  console.log(`[HP-Web][nav] select ref=${req.body.ref} -> ${hit.trim()}`);
+  await el.selectOption({ label: hit });
+  await p.waitForTimeout(900);
+  return { page: await snapshot(p) };
+}));
+
+app.post("/nav/back", (req, res) => withPage(req, res, async (p) => {
+  await p.goBack({ waitUntil: "domcontentloaded" }).catch(() => {});
+  await p.waitForTimeout(600);
+  return { page: await snapshot(p) };
+}));
+
+// Capture de la vraie page HP-Web, pour l'afficher à l'utilisateur.
+app.get("/nav/screenshot", (req, res) => withPage(req, res, async (p) => {
+  const buf = await p.screenshot({ type: "jpeg", quality: 60 });
+  return { mime: "image/jpeg", url: p.url(), image: buf.toString("base64") };
+}));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "diagassist-hpweb-gateway", configured: Boolean(USERNAME && PASSWORD) });
