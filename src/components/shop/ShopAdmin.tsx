@@ -4,7 +4,7 @@ import {
   Trash2, Loader2, ChevronRight, Phone, PhoneCall, MessageCircle, Bell, RefreshCw, TrendingUp, ShoppingBag, Clock, Banknote,
 } from "lucide-react";
 
-type Tab = "dashboard" | "products" | "orders" | "parts" | "customers" | "followups";
+type Tab = "dashboard" | "products" | "import" | "orders" | "parts" | "customers" | "followups";
 
 const ORDER_STATUSES = ["nouvelle", "a_contacter", "contactee", "confirmee", "en_traitement", "prete", "livree", "annulee", "client_injoignable"];
 const PART_STATUSES = ["nouvelle", "recherche", "devis_envoye", "devis_accepte", "commandee", "en_transit", "recue", "livree", "annulee"];
@@ -136,6 +136,61 @@ function ProductsTab({ auth }: { auth: any }) {
   return <div className="space-y-3"><div className="flex gap-2"><input placeholder="Nouvelle catégorie" value={newCatName} onChange={(e) => setNewCatName(e.target.value)} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white" /><button onClick={addCategory} className="bg-slate-800 text-white text-xs font-semibold px-3 rounded-lg cursor-pointer">Ajouter</button></div>{!showForm ? <button onClick={() => setShowForm(true)} className="w-full flex items-center justify-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2.5 rounded-xl cursor-pointer"><Plus className="w-4 h-4" /> Nouveau produit</button> : <ProductForm auth={auth} categories={categories} onDone={() => { setShowForm(false); load(); }} onCancel={() => setShowForm(false)} />}{products.map((p) => <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center gap-3"><div className="w-12 h-12 rounded-lg bg-slate-800 overflow-hidden shrink-0">{p.photos?.[0] && <img src={p.photos[0]} className="w-full h-full object-cover" />}</div><div className="flex-1 min-w-0"><p className="text-sm font-semibold text-white truncate">{p.name}</p><p className="text-xs text-slate-500">{p.brand || "Marque à renseigner"} · {p.model || "Modèle à renseigner"} · {p.category_name || "—"} · {p.price_fcfa ? p.price_fcfa.toLocaleString("fr-FR") + " FCFA" : "Prix sur demande"}</p></div><button onClick={() => deleteProduct(p.id)} className="text-slate-500 hover:text-red-400 cursor-pointer p-1"><Trash2 className="w-4 h-4" /></button></div>)}</div>;
 }
 
+function ImportTab({ auth }: { auth: any }) {
+  const [markup, setMarkup] = useState("15");
+  const [ivlUrl, setIvlUrl] = useState("");
+  const [ivlName, setIvlName] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const run = async (key: string, url: string, body: any, dryRun: boolean) => {
+    setBusy(key); setResult(null);
+    try {
+      const d = await shopFetch(auth, url, { method: "POST", body: JSON.stringify({ ...body, dryRun, markupPct: Number(markup) || 0 }) });
+      if (!d.success) { setResult({ ok: false, text: d.message || "L'import a échoué." }); return; }
+      const r = d.results?.[0];
+      if (!r) { setResult({ ok: false, text: "Aucun résultat." }); return; }
+      setResult({
+        ok: true,
+        text: dryRun
+          ? `Essai : ${r.found} produits trouvés (rien n'a été enregistré). Exemples : ${(r.sample || []).map((x: any) => x.name).join(" ; ")}`
+          : `Terminé : ${r.found} produits trouvés, ${r.created} ajoutés, ${r.updated} mis à jour, ${r.deactivated} masqués.`,
+      });
+    } catch {
+      setResult({ ok: false, text: "Erreur réseau. Réessayez dans un instant." });
+    } finally { setBusy(null); }
+  };
+
+  const btn = "px-3 py-2 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50";
+  const box = "bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3";
+  return <div className="space-y-4 max-w-2xl">
+    <div className={box}>
+      <p className="text-sm font-bold text-white">Marge ajoutée au prix du fournisseur</p>
+      <div className="flex items-center gap-2"><input type="number" min="0" value={markup} onChange={(e) => setMarkup(e.target.value)} className="w-24 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" /><span className="text-sm text-slate-400">%</span></div>
+    </div>
+    <div className={box}>
+      <p className="text-sm font-bold text-white">3H Autoparts</p>
+      <p className="text-xs text-slate-400">Reprend tout leur catalogue (environ 250 produits) avec prix, photos et stock.</p>
+      <div className="flex gap-2">
+        <button disabled={!!busy} onClick={() => run("3h-test", "/api/admin/shop/import/3hautoparts", { categories: [{ name: "3H Autoparts" }] }, true)} className={`${btn} bg-slate-700 text-white`}>{busy === "3h-test" ? "Essai..." : "Essayer sans enregistrer"}</button>
+        <button disabled={!!busy} onClick={() => run("3h", "/api/admin/shop/import/3hautoparts", { categories: [{ name: "3H Autoparts" }] }, false)} className={`${btn} bg-red-600 text-white`}>{busy === "3h" ? "Import en cours..." : "Importer maintenant"}</button>
+      </div>
+    </div>
+    <div className={box}>
+      <p className="text-sm font-bold text-white">Ivoirelite</p>
+      <p className="text-xs text-slate-400">Collez l'adresse d'une catégorie du site ivoirelite.net (par exemple les pneus 15 pouces) et donnez-lui un nom.</p>
+      <input placeholder="https://ivoirelite.net/14-pneu-15-pouces-r15-neuf" value={ivlUrl} onChange={(e) => setIvlUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+      <input placeholder="Nom dans la boutique (ex : Pneus 15 pouces)" value={ivlName} onChange={(e) => setIvlName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+      <div className="flex gap-2">
+        <button disabled={!!busy || !ivlUrl || !ivlName} onClick={() => run("ivl-test", "/api/admin/shop/import/ivoirelite", { categories: [{ url: ivlUrl, name: ivlName }] }, true)} className={`${btn} bg-slate-700 text-white`}>{busy === "ivl-test" ? "Essai..." : "Essayer sans enregistrer"}</button>
+        <button disabled={!!busy || !ivlUrl || !ivlName} onClick={() => run("ivl", "/api/admin/shop/import/ivoirelite", { categories: [{ url: ivlUrl, name: ivlName }] }, false)} className={`${btn} bg-red-600 text-white`}>{busy === "ivl" ? "Import en cours..." : "Importer maintenant"}</button>
+      </div>
+    </div>
+    {result && <p className={`text-sm rounded-lg p-3 border ${result.ok ? "text-emerald-300 border-emerald-800 bg-emerald-950/30" : "text-red-300 border-red-800 bg-red-950/30"}`}>{result.text}</p>}
+    <p className="text-[11px] text-slate-500">Les produits importés suivent le fournisseur (prix, stock). Vos descriptions et photos modifiées ici ne sont pas écrasées.</p>
+  </div>;
+}
+
 function OrdersTab({ auth }: { auth: any }) {
   const [orders, setOrders] = useState<any[]>([]);
   useEffect(() => { shopFetch(auth, "/api/admin/shop/orders").then((d) => d.success && setOrders(d.orders)); }, [auth]);
@@ -265,6 +320,6 @@ export default function ShopAdmin() {
   const [tab, setTab] = useState<Tab>("dashboard");
   if (checking) return <div className="flex justify-center py-24"><Loader2 className="w-6 h-6 text-slate-500 animate-spin" /></div>;
   if (!auth) return <AdminGate onValidated={saveCode} />;
-  const tabs: { id: Tab; label: string; icon: any }[] = [{ id: "dashboard", label: "Accueil", icon: LayoutDashboard }, { id: "products", label: "Produits", icon: Package }, { id: "orders", label: "Commandes", icon: ShoppingCart }, { id: "parts", label: "Pièces", icon: Wrench }, { id: "customers", label: "Clients", icon: Users }, { id: "followups", label: "Relances", icon: Bell }];
-  return <div className="min-h-screen bg-slate-950 text-slate-200 pb-24"><header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur z-20"><div><span className="font-bold text-white text-sm">DiagAssist</span><span className="text-[10px] text-slate-600 ml-2">Administration boutique</span></div><button onClick={clear} className="text-xs text-slate-500 hover:text-white cursor-pointer">Déconnexion</button></header><div className="max-w-6xl mx-auto px-4 md:px-6 py-5"><div className="hidden md:flex gap-2 overflow-x-auto pb-4 border-b border-slate-800 mb-5">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold ${tab === t.id ? "bg-red-600 text-white" : "bg-slate-900 text-slate-400 hover:text-white"}`}><t.icon className="w-4 h-4" />{t.label}</button>)}</div>{tab === "dashboard" && <Dashboard auth={auth} />}{tab === "products" && <ProductsTab auth={auth} />}{tab === "orders" && <OrdersTab auth={auth} />}{tab === "parts" && <PartsTab auth={auth} />}{tab === "customers" && <CustomersTab auth={auth} />}{tab === "followups" && <FollowupsTab auth={auth} />}</div><nav className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur border-t border-slate-800 flex z-20 md:hidden">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 cursor-pointer ${tab === t.id ? "text-red-500" : "text-slate-500"}`}><t.icon className="w-4.5 h-4.5" /><span className="text-[10px]">{t.label}</span></button>)}</nav></div>;
+  const tabs: { id: Tab; label: string; icon: any }[] = [{ id: "dashboard", label: "Accueil", icon: LayoutDashboard }, { id: "products", label: "Produits", icon: Package }, { id: "import", label: "Import", icon: Package }, { id: "orders", label: "Commandes", icon: ShoppingCart }, { id: "parts", label: "Pièces", icon: Wrench }, { id: "customers", label: "Clients", icon: Users }, { id: "followups", label: "Relances", icon: Bell }];
+  return <div className="min-h-screen bg-slate-950 text-slate-200 pb-24"><header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur z-20"><div><span className="font-bold text-white text-sm">DiagAssist</span><span className="text-[10px] text-slate-600 ml-2">Administration boutique</span></div><button onClick={clear} className="text-xs text-slate-500 hover:text-white cursor-pointer">Déconnexion</button></header><div className="max-w-6xl mx-auto px-4 md:px-6 py-5"><div className="hidden md:flex gap-2 overflow-x-auto pb-4 border-b border-slate-800 mb-5">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold ${tab === t.id ? "bg-red-600 text-white" : "bg-slate-900 text-slate-400 hover:text-white"}`}><t.icon className="w-4 h-4" />{t.label}</button>)}</div>{tab === "dashboard" && <Dashboard auth={auth} />}{tab === "products" && <ProductsTab auth={auth} />}{tab === "import" && <ImportTab auth={auth} />}{tab === "orders" && <OrdersTab auth={auth} />}{tab === "parts" && <PartsTab auth={auth} />}{tab === "customers" && <CustomersTab auth={auth} />}{tab === "followups" && <FollowupsTab auth={auth} />}</div><nav className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur border-t border-slate-800 flex z-20 md:hidden">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 cursor-pointer ${tab === t.id ? "text-red-500" : "text-slate-500"}`}><t.icon className="w-4.5 h-4.5" /><span className="text-[10px]">{t.label}</span></button>)}</nav></div>;
 }
