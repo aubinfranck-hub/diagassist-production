@@ -14,6 +14,7 @@ import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
+import { importCategory, fetchCategory } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
 import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
 import { getGeminiKeys } from "./src/utils/geminiKeys";
@@ -4283,6 +4284,32 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     query += " ORDER BY o.created_at DESC LIMIT 200";
     const { rows } = await dbPool.query(query, params);
     res.json({ success: true, orders: rows });
+  });
+
+  // --- Admin : import du catalogue Ivoirelite (pages publiques, revendeur) ---
+  // Corps : { categories: [{ url, name }], dryRun?: boolean, markupPct?: number }.
+  // dryRun = lit et compte sans rien ecrire. Limite a ivoirelite.net, 10 categories par appel.
+  app.post("/api/admin/shop/import/ivoirelite", requireAdminAuth, async (req, res) => {
+    const list = Array.isArray(req.body?.categories) ? req.body.categories.slice(0, 10) : [];
+    if (!list.length) return res.status(400).json({ success: false, message: "categories requis : [{ url, name }]." });
+    const markupPct = Number(req.body?.markupPct ?? process.env.IVOIRELITE_MARKUP_PCT ?? 0);
+    try {
+      if (req.body?.dryRun) {
+        const out = [];
+        for (const c of list) {
+          const items = await fetchCategory(String(c.url));
+          out.push({ category: c.name, found: items.length, sample: items.slice(0, 3).map((i) => ({ ref: i.ref, name: i.name, priceFcfa: i.priceFcfa })) });
+        }
+        return res.json({ success: true, dryRun: true, results: out });
+      }
+      if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+      const results = [];
+      for (const c of list) results.push(await importCategory(dbPool, { url: String(c.url), name: String(c.name || "Ivoirelite"), markupPct }));
+      res.json({ success: true, results });
+    } catch (e: any) {
+      console.error("[Import Ivoirelite]", e?.message || e);
+      res.status(502).json({ success: false, message: String(e?.message || "Import impossible.").slice(0, 200) });
+    }
   });
 
   // --- Admin : commission fournisseur (reversee hors systeme, a verifier a la main) ---
