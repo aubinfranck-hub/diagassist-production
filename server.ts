@@ -4292,7 +4292,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.post("/api/admin/shop/import/ivoirelite", requireAdminAuth, async (req, res) => {
     const list = Array.isArray(req.body?.categories) ? req.body.categories.slice(0, 10) : [];
     if (!list.length) return res.status(400).json({ success: false, message: "categories requis : [{ url, name }]." });
-    const markupPct = Number(req.body?.markupPct ?? process.env.IVOIRELITE_MARKUP_PCT ?? 0);
+    const markupPct = Number(req.body?.markupPct ?? process.env.IVOIRELITE_MARKUP_PCT ?? 15); // marge ajoutee au prix fournisseur
     try {
       if (req.body?.dryRun) {
         const out = [];
@@ -4317,7 +4317,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // { categories: [{ id, name }], dryRun?: boolean, markupPct?: number }.
   app.post("/api/admin/shop/import/3hautoparts", requireAdminAuth, async (req, res) => {
     const list = Array.isArray(req.body?.categories) ? req.body.categories.slice(0, 10) : [];
-    const markupPct = Number(req.body?.markupPct ?? process.env.H3_MARKUP_PCT ?? 0);
+    const markupPct = Number(req.body?.markupPct ?? process.env.H3_MARKUP_PCT ?? 15); // marge ajoutee au prix fournisseur
     try {
       if (!list.length) return res.json({ success: true, availableCategories: await fetch3hCategories() });
       if (req.body?.dryRun) {
@@ -4338,8 +4338,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
   });
 
-  // --- Admin : commission fournisseur (reversee hors systeme, a verifier a la main) ---
-  // Ventes des produits d'un fournisseur sur une periode, avec la commission qui revient a la boutique.
+  // --- Admin : marge sur les produits d'un fournisseur ---
+  // Les prix importes incluent deja la marge (defaut 15 %, ajoutee au prix fournisseur). Ce rapport liste les ventes
+  // sur une periode avec la marge realisee et le montant a payer au fournisseur (prix de vente / (1 + marge)).
+  // mode=commission : le taux est alors une part du prix de vente reversee hors systeme.
   // Due = commandes livrees ; a venir = commandes confirmees / en cours. Taux : SUPPLIER_COMMISSION_PCT (defaut 15).
   app.get("/api/admin/shop/commissions", requireAdminAuth, async (req, res) => {
     const supplier = String(req.query.supplier || "ivoirelite").toLowerCase();
@@ -4360,13 +4362,21 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         ORDER BY o.created_at DESC LIMIT 1000`,
       [supplier, from, to],
     );
-    const commission = (total: number) => Math.round((total * pct) / 100);
-    const lines = rows.map((r: any) => ({ ...r, commission: commission(Number(r.total)), settled_basis: r.status === "livree" ? "due" : "a_venir" }));
+    const mode = req.query.mode === "commission" ? "commission" : "marge";
+    // marge : prix de vente = cout fournisseur x (1 + pct/100) ; commission : part pct % du prix de vente
+    const commission = (total: number) => Math.round(mode === "marge" ? total - total / (1 + pct / 100) : (total * pct) / 100);
+    const lines = rows.map((r: any) => ({
+      ...r,
+      commission: commission(Number(r.total)),
+      supplier_cost: Number(r.total) - commission(Number(r.total)),
+      settled_basis: r.status === "livree" ? "due" : "a_venir",
+    }));
     const sum = (f: (l: any) => boolean, k: string) => lines.filter(f).reduce((a: number, l: any) => a + Number(l[k]), 0);
     res.json({
-      success: true, supplier, pct, from, to, lines,
+      success: true, supplier, pct, mode, from, to, lines,
       totals: {
         sales: sum(() => true, "total"),
+        supplier_cost: sum(() => true, "supplier_cost"),
         due: sum((l) => l.status === "livree", "commission"),
         upcoming: sum((l) => l.status !== "livree", "commission"),
       },
