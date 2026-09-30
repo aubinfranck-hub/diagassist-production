@@ -232,7 +232,12 @@ app.post("/vehicle/search", async (req, res) => {
     cache.set(key, { expiresAt: Date.now() + CACHE_TTL, results });
     return res.json({ success: true, cached: false, results });
   } catch (error) {
+    console.error("[HP-Web] Recherche échouée:", error?.stack || error?.message || error);
+    // Repart de zéro au prochain appel (un lancement de navigateur raté ne doit pas rester en cache).
     page = null;
+    context = null;
+    try { (await browserPromise)?.close(); } catch {}
+    browserPromise = null;
     return res.status(502).json({
       success: false,
       error: "HP-Web search unavailable",
