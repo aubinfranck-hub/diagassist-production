@@ -5471,7 +5471,10 @@ Directives pour ce tour :
     const deepSeekHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
     const deepSeekReply = async (userContent: string | any[], historyLabel: string) => {
       const fallback = await callDeepSeekFallback(userContent, {
-        systemInstruction: deepSeekFallbackSystemInstruction,
+        // Le mode secours ne suit pas toujours les règles vocales : on les répète en dernier, là où elles pèsent le plus.
+        systemInstruction: deepSeekFallbackSystemInstruction + `
+
+RAPPEL FINAL (MODE VOCAL, NON NÉGOCIABLE) : deux phrases maximum. Jamais de "Bonjour", de "Je comprends" ni de compliment sur l'outil du mécanicien. Ne cite jamais un code défaut que le mécanicien n'a pas donné : si tu n'en as pas, demande "Code défaut ?". Une seule question à la fois.`,
         history: deepSeekHistory.slice(-10),
       });
       deepSeekHistory.push({ role: "user", content: historyLabel });
