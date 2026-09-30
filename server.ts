@@ -14,7 +14,7 @@ import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
-import { importCategory, fetchCategory } from "./src/modules/shop/supplierImport";
+import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
 import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
 import { getGeminiKeys } from "./src/utils/geminiKeys";
@@ -4308,6 +4308,32 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       res.json({ success: true, results });
     } catch (e: any) {
       console.error("[Import Ivoirelite]", e?.message || e);
+      res.status(502).json({ success: false, message: String(e?.message || "Import impossible.").slice(0, 200) });
+    }
+  });
+
+  // --- Admin : import du catalogue 3H Autoparts (flux produits public WooCommerce, revendeur) ---
+  // Sans "categories" : renvoie la liste des categories disponibles. Sinon corps :
+  // { categories: [{ id, name }], dryRun?: boolean, markupPct?: number }.
+  app.post("/api/admin/shop/import/3hautoparts", requireAdminAuth, async (req, res) => {
+    const list = Array.isArray(req.body?.categories) ? req.body.categories.slice(0, 10) : [];
+    const markupPct = Number(req.body?.markupPct ?? process.env.H3_MARKUP_PCT ?? 0);
+    try {
+      if (!list.length) return res.json({ success: true, availableCategories: await fetch3hCategories() });
+      if (req.body?.dryRun) {
+        const out = [];
+        for (const c of list) {
+          const items = await fetch3hProducts(Number(c.id) || undefined);
+          out.push({ category: c.name, found: items.length, sample: items.slice(0, 3).map((i) => ({ ref: i.ref, name: i.name, priceFcfa: i.priceFcfa, inStock: i.inStock })) });
+        }
+        return res.json({ success: true, dryRun: true, results: out });
+      }
+      if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+      const results = [];
+      for (const c of list) results.push(await import3hCategory(dbPool, { categoryId: Number(c.id) || undefined, name: String(c.name || "3H Autoparts"), markupPct }));
+      res.json({ success: true, results });
+    } catch (e: any) {
+      console.error("[Import 3H]", e?.message || e);
       res.status(502).json({ success: false, message: String(e?.message || "Import impossible.").slice(0, 200) });
     }
   });

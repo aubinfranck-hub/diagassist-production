@@ -18,6 +18,8 @@ export interface SupplierItem {
   sku: string | null;
   image: string | null;
   description: string | null;
+  /** null = le fournisseur n'indique pas le stock : on ne touche pas à la disponibilité. */
+  inStock: boolean | null;
 }
 
 const decode = (s: string) =>
@@ -44,6 +46,7 @@ export function parseIvoireliteListing(html: string): SupplierItem[] {
       sku: block.match(/pl_reference[\s\S]*?<strong>([^<]+)</)?.[1]?.trim() ?? null,
       image: block.match(/data-full-size-image-url\s*=\s*"([^"]+)"/)?.[1] ?? null,
       description: decode(block.match(/product-desc">\s*([\s\S]*?)\s*<\/p>/)?.[1] ?? "") || null,
+      inStock: null,
     });
   }
   return items;
@@ -88,49 +91,108 @@ const slugify = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]
 
 export interface ImportResult { category: string; found: number; created: number; updated: number; deactivated: number }
 
-export async function importCategory(
+// Écrit les articles d'un fournisseur dans la boutique. Le prix, le nom, la photo (si vide) et l'activation
+// suivent le fournisseur ; la description et les champs édités à la main dans l'admin ne sont jamais écrasés.
+async function syncItems(
   pool: Pool,
-  opts: { url: string; name: string; markupPct?: number },
+  o: { supplier: string; prefix: string; categoryName: string; items: SupplierItem[]; markupPct?: number },
 ): Promise<ImportResult> {
-  const items = await fetchCategory(opts.url);
-  const markup = Number.isFinite(opts.markupPct) ? Number(opts.markupPct) : 0;
-
-  const catSlug = "ivl-" + slugify(opts.name);
+  const markup = Number.isFinite(o.markupPct) ? Number(o.markupPct) : 0;
   const cat = await pool.query(
     `INSERT INTO shop_categories (name, slug, type) VALUES ($1, $2, 'piece')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [opts.name, catSlug],
+    [o.categoryName, `${o.prefix}-${slugify(o.categoryName)}`],
   );
   const categoryId = cat.rows[0].id as number;
 
   let created = 0, updated = 0;
-  for (const it of items) {
+  for (const it of o.items) {
     const price = it.priceFcfa === null ? null : Math.round(it.priceFcfa * (1 + markup / 100));
-    const slug = `ivl-${it.ref}-${slugify(it.name)}`.slice(0, 90);
-    // Le prix, le nom, la photo et l'activation suivent le fournisseur ; la description et les
-    // champs édités à la main dans l'admin ne sont jamais écrasés.
+    const slug = `${o.prefix}-${it.ref}-${slugify(it.name)}`.slice(0, 90);
+    const availability = it.inStock === null ? null : it.inStock ? "disponible" : "rupture";
     const r = await pool.query(
       `INSERT INTO shop_products (category_id, name, slug, brand, price_fcfa, description, availability, photos, is_active, supplier, supplier_ref, supplier_url)
-       VALUES ($1,$2,$3,$4,$5,$6,'disponible',$7,true,$8,$9,$10)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'disponible'),$8,true,$9,$10,$11)
        ON CONFLICT (supplier, supplier_ref) WHERE supplier IS NOT NULL DO UPDATE
          SET name = EXCLUDED.name, price_fcfa = EXCLUDED.price_fcfa, brand = COALESCE(EXCLUDED.brand, shop_products.brand),
              supplier_url = EXCLUDED.supplier_url, is_active = true,
+             availability = CASE WHEN $7::text IS NULL THEN shop_products.availability ELSE EXCLUDED.availability END,
              photos = CASE WHEN jsonb_array_length(shop_products.photos) = 0 THEN EXCLUDED.photos ELSE shop_products.photos END
        RETURNING (xmax = 0) AS inserted`,
-      [categoryId, it.name, slug, it.brand, price, it.description, JSON.stringify(it.image ? [it.image] : []), SUPPLIER, it.ref, it.url],
+      [categoryId, it.name, slug, it.brand, price, it.description, availability, JSON.stringify(it.image ? [it.image] : []), o.supplier, it.ref, it.url],
     );
     if (r.rows[0]?.inserted) created++; else updated++;
   }
 
   // Produits de cette catégorie retirés du catalogue fournisseur : masqués, pas supprimés.
   let deactivated = 0;
-  if (items.length) {
+  if (o.items.length) {
     const d = await pool.query(
       `UPDATE shop_products SET is_active = false
         WHERE supplier = $1 AND category_id = $2 AND is_active = true AND NOT (supplier_ref = ANY($3::text[]))`,
-      [SUPPLIER, categoryId, items.map((i) => i.ref)],
+      [o.supplier, categoryId, o.items.map((i) => i.ref)],
     );
     deactivated = d.rowCount ?? 0;
   }
-  return { category: opts.name, found: items.length, created, updated, deactivated };
+  return { category: o.categoryName, found: o.items.length, created, updated, deactivated };
+}
+
+export async function importCategory(pool: Pool, opts: { url: string; name: string; markupPct?: number }): Promise<ImportResult> {
+  const items = await fetchCategory(opts.url);
+  return syncItems(pool, { supplier: SUPPLIER, prefix: "ivl", categoryName: opts.name, items, markupPct: opts.markupPct });
+}
+
+// ───────────── 3H Autoparts (WooCommerce, flux produits public « Store API ») ─────────────
+const H3_BASE = "https://3hautoparts.com/wp-json/wc/store/v1";
+const H3_SUPPLIER = "3hautoparts";
+
+async function fetchJson(url: string): Promise<{ data: any; totalPages: number }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT, Accept: "application/json" }, signal: controller.signal });
+    if (!res.ok) throw new Error(`3H Autoparts HTTP ${res.status}`);
+    return { data: await res.json(), totalPages: Number(res.headers.get("x-wp-totalpages") || 1) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const stripHtml = (h: string) => decode(String(h || "").replace(/<[^>]+>/g, " "));
+
+export async function fetch3hCategories(): Promise<{ id: number; name: string; count: number }[]> {
+  const { data } = await fetchJson(`${H3_BASE}/products/categories?per_page=100`);
+  return (data as any[]).map((c) => ({ id: c.id, name: decode(String(c.name)), count: c.count }));
+}
+
+export async function fetch3hProducts(categoryId?: number): Promise<SupplierItem[]> {
+  const out = new Map<string, SupplierItem>();
+  for (let page = 1; page <= MAX_PAGES_PER_CATEGORY; page++) {
+    const q = new URLSearchParams({ per_page: "50", page: String(page) });
+    if (categoryId) q.set("category", String(categoryId));
+    const { data, totalPages } = await fetchJson(`${H3_BASE}/products?${q}`);
+    for (const p of data as any[]) {
+      const minor = Number(p.prices?.currency_minor_unit ?? 0);
+      const raw = Number(p.prices?.price);
+      out.set(String(p.id), {
+        ref: String(p.id),
+        name: decode(String(p.name)),
+        url: String(p.permalink),
+        priceFcfa: Number.isFinite(raw) && raw > 0 ? Math.round(raw / 10 ** minor) : null,
+        brand: null,
+        sku: p.sku || null,
+        image: p.images?.[0]?.src ?? null,
+        description: stripHtml(p.short_description || p.description).slice(0, 500) || null,
+        inStock: typeof p.is_in_stock === "boolean" ? p.is_in_stock : null,
+      });
+    }
+    if (page >= totalPages || !(data as any[]).length) break;
+    await sleep(REQUEST_DELAY_MS);
+  }
+  return [...out.values()];
+}
+
+export async function import3hCategory(pool: Pool, opts: { categoryId?: number; name: string; markupPct?: number }): Promise<ImportResult> {
+  const items = await fetch3hProducts(opts.categoryId);
+  return syncItems(pool, { supplier: H3_SUPPLIER, prefix: "3h", categoryName: opts.name, items, markupPct: opts.markupPct });
 }
