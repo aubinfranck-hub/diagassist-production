@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import { chromium } from "playwright";
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "64kb" }));
 
 const PORT = Number(process.env.PORT || 10000);
@@ -75,11 +76,73 @@ async function loginIfNeeded() {
   }
 
   console.log(`[HP-Web] After login URL=${p.url()} title=${await p.title().catch(() => "")}`);
+  await logDiscovery(p, "after-login");
   if (/login|signin|connexion/i.test(p.url())) {
     throw new Error("HP-Web login could not be completed; selectors need discovery");
   }
   lastLoginAt = Date.now();
   return p;
+}
+
+
+// Découverte de l'UI HP-Web : journalise la structure visible (jamais de valeurs saisies)
+// pour pouvoir écrire des sélecteurs fiables sans capture d'écran.
+async function logDiscovery(p, label) {
+  try {
+    const info = await p.evaluate(() => {
+      const vis = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+      const attrs = (el) => ({
+        id: el.id || "", name: el.getAttribute("name") || "", type: el.getAttribute("type") || "",
+        placeholder: el.getAttribute("placeholder") || "", aria: el.getAttribute("aria-label") || ""
+      });
+      return {
+        inputs: [...document.querySelectorAll("input:not([type=password]):not([type=hidden]), textarea")].filter(vis).slice(0, 25).map(attrs),
+        selects: [...document.querySelectorAll("select")].filter(vis).slice(0, 15).map((el) => ({
+          ...attrs(el), options: [...el.options].length, sample: [...el.options].slice(0, 8).map((o) => o.text.trim())
+        })),
+        buttons: [...document.querySelectorAll("button, [role=button], input[type=submit]")].filter(vis).slice(0, 25).map((el) => (el.innerText || el.value || "").trim().slice(0, 40)),
+        links: [...document.querySelectorAll("a")].filter(vis).slice(0, 30).map((el) => (el.innerText || "").trim().slice(0, 40)).filter(Boolean)
+      };
+    });
+    console.log(`[HP-Web][discovery:${label}] url=${p.url()} ${JSON.stringify(info)}`);
+  } catch (e) {
+    console.log(`[HP-Web][discovery:${label}] failed: ${e?.message || e}`);
+  }
+}
+
+// Si HP-Web utilise des listes déroulantes (marque > modèle > année > moteur), les remplit
+// par libellé. Retourne le nombre de listes renseignées.
+async function fillSelects(p, query) {
+  const wanted = [
+    ["make", query.make, /marque|make|brand|constructeur/i],
+    ["model", query.model, /mod[eè]le|model/i],
+    ["year", query.year, /ann[ée]e|year/i],
+    ["engine", query.engine, /moteur|engine|motor/i]
+  ];
+  let filled = 0;
+  for (const [field, value, re] of wanted) {
+    if (!value) continue;
+    const selects = p.locator("select").filter({ visible: true });
+    const n = await selects.count();
+    for (let i = 0; i < n; i++) {
+      const el = selects.nth(i);
+      const meta = [await el.getAttribute("id"), await el.getAttribute("name"), await el.getAttribute("aria-label")].filter(Boolean).join(" ");
+      if (!re.test(meta)) continue;
+      const labels = await el.locator("option").allInnerTexts();
+      const target = labels.find((l) => l.trim().toLowerCase() === String(value).trim().toLowerCase())
+        || labels.find((l) => l.toLowerCase().includes(String(value).trim().toLowerCase()));
+      if (target) {
+        await el.selectOption({ label: target });
+        await p.waitForTimeout(600); // la liste suivante se charge souvent après le choix
+        filled++;
+        console.log(`[HP-Web] select ${field} -> ${target.trim()}`);
+      } else {
+        console.log(`[HP-Web] select ${field}: aucune option pour "${value}"`);
+      }
+      break;
+    }
+  }
+  return filled;
 }
 
 async function searchByDom(query) {
@@ -90,28 +153,43 @@ async function searchByDom(query) {
     .map(normalize).filter(Boolean).join(" ");
 
   console.log(`[HP-Web] Search page URL=${p.url()} title=${await p.title().catch(() => "")}`);
-  const inputs = p.locator('input:not([type="password"]), textarea').filter({ visible: true });
-  const count = await inputs.count();
-  let searchInput = null;
-  for (let i = 0; i < Math.min(count, 30); i++) {
-    const el = inputs.nth(i);
-    const meta = [
-      await el.getAttribute("placeholder"),
-      await el.getAttribute("name"),
-      await el.getAttribute("aria-label")
-    ].filter(Boolean).join(" ");
-    if (/vin|vehicle|véhicule|marque|modèle|model|search|recherche|immatric|moteur/i.test(meta)) {
-      searchInput = el;
-      break;
-    }
-  }
-  if (!searchInput && count) searchInput = inputs.nth(0);
-  if (!searchInput) throw new Error("HP-Web search field not discovered");
-  console.log(`[HP-Web] Search input discovered for query=${searchText}`);
+  await logDiscovery(p, "search-page");
 
-  await searchInput.fill(searchText);
-  await searchInput.press("Enter").catch(() => {});
+  // 1) Listes déroulantes marque/modèle/année/moteur si le site en propose.
+  const filledSelects = await fillSelects(p, query);
+
+  // 2) Sinon (ou en complément pour le VIN / recherche libre), champ texte.
+  const textQuery = filledSelects ? [query.vin, query.q].map(normalize).filter(Boolean).join(" ") : searchText;
+  if (textQuery) {
+    const inputs = p.locator('input:not([type="password"]), textarea').filter({ visible: true });
+    const count = await inputs.count();
+    let searchInput = null;
+    for (let i = 0; i < Math.min(count, 30); i++) {
+      const el = inputs.nth(i);
+      const meta = [
+        await el.getAttribute("placeholder"),
+        await el.getAttribute("name"),
+        await el.getAttribute("aria-label")
+      ].filter(Boolean).join(" ");
+      if (/vin|vehicle|véhicule|marque|modèle|model|search|recherche|immatric|moteur/i.test(meta)) {
+        searchInput = el;
+        break;
+      }
+    }
+    if (!searchInput && count) searchInput = inputs.nth(0);
+    if (!searchInput && !filledSelects) throw new Error("HP-Web search field not discovered");
+    if (searchInput) {
+      await searchInput.fill(textQuery);
+      await searchInput.press("Enter").catch(() => {});
+    }
+  } else {
+    const go = p.locator('button[type="submit"], input[type="submit"], button:has-text("Rechercher"), button:has-text("Search")').first();
+    if (await go.count()) await go.click().catch(() => {});
+  }
+  console.log(`[HP-Web] Search submitted query="${searchText}" selects=${filledSelects}`);
+  await p.waitForLoadState("domcontentloaded").catch(() => {});
   await p.waitForTimeout(900);
+  await logDiscovery(p, "results-page");
 
   const bodyText = (await p.locator("body").innerText()).slice(0, 20000);
   return [{
@@ -122,6 +200,7 @@ async function searchByDom(query) {
     year: query.year || "",
     engine: query.engine || "",
     vin: query.vin || "",
+    confirmed: false, // extraction structurée à venir : les champs ci-dessus reprennent la requête
     technicalData: { rawResultPreview: bodyText }
   }];
 }
