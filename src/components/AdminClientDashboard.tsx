@@ -63,6 +63,34 @@ interface JekoPayment {
   jeko_id: string | null;
 }
 
+type AiKeyQuota = {
+  index: number; id: string; active: boolean;
+  calls: number; ok: number; quotaErrors: number; otherErrors: number;
+  lastOkAt: number | null; lastQuotaAt: number | null; lastErrorAt: number | null; lastError: string | null;
+  searchQuotaAt: number | null; promptTokens: number; outputTokens: number;
+};
+type AiQuotaInfo = {
+  serverStartedAt: number;
+  keys: AiKeyQuota[];
+  deepseekConfigured: boolean;
+  live: {
+    model: string; maxSessionMin: number; maxConcurrent: number;
+    dailyLimitsMin: Record<string, number>; activeConnections: number;
+    usedTodayMin: Array<{ phone: string; usedMin: number }>;
+  };
+};
+type ProbeCell = { status: "ok" | "quota" | "busy" | "error"; httpStatus: number; message?: string };
+type ProbeResult = { index: number; id: string; generation: ProbeCell; search: ProbeCell };
+
+const fmtAgo = (ts: number | null): string => {
+  if (!ts) return "—";
+  const min = Math.round((Date.now() - ts) / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 120) return `il y a ${min} min`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `il y a ${h} h` : `il y a ${Math.round(h / 24)} j`;
+};
+
 const authHeaders = (): Record<string, string> => {
   const token = localStorage.getItem("auth_session_token");
   return { "Content-Type": "application/json", "Authorization": `Bearer ${token || ""}` };
@@ -250,6 +278,10 @@ export default function AdminClientDashboard() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [bannerList, setBannerList] = useState<Banner[]>([]);
   const [jekoPayments, setJekoPayments] = useState<JekoPayment[]>([]);
+  const [aiQuota, setAiQuota] = useState<AiQuotaInfo | null>(null);
+  const [aiProbe, setAiProbe] = useState<{ testedAt: number; results: ProbeResult[] } | null>(null);
+  const [aiProbeBusy, setAiProbeBusy] = useState(false);
+  const [aiQuotaError, setAiQuotaError] = useState<string | null>(null);
   const [reconcilingRef, setReconcilingRef] = useState<string | null>(null);
   const [resetPwdPhone, setResetPwdPhone] = useState<string | null>(null);
   const [resetPwdValue, setResetPwdValue] = useState("");
@@ -392,9 +424,35 @@ export default function AdminClientDashboard() {
     return pwd;
   };
 
+  const loadAiQuota = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/ai-quota", { headers: authHeaders() });
+      const data = await res.json();
+      if (data.success) { setAiQuota(data); setAiQuotaError(null); } else setAiQuotaError(data.message || "Quotas IA indisponibles");
+    } catch {
+      setAiQuotaError("Erreur réseau (quotas IA)");
+    }
+  }, []);
+
+  const runAiProbe = async () => {
+    setAiProbeBusy(true);
+    try {
+      const res = await fetch("/api/admin/ai-quota/probe", { method: "POST", headers: authHeaders() });
+      const data = await res.json();
+      if (data.success) setAiProbe({ testedAt: data.testedAt, results: data.results });
+      else setAiQuotaError(data.message || "Test impossible");
+      await loadAiQuota();
+    } catch {
+      setAiQuotaError("Erreur réseau pendant le test");
+    } finally {
+      setAiProbeBusy(false);
+    }
+  };
+
   const loadData = useCallback(async () => {
     setLoadingList(true);
     setListError(null);
+    loadAiQuota();
     try {
       const [accRes, sessRes, histRes, bannerRes, mechRes, jekoRes] = await Promise.all([
         fetch("/api/admin/accounts", { headers: authHeaders() }),
@@ -425,7 +483,7 @@ export default function AdminClientDashboard() {
     } finally {
       setLoadingList(false);
     }
-  }, []);
+  }, [loadAiQuota]);
 
   useEffect(() => {
     loadData();
@@ -879,6 +937,91 @@ export default function AdminClientDashboard() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Quotas IA (clés Gemini, recherche web, Live) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-emerald-400" />
+            Quotas IA
+          </h3>
+          <div className="flex items-center gap-2">
+            <button onClick={loadAiQuota} className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">
+              Actualiser
+            </button>
+            <button
+              onClick={runAiProbe}
+              disabled={aiProbeBusy}
+              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {aiProbeBusy ? "Test en cours…" : "Tester maintenant"}
+            </button>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-500">
+          Google n'expose pas le quota restant d'une clé : l'état ci-dessous est observé depuis le dernier démarrage du serveur
+          ({aiQuota ? fmtAgo(aiQuota.serverStartedAt) : "…"}). « Tester maintenant » envoie une mini-requête réelle par clé.
+        </p>
+        {aiQuotaError && <p className="text-xs text-red-400">{aiQuotaError}</p>}
+        {aiQuota && aiQuota.keys.length === 0 && (
+          <p className="text-xs text-red-400">Aucune clé Gemini configurée (GEMINI_API_KEY / GEMINI_API_KEY_2).</p>
+        )}
+        {aiQuota && aiQuota.keys.map((k) => {
+          const probe = aiProbe?.results.find((r) => r.index === k.index);
+          const cell = (label: string, c: ProbeCell | undefined, observedBlockedAt: number | null) => {
+            let tone = "bg-slate-800 text-slate-300";
+            let text = "Non testé";
+            if (c) {
+              if (c.status === "ok") { tone = "bg-emerald-900/50 text-emerald-300"; text = "OK"; }
+              else if (c.status === "quota") { tone = "bg-red-900/50 text-red-300"; text = "Quota épuisé"; }
+              else if (c.status === "busy") { tone = "bg-amber-900/50 text-amber-300"; text = "Surcharge Google"; }
+              else { tone = "bg-red-900/50 text-red-300"; text = `Erreur ${c.httpStatus || ""}`; }
+            } else if (observedBlockedAt) {
+              tone = "bg-red-900/50 text-red-300"; text = `Quota épuisé ${fmtAgo(observedBlockedAt)}`;
+            }
+            return (
+              <div className={`rounded-lg px-3 py-2 text-xs ${tone}`} title={c?.message || ""}>
+                <div className="text-[10px] uppercase opacity-70">{label}</div>
+                <div className="font-semibold">{text}</div>
+              </div>
+            );
+          };
+          return (
+            <div key={k.index} className="rounded-xl border border-slate-800 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="font-mono text-slate-200">Clé #{k.index} ({k.id})</span>
+                {k.active && <span className="px-2 py-0.5 rounded-full bg-emerald-900/50 text-emerald-300 text-[10px] font-bold">ACTIVE</span>}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {cell("Génération", probe?.generation, k.lastQuotaAt && (!k.lastOkAt || k.lastQuotaAt > k.lastOkAt) ? k.lastQuotaAt : null)}
+                {cell("Recherche web", probe?.search, k.searchQuotaAt)}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-400">
+                <div>Appels : <span className="text-slate-200">{k.calls}</span></div>
+                <div>Réussis : <span className="text-slate-200">{k.ok}</span></div>
+                <div>Quota (429) : <span className={k.quotaErrors ? "text-red-300" : "text-slate-200"}>{k.quotaErrors}</span></div>
+                <div>Autres erreurs : <span className="text-slate-200">{k.otherErrors}</span></div>
+                <div>Tokens entrée : <span className="text-slate-200">{k.promptTokens.toLocaleString("fr-FR")}</span></div>
+                <div>Tokens sortie : <span className="text-slate-200">{k.outputTokens.toLocaleString("fr-FR")}</span></div>
+                <div>Dernier succès : <span className="text-slate-200">{fmtAgo(k.lastOkAt)}</span></div>
+                <div>Dernier 429 : <span className="text-slate-200">{fmtAgo(k.lastQuotaAt)}</span></div>
+              </div>
+              {k.lastError && <p className="text-[11px] text-slate-500 break-words">Dernière erreur : {k.lastError}</p>}
+            </div>
+          );
+        })}
+        {aiQuota && (
+          <div className="rounded-xl border border-slate-800 p-4 space-y-2 text-xs text-slate-400">
+            <div className="text-slate-200 font-semibold">Appel Live</div>
+            <div>Modèle : <span className="text-slate-200">{aiQuota.live.model}</span> · Durée max : <span className="text-slate-200">{aiQuota.live.maxSessionMin} min</span> · Simultanés max : <span className="text-slate-200">{aiQuota.live.maxConcurrent}</span> · Connexions actives : <span className="text-slate-200">{aiQuota.live.activeConnections}</span></div>
+            <div>Plafond quotidien (min) : {Object.entries(aiQuota.live.dailyLimitsMin).map(([plan, min]) => `${PLAN_LABELS[plan] || plan} ${min}`).join(" · ")}</div>
+            {aiQuota.live.usedTodayMin.length > 0 && (
+              <div>Utilisé aujourd'hui : {aiQuota.live.usedTodayMin.map((u) => `${u.phone} ${u.usedMin} min`).join(" · ")}</div>
+            )}
+            <div>Repli DeepSeek : <span className={aiQuota.deepseekConfigured ? "text-emerald-300" : "text-red-300"}>{aiQuota.deepseekConfigured ? "configuré" : "non configuré (DEEPSEEK_API_KEY)"}</span></div>
+          </div>
+        )}
       </div>
 
       {/* Paiements Jèko (abonnements payés en ligne) */}

@@ -870,6 +870,57 @@ function rotateGeminiKey(): boolean {
   return true;
 }
 
+// --- Suivi de l'usage/quota des clés Gemini (affiché dans l'admin) ---
+// Google n'expose pas le quota restant d'une clé API : on affiche l'état OBSERVÉ (succès, erreurs
+// 429, quota de la recherche web) depuis le démarrage du serveur, complété par un test à la demande.
+type GeminiKeyStats = {
+  calls: number; ok: number; quotaErrors: number; otherErrors: number;
+  lastOkAt: number | null; lastQuotaAt: number | null; lastErrorAt: number | null; lastError: string | null;
+  searchQuotaAt: number | null; promptTokens: number; outputTokens: number;
+};
+const geminiKeyStats = new Map<string, GeminiKeyStats>();
+const serverStartedAt = Date.now();
+
+function getGeminiStats(apiKey: string): GeminiKeyStats {
+  let st = geminiKeyStats.get(apiKey);
+  if (!st) {
+    st = { calls: 0, ok: 0, quotaErrors: 0, otherErrors: 0, lastOkAt: null, lastQuotaAt: null, lastErrorAt: null, lastError: null, searchQuotaAt: null, promptTokens: 0, outputTokens: 0 };
+    geminiKeyStats.set(apiKey, st);
+  }
+  return st;
+}
+
+function currentGeminiKey(): string {
+  const keys = getGeminiKeys();
+  return keys.length ? keys[currentGeminiKeyIndex % keys.length] : "";
+}
+
+function recordGeminiResult(
+  apiKey: string,
+  r: { ok: boolean; quota?: boolean; error?: string; searchQuota?: boolean; promptTokens?: number; outputTokens?: number }
+): void {
+  if (!apiKey) return;
+  const st = getGeminiStats(apiKey);
+  const now = Date.now();
+  if (r.searchQuota) { st.searchQuotaAt = now; return; }
+  st.calls += 1;
+  if (r.ok) {
+    st.ok += 1;
+    st.lastOkAt = now;
+    st.promptTokens += r.promptTokens || 0;
+    st.outputTokens += r.outputTokens || 0;
+  } else if (r.quota) {
+    st.quotaErrors += 1;
+    st.lastQuotaAt = now;
+    st.lastErrorAt = now;
+    st.lastError = String(r.error || "quota").slice(0, 200);
+  } else {
+    st.otherErrors += 1;
+    st.lastErrorAt = now;
+    st.lastError = String(r.error || "erreur").slice(0, 200);
+  }
+}
+
 function isGeminiQuotaError(error: any): boolean {
   if (!error) return false;
   if (error.status === 429) return true;
@@ -899,7 +950,10 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries = 3, initial
         error.message?.includes("high demand") ||
         error.message?.includes("overloaded");
       
-      if (!isTransient || attempt >= maxRetries) {
+      // Quota épuisé (pas un simple pic) : réessayer sur la même clé est inutile, on laisse l'appelant
+      // tourner vers une autre clé / retirer la recherche web.
+      const quotaExhausted = /exceeded your current quota|check your plan and billing/i.test(String(error.message || ""));
+      if (!isTransient || quotaExhausted || attempt >= maxRetries) {
         throw error;
       }
       const delay = initialDelayMs * Math.pow(2, attempt - 1) * (0.8 + Math.random() * 0.4);
@@ -2020,31 +2074,53 @@ async function generateContentWithFallbackAndRetry(
 ): Promise<any> {
   const modelsToTry = [primaryModel, "gemini-3.1-flash-lite", "gemini-flash-latest"];
   let lastError: any = null;
+  // Le quota de la recherche web (grounding) est distinct du quota de génération : quand il est
+  // épuisé, tous les modèles répondent 429 alors que la même requête sans recherche passe.
+  // On retire alors l'outil googleSearch et on retente (une seule fois) au lieu d'échouer.
+  let activeConfig = config;
+  let searchStripped = false;
+  const stripSearchTool = (): boolean => {
+    const tools = activeConfig?.tools;
+    if (searchStripped || !Array.isArray(tools) || !tools.some((t: any) => t && t.googleSearch)) return false;
+    const rest = tools.filter((t: any) => !(t && t.googleSearch));
+    activeConfig = { ...activeConfig, tools: rest.length > 0 ? rest : undefined };
+    searchStripped = true;
+    console.warn("[Gemini API] Quota de la recherche web épuisé : nouvelle tentative sans googleSearch.");
+    return true;
+  };
 
   for (const modelName of modelsToTry) {
     // Une erreur de quota sur ce modèle avec la clé active fait tourner vers la clé suivante et
     // retente le MÊME modèle (le quota dépend de la clé/projet, pas du modèle) avant de passer
     // au modèle suivant — jusqu'à épuiser toutes les clés disponibles.
     let keyRotations = 0;
+    let keyUsed = "";
     const maxKeyRotations = getGeminiKeys().length;
     while (true) {
       try {
         console.log(`[Gemini API] Attempting generation with model: ${modelName} (clé #${currentGeminiKeyIndex + 1})`);
+        keyUsed = currentGeminiKey();
         const result: any = await retryWithBackoff(async () => {
           return await getAIClient().models.generateContent({
             model: modelName,
             contents,
-            config,
+            config: activeConfig,
           });
         }, 3, 1000);
 
         if (result) {
           result.modelUsedForGeneration = modelName;
         }
+        recordGeminiResult(keyUsed, {
+          ok: true,
+          promptTokens: result?.usageMetadata?.promptTokenCount,
+          outputTokens: result?.usageMetadata?.candidatesTokenCount,
+        });
         return result;
       } catch (error: any) {
         console.error(`[Gemini API] Failed with model ${modelName}:`, error.message || error);
         lastError = error;
+        recordGeminiResult(keyUsed, { ok: false, quota: isGeminiQuotaError(error), error: error.message || String(error) });
         // If it's 400 Bad Request or 401/403, do not try other models as it's a client configuration/syntax error
         if (error.status === 400 || error.status === 401 || error.status === 403) {
           throw error;
@@ -2052,6 +2128,10 @@ async function generateContentWithFallbackAndRetry(
         if (isGeminiQuotaError(error) && keyRotations < maxKeyRotations && rotateGeminiKey()) {
           keyRotations++;
           continue;
+        }
+        if (isGeminiQuotaError(error) && stripSearchTool()) {
+          recordGeminiResult(keyUsed, { ok: false, searchQuota: true });
+          continue; // même modèle, sans recherche web
         }
         break;
       }
@@ -2064,7 +2144,7 @@ async function generateContentWithFallbackAndRetry(
   if (deepSeekContent && process.env.DEEPSEEK_API_KEY) {
     try {
       console.warn("[Fallback] Tous les modèles Gemini ont échoué, tentative de repli avec DeepSeek...");
-      return await callDeepSeekFallback(deepSeekContent, config);
+      return await callDeepSeekFallback(deepSeekContent, activeConfig);
     } catch (dsErr: any) {
       console.error("[DeepSeek Fallback] Échec:", dsErr.message || dsErr);
     }
@@ -2775,10 +2855,20 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       // texte libre — le modèle peut donc chercher sur le web et répondre en un seul appel, ce qui
       // lui permet de se comporter en agent sur les questions factuelles précises (localisation
       // d'une pièce, décodage VIN, couples de serrage, bulletins constructeur...).
+      // Mémoire du profil : derniers diagnostics enregistrés et dernier scan, pour que le chat de suivi
+      // puisse répondre à "tu te souviens de la dernière panne ?" au lieu de repartir de zéro.
+      const chatHistoryText = chatPhone ? await liveGetRecentDiagnostics(chatPhone, 3) : "";
+      const chatLastScan = chatPhone ? await getLatestScannerResult(chatPhone, scannerResultsByPhone, 30 * 24 * 60 * 60 * 1000) : undefined;
+      const chatMemory =
+        (chatHistoryText ? `\n\nHISTORIQUE DES DIAGNOSTICS PRÉCÉDENTS DE CE CLIENT (à utiliser s'il évoque une panne passée) :\n${chatHistoryText}` : "") +
+        (chatLastScan
+          ? `\n\nDERNIER SCAN DU PROFIL (${new Date(chatLastScan.completedAt).toLocaleDateString("fr-FR")}) : ${chatLastScan.summary}. Codes DTC : ${chatLastScan.dtcs.length > 0 ? chatLastScan.dtcs.join(", ") : "aucun"}.`
+          : "");
+
       const response = await generateContentWithFallbackAndRetry(
         contentsPayload,
         {
-          systemInstruction,
+          systemInstruction: systemInstruction + chatMemory,
           tools: [{ googleSearch: {} }],
         }
       );
@@ -2931,9 +3021,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
           })
         });
         if (!response.ok) {
-          lastError = `Gemini TTS API Error (${response.status}): ${await response.text()}`;
+          const errBody = await response.text();
+          lastError = `Gemini TTS API Error (${response.status}): ${errBody}`;
+          recordGeminiResult(apiKey, { ok: false, quota: response.status === 429, error: lastError });
           continue;
         }
+        recordGeminiResult(apiKey, { ok: true });
         const data: any = await response.json();
         const pcmBase64 = data?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data)?.inlineData?.data;
         if (!pcmBase64) {
@@ -3185,6 +3278,72 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route (ADMIN UNIQUEMENT) : liste des demandes d'activation en attente
+  // Quotas IA : état observé des clés Gemini + limites du Live. Aucune clé n'est exposée (4 derniers caractères).
+  app.get("/api/admin/ai-quota", adminLimiter, requireAdminAuth, (req, res) => {
+    const keys = getGeminiKeys();
+    const activeIdx = keys.length ? currentGeminiKeyIndex % keys.length : -1;
+    const liveUsedToday = Array.from(liveUsage.entries())
+      .filter(([, u]) => u.day === todayKey())
+      .map(([phone, u]) => ({ phone: phone.replace(/^(.{4}).*(.{2})$/, "$1***$2"), usedMin: Math.round(u.usedMs / 60000) }))
+      .sort((a, b) => b.usedMin - a.usedMin)
+      .slice(0, 10);
+    res.json({
+      success: true,
+      serverStartedAt,
+      keys: keys.map((k, i) => ({ index: i + 1, id: "…" + k.slice(-4), active: i === activeIdx, ...getGeminiStats(k) })),
+      deepseekConfigured: Boolean((process.env.DEEPSEEK_API_KEY || "").trim()),
+      live: {
+        model: LIVE_MODEL,
+        maxSessionMin: Math.round(LIVE_MAX_SESSION_MS / 60000),
+        maxConcurrent: LIVE_MAX_CONCURRENT,
+        dailyLimitsMin: Object.fromEntries(Object.entries(LIVE_DAILY_MS).map(([plan, ms]) => [plan, Math.round(ms / 60000)])),
+        activeConnections: Array.from(liveConnections.values()).reduce((n, set) => n + set.size, 0),
+        usedTodayMin: liveUsedToday,
+      },
+    });
+  });
+
+  // Test à la demande : une mini-requête de génération et une avec recherche web, par clé.
+  app.post("/api/admin/ai-quota/probe", adminLimiter, requireAdminAuth, async (req, res) => {
+    const keys = getGeminiKeys();
+    const probeOne = async (apiKey: string, withSearch: boolean) => {
+      try {
+        const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: "ok" }] }],
+            generationConfig: { maxOutputTokens: 8 },
+            ...(withSearch ? { tools: [{ googleSearch: {} }] } : {}),
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        if (r.ok) {
+          recordGeminiResult(apiKey, { ok: true });
+          return { status: "ok" as const, httpStatus: r.status };
+        }
+        const body: any = await r.json().catch(() => ({}));
+        const msg = String(body?.error?.message || r.statusText || "").slice(0, 160);
+        const quota = r.status === 429;
+        if (withSearch && quota) recordGeminiResult(apiKey, { ok: false, searchQuota: true });
+        else recordGeminiResult(apiKey, { ok: false, quota, error: msg });
+        return { status: (quota ? "quota" : r.status === 503 ? "busy" : "error") as "quota" | "busy" | "error", httpStatus: r.status, message: msg };
+      } catch (err: any) {
+        return { status: "error" as const, httpStatus: 0, message: String(err?.message || err).slice(0, 160) };
+      }
+    };
+    const results = [];
+    for (let i = 0; i < keys.length; i++) {
+      results.push({
+        index: i + 1,
+        id: "…" + keys[i].slice(-4),
+        generation: await probeOne(keys[i], false),
+        search: await probeOne(keys[i], true),
+      });
+    }
+    res.json({ success: true, testedAt: Date.now(), results });
+  });
+
   app.get("/api/admin/pending-activations", adminLimiter, requireAdminAuth, (req, res) => {
     const list = Array.from(pendingActivations.entries()).map(([id, v]) => ({ id, ...v }));
     res.json({ success: true, pending: list });
@@ -4977,10 +5136,14 @@ Directives pour ce tour :
     const attempts = Math.max(1, getGeminiKeys().length);
     let lastErr: any;
     for (let i = 0; i < attempts; i++) {
+      const keyForTry = currentGeminiKey();
       try {
-        return await getAIClient().live.connect(params);
-      } catch (err) {
+        const session = await getAIClient().live.connect(params);
+        recordGeminiResult(keyForTry, { ok: true });
+        return session;
+      } catch (err: any) {
         lastErr = err;
+        recordGeminiResult(keyForTry, { ok: false, quota: isGeminiQuotaError(err), error: err?.message || String(err) });
         if (i < attempts - 1 && rotateGeminiKey()) continue;
         break;
       }
