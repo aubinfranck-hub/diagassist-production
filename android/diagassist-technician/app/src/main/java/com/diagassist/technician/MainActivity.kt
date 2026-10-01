@@ -291,11 +291,20 @@ class MainActivity : ComponentActivity() {
         startAgent()
     }
 
+    private fun trustedWsBase(raw: String?): String {
+        val default = "https://diagassist-production.onrender.com"
+        if (raw.isNullOrBlank()) return default
+        val uri = runCatching { Uri.parse(raw) }.getOrNull() ?: return default
+        val allowed = setOf("diagassist-production.onrender.com", "diagassist.app", "www.diagassist.app")
+        return if (uri.scheme == "https" && uri.host in allowed) "https://" + uri.host else default
+    }
+
     private fun startAgent() {
         val u = launchUri ?: return
         val session = u.getQueryParameter("sessionId") ?: ""
         val pairing = u.getQueryParameter("pairingCode") ?: ""
-        val ws = u.getQueryParameter("wsUrl") ?: "https://diagassist-production.onrender.com"
+        // wsUrl issu d'un QR/lien : n'accepter que les serveurs DiagAssist (https), jamais un hôte arbitraire.
+        val ws = trustedWsBase(u.getQueryParameter("wsUrl"))
 
         startForegroundService(Intent(this, ScreenCaptureService::class.java).apply {
             putExtra("resultCode", projectionResult)

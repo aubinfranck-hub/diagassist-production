@@ -963,18 +963,19 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
 // ─── TRACKING ─────────────────────────────────────────────────────────────────
 function ShopTracking() {
   const [ref, setRef] = useState("");
+  const [phone, setPhone] = useState("");
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ref.trim()) return;
+    if (!ref.trim() || !phone.trim()) { setErr("Référence et numéro de téléphone requis."); return; }
     setLoading(true); setErr(""); setOrder(null);
     try {
-      const data = await fetchJSON(`/api/shop/track?ref=${encodeURIComponent(ref.trim())}`);
-      if (data.order) setOrder(data.order);
-      else setErr("Aucune commande trouvée pour cette référence.");
+      const data = await fetch(BASE + `/api/shop/track?ref=${encodeURIComponent(ref.trim())}&phone=${encodeURIComponent(phone.trim())}`).then(r => r.json());
+      if (data.orders && data.orders.length > 0) setOrder(data.orders[0]);
+      else setErr(data.message || "Aucune commande trouvée pour ces informations.");
     } catch { setErr("Erreur réseau. Réessayez."); }
     finally { setLoading(false); }
   };
@@ -982,6 +983,8 @@ function ShopTracking() {
   const STATUS_LABELS: Record<string, string> = {
     pending: "En attente", confirmed: "Confirmée", processing: "En préparation",
     shipped: "Expédiée", delivered: "Livrée", cancelled: "Annulée",
+    nouvelle: "Nouvelle", a_contacter: "En cours de traitement", contactee: "Client contacté", confirmee: "Confirmée",
+    en_traitement: "En préparation", prete: "Prête", livree: "Livrée", annulee: "Annulée", client_injoignable: "Client injoignable",
   };
 
   return (
@@ -990,12 +993,15 @@ function ShopTracking() {
         <div className="text-center space-y-2">
           <span className="text-xs font-black uppercase tracking-widest" style={{ color: C.red }}>Logistique DiagAssist</span>
           <h1 className="text-2xl sm:text-3xl font-black text-white">Suivi de commande</h1>
-          <p className="text-sm text-neutral-400">Entrez votre référence de commande (ex : DA-2026-000001) ou votre numéro de téléphone.</p>
+          <p className="text-sm text-neutral-400">Entrez votre référence de commande (ex : DA-2026-000001) et le numéro de téléphone utilisé pour la commande.</p>
         </div>
-        <form onSubmit={handleSearch} className="flex rounded-xl overflow-hidden border" style={{ borderColor: C.border }}>
-          <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Référence ou numéro de téléphone"
+        <form onSubmit={handleSearch} className="flex flex-col sm:flex-row rounded-xl overflow-hidden border" style={{ borderColor: C.border }}>
+          <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Référence (DA-2026-000001)"
             className="flex-1 px-4 py-3 text-sm text-white outline-none placeholder-neutral-500"
             style={{ background: C.dark }} />
+          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Téléphone de la commande" inputMode="tel"
+            className="flex-1 px-4 py-3 text-sm text-white outline-none placeholder-neutral-500 border-t sm:border-t-0 sm:border-l"
+            style={{ background: C.dark, borderColor: C.border }} />
           <button type="submit" disabled={loading}
             className="px-5 py-3 text-white font-bold text-sm flex items-center gap-2 disabled:opacity-60"
             style={{ background: C.red }}>
@@ -1012,7 +1018,7 @@ function ShopTracking() {
                 <p className="text-xs text-neutral-400">Référence</p>
                 <p className="text-base font-black text-white">{order.order_ref || order.id}</p>
               </div>
-              <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: order.status === "delivered" ? "#16a34a" : order.status === "cancelled" ? C.red : "#2563eb" }}>
+              <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: order.status === "livree" || order.status === "delivered" ? "#16a34a" : order.status === "annulee" || order.status === "cancelled" ? C.red : "#2563eb" }}>
                 {STATUS_LABELS[order.status] || order.status}
               </span>
             </div>

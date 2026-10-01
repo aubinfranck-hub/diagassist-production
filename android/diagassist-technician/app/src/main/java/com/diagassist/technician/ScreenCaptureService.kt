@@ -57,7 +57,11 @@ class ScreenCaptureService : Service() {
         if (Build.VERSION.SDK_INT >= 29) startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) else startForeground(1001, notification)
         val code = intent?.getIntExtra("resultCode", 0) ?: return START_NOT_STICKY
         val data = intent.getParcelableExtra<Intent>("resultData") ?: return START_NOT_STICKY
-        wsBase = intent.getStringExtra("wsUrl") ?: "https://diagassist-production.onrender.com"
+        wsBase = intent.getStringExtra("wsUrl").let { raw ->
+            val host = runCatching { android.net.Uri.parse(raw).host }.getOrNull()
+            if (raw != null && raw.startsWith("https://") && host in setOf("diagassist-production.onrender.com", "diagassist.app", "www.diagassist.app")) raw
+            else "https://diagassist-production.onrender.com"
+        }
         currentSession = intent.getStringExtra("sessionId") ?: ""
         pairingCode = intent.getStringExtra("pairingCode") ?: ""
         authToken = intent.getStringExtra("token") ?: ""

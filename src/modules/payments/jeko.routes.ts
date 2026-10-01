@@ -118,7 +118,12 @@ export function registerJekoPayments(
       if (!response.ok) return record;
       const data: any = await response.json().catch(() => ({}));
       const status = String(data?.status || data?.transaction?.status || "").toLowerCase();
-      if (status === "success" || status === "completed") {
+      // Le montant renvoyé par Jèko (s'il est fourni) doit correspondre à celui demandé.
+      const remoteAmount = Number(data?.amount?.amount ?? data?.amountCents);
+      const amountMismatch = Number.isFinite(remoteAmount) && remoteAmount !== record.amountCents;
+      if ((status === "success" || status === "completed") && amountMismatch) {
+        console.warn(`[JEKO] Montant différent à la réconciliation (${reference}) : reçu=${remoteAmount}, attendu=${record.amountCents}.`);
+      } else if (status === "success" || status === "completed") {
         await confirmPayment(reference, record);
       } else if (status === "error" || status === "failed") {
         record.status = "error";
@@ -300,6 +305,11 @@ export function registerJekoPayments(
       return res.status(200).end();
     }
     const webhookAmount = Number(body?.amount?.amount);
+    // Un paiement réussi sans montant exploitable n'active rien : on exige un montant identique.
+    if ((status === "success" || status === "completed") && !Number.isFinite(webhookAmount)) {
+      console.warn(`[JEKO][Webhook] Montant absent pour ${reference} : activation refusée (réconciliation possible via l'admin).`);
+      return res.status(200).end();
+    }
     if (Number.isFinite(webhookAmount) && webhookAmount !== record.amountCents) {
       console.warn(`[JEKO][Webhook] Montant différent pour ${reference} : reçu=${webhookAmount}, attendu=${record.amountCents}.`);
       return res.status(200).end();

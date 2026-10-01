@@ -94,6 +94,7 @@ const mechanics = new Map<string, Mechanic>();
 
 // Nombre de tentatives de vérification OTP par numéro (anti brute-force)
 const otpAttempts = new Map<string, { count: number; windowStart: number }>();
+const otpSendLog = new Map<string, number[]>();
 
 // Captcha simple (question arithmétique) pour la création de compte directe, sans dépendance
 // à un service SMS/WhatsApp externe. À usage unique, expire après 10 minutes.
@@ -174,6 +175,39 @@ function createSession(phone: string): string {
   return token;
 }
 
+// Durée de vie maximale d'une session (appliquée à chaque requête, pas seulement au rechargement).
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Comparaison de secrets en temps constant (le hash égalise les longueurs).
+function safeEqual(a: unknown, b: unknown): boolean {
+  if (typeof a !== "string" || typeof b !== "string" || !a || !b) return false;
+  const ha = crypto.createHash("sha256").update(a).digest();
+  const hb = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// Révoque les sessions d'un numéro (changement/réinitialisation de mot de passe), sauf éventuellement une.
+function revokeSessionsFor(phone: string, exceptToken?: string): number {
+  let n = 0;
+  for (const [t, s] of sessions) {
+    if (s.phone === phone && t !== exceptToken) {
+      sessions.delete(t);
+      deleteSessionFromDb(t).catch(() => {});
+      n++;
+    }
+  }
+  return n;
+}
+
+// Numéro de téléphone : chiffres uniquement (8 à 15), "+" initial optionnel.
+function normalizeShopPhone(raw: unknown): string | null {
+  const v = String(raw ?? "").replace(/[\s.()-]/g, "");
+  return /^\+?\d{8,15}$/.test(v) ? v : null;
+}
+
+// Code à 6 chiffres cryptographiquement sûr.
+const secureCode6 = () => crypto.randomInt(100000, 1000000).toString();
+
 // --- Comptes client par numéro + mot de passe (créés manuellement par l'admin) ---
 // Alternative à l'OTP WhatsApp : l'admin crée le compte du client (numéro + mot de passe) sur son
 // interface, et le lui communique directement. Aucune dépendance à un fournisseur SMS/WhatsApp.
@@ -201,6 +235,16 @@ async function initDatabase(): Promise<void> {
       created_at BIGINT NOT NULL,
       is_admin BOOLEAN NOT NULL DEFAULT false,
       email TEXT
+    );
+    CREATE TABLE IF NOT EXISTS usage_tracking (
+      phone TEXT PRIMARY KEY,
+      diagnosis_count INTEGER NOT NULL DEFAULT 0,
+      period_start BIGINT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS live_usage (
+      phone TEXT PRIMARY KEY,
+      day TEXT NOT NULL,
+      used_ms BIGINT NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS plans (
       phone TEXT PRIMARY KEY,
@@ -482,6 +526,11 @@ async function loadPersistedData(): Promise<void> {
       customDurationMs: row.custom_duration_ms ? Number(row.custom_duration_ms) : undefined,
     });
   }
+  const usageRes = await dbPool.query("SELECT * FROM usage_tracking");
+  for (const row of usageRes.rows) {
+    // Map.prototype.set d'origine : ne pas réécrire en base ce qu'on vient de lire
+    Map.prototype.set.call(usageTracking, row.phone, { diagnosisCount: Number(row.diagnosis_count), periodStart: Number(row.period_start) });
+  }
   const bannersRes = await dbPool.query("SELECT * FROM banners");
   for (const row of bannersRes.rows) {
     banners.set(row.id, {
@@ -758,7 +807,7 @@ function seedAdminAccountIfNeeded(): void {
 
 // --- Récupération de mot de passe par email (SMTP Gmail) ---
 // Codes de réinitialisation : email -> { code, phone, expiresAt }
-const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number }>();
+const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number; attempts?: number }>();
 
 function getEmailTransporter() {
   if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return null;
@@ -789,6 +838,11 @@ function requireAuth(req: any, res: any, next: any) {
   if (!token || !session) {
     return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
   }
+  if (Date.now() - session.createdAt > SESSION_TTL_MS) {
+    sessions.delete(token);
+    deleteSessionFromDb(token).catch(() => {});
+    return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  }
   // Toujours resynchroniser le plan de la session avec le forfait persistant à jour
   // (reflète immédiatement une activation admin ou une expiration, sans attendre une reconnexion).
   session.plan = getEffectivePlan(session.phone);
@@ -805,7 +859,7 @@ function requireAdminAuth(req: any, res: any, next: any) {
   const providedCode = req.headers["x-admin-code"] || req.body?.code;
 
   // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
-  if (adminSecret && providedCode && providedCode === adminSecret) {
+  if (adminSecret && safeEqual(providedCode, adminSecret)) {
     return next();
   }
 
@@ -814,7 +868,7 @@ function requireAdminAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
   const session = token ? sessions.get(token) : undefined;
-  if (session && userAccounts.get(session.phone)?.isAdmin) {
+  if (session && Date.now() - session.createdAt <= SESSION_TTL_MS && userAccounts.get(session.phone)?.isAdmin) {
     return next();
   }
 
@@ -843,6 +897,21 @@ const DEFAULT_RESET_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 
 // phone -> { diagnosisCount, periodStart }
 const usageTracking = new Map<string, { diagnosisCount: number; periodStart: number }>();
+// Les compteurs sont persistés : sans cela, chaque redéploiement remettait les quotas à zéro.
+{
+  const baseSet = usageTracking.set.bind(usageTracking);
+  usageTracking.set = (phone: string, u: { diagnosisCount: number; periodStart: number }) => {
+    const r = baseSet(phone, u);
+    if (dbPool) {
+      dbPool.query(
+        `INSERT INTO usage_tracking (phone, diagnosis_count, period_start) VALUES ($1,$2,$3)
+         ON CONFLICT (phone) DO UPDATE SET diagnosis_count = $2, period_start = $3`,
+        [phone, u.diagnosisCount, u.periodStart]
+      ).catch((err: any) => console.error("[DB] Sauvegarde du quota échouée:", err.message));
+    }
+    return r;
+  };
+}
 
 function checkAndIncrementUsage(phone: string, plan: string): { allowed: boolean; message?: string } {
   const limit = PLAN_LIMITS[plan] ?? 0;
@@ -2239,6 +2308,13 @@ async function generateContentWithFallbackAndRetry(
   throw lastError;
 }
 
+process.on("unhandledRejection", (reason: any) => {
+  console.error("[unhandledRejection]", reason?.message || reason);
+});
+process.on("uncaughtException", (err: any) => {
+  console.error("[uncaughtException]", err?.message || err);
+});
+
 async function startServer() {
   // Charge les données persistées AVANT toute autre chose : sessions/mots de passe/forfaits
   // doivent être en mémoire avant qu'une seule requête ne puisse arriver.
@@ -2249,6 +2325,27 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Express 4 ne capte pas les rejets des handlers async : une erreur de base de données dans une
+  // route sans try/catch laissait la requête pendre, voire faisait tomber le process. On enveloppe
+  // donc chaque handler async pour transmettre l'erreur au gestionnaire d'erreurs final.
+  for (const method of ["get", "post", "put", "patch", "delete"] as const) {
+    const original = (app as any)[method].bind(app);
+    (app as any)[method] = (path: any, ...handlers: any[]) => {
+      if (method === "get" && handlers.length === 0) return original(path); // app.get("setting")
+      const wrapped = handlers.map((h) =>
+        typeof h === "function" && h.length < 4
+          ? (req: any, res: any, next: any) => {
+              try {
+                const r = h(req, res, next);
+                if (r && typeof r.catch === "function") r.catch(next);
+              } catch (err) { next(err); }
+            }
+          : h
+      );
+      return original(path, ...wrapped);
+    };
+  }
+
   // BUG CORRIGÉ (détecté en déploiement réel sur Render) : sans ce réglage, Express ne fait pas
   // confiance à l'en-tête X-Forwarded-For envoyé par le proxy de l'hébergeur (Render, ou tout
   // reverse-proxy comme Nginx). Résultat : express-rate-limit ne peut pas identifier correctement
@@ -2258,9 +2355,18 @@ async function startServer() {
 
   // Sécurité HTTP standard (headers)
   app.use(helmet({
-    contentSecurityPolicy: false, // désactivé pour ne pas casser Vite en dev ; à durcir en prod si besoin
+    contentSecurityPolicy: false, // posée plus bas (directives sans risque) : helmet exige un default-src
     crossOriginEmbedderPolicy: false,
   }));
+
+  // CSP volontairement partielle (une CSP complète risquerait de casser Vite/Leaflet/blobs sans test
+  // navigateur) : anti-clickjacking, pas de plugins, <base> et formulaires limités à l'origine.
+  if (process.env.NODE_ENV === "production") {
+    app.use((_req, res, next) => {
+      res.setHeader("Content-Security-Policy", "frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'");
+      next();
+    });
+  }
 
   // Configure high payload limit for base64 images, videos, and audios
   // FAILLE CORRIGÉE : cette limite de 50 Mo s'appliquait à TOUTES les routes, y compris celles
@@ -2339,6 +2445,34 @@ async function startServer() {
     message: { success: false, message: "Trop de demandes. Veuillez réessayer dans quelques minutes." },
   });
 
+  // Anti-fraude à l'essai gratuit : nombre de créations de compte limité par IP et par jour.
+  const registerLimiter = rateLimit({
+    windowMs: 24 * 60 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de créations de compte depuis cette connexion. Réessayez demain." },
+  });
+  // Appairage de la tablette (public) : limité pour empêcher l'énumération du code à 6 chiffres.
+  const pairLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de tentatives d'appairage. Réessayez dans quelques minutes." },
+  });
+  // Routes admin : seuls les ÉCHECS comptent (un dashboard légitime peut interroger souvent),
+  // ce qui bloque le brute-force de ADMIN_SECRET sur toutes les routes /api/admin/*.
+  const adminFailLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    skipSuccessfulRequests: true,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de tentatives d'accès administrateur." },
+  });
+  app.use("/api/admin", adminFailLimiter);
+
   // API Route: Health Check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
@@ -2365,6 +2499,19 @@ async function startServer() {
                      // joindre plusieurs photos/vidéos/audio en une seule fois (voyant + moteur + code OBD...)
         accountType, // "mechanic" (défaut) ou "owner" — adapte le niveau technique de la réponse
       } = req.body;
+
+      // Validation des pièces jointes : nombre, type MIME et taille bornés (coût IA et mémoire).
+      const MAX_ATTACHMENTS = 6;
+      const MAX_ATTACHMENT_B64 = 20_000_000; // ~15 Mo par pièce
+      const MIME_OK = /^(image\/(jpeg|png|webp|heic|heif|gif)|audio\/[\w.+-]+|video\/[\w.+-]+|application\/pdf)(;.*)?$/i;
+      const badAttachment = (data: unknown, mime: unknown) =>
+        typeof data !== "string" || typeof mime !== "string" || data.length > MAX_ATTACHMENT_B64 || !MIME_OK.test(mime);
+      if (Array.isArray(files) && files.length > MAX_ATTACHMENTS) {
+        return res.status(400).json({ success: false, message: `Maximum ${MAX_ATTACHMENTS} pièces jointes.` });
+      }
+      if (Array.isArray(files) ? files.some((f: any) => f?.data && badAttachment(f.data, f.mimeType)) : (file && badAttachment(file, mimeType))) {
+        return res.status(400).json({ success: false, message: "Pièce jointe invalide (type non pris en charge ou trop volumineuse)." });
+      }
 
       // Construct parts array for Gemini 3.5 Flash
       const parts: any[] = [];
@@ -2832,7 +2979,7 @@ Un code défaut est un indice, jamais une conclusion. Une pièce n'est condamné
    véhicule thermique classique, cette précaution ne s'applique pas : continue directement la méthodologie standard.
 4. OUTILS DISPONIBLES (Étape 4) : Ne présume jamais qu'il a un multimètre. Privilégie les outils simples (lampe témoin 12V, compressiomètre, jauge de pression carburant, tournevis/tige métallique en stéthoscope).
    Si un outil manque, intègre UNE SEULE FOIS par outil manquant l'invitation d'achat structurée TOUJOURS APRÈS l'explication du rôle du test :
-   "Je comprends que vous n'ayez pas de [nom de l'outil] sous la main. Cet outil est précieux ici car il va nous permettre de [rappel très bref de ce que ce test va révéler]. Si vous souhaitez vous en procurer un rapidement, nous pouvons vous le fournir : il vous suffit de contacter le 0707312797. Sinon, dites-le-moi et je verrai avec vous s'il existe une autre façon de procéder."
+   "Vous n'avez pas de [nom de l'outil] sous la main. Cet outil est précieux ici car il va nous permettre de [rappel très bref de ce que ce test va révéler]. Si vous souhaitez vous en procurer un rapidement, nous pouvons vous le fournir : il vous suffit de contacter le 0707312797. Sinon, dites-le-moi et je verrai avec vous s'il existe une autre façon de procéder."
 5. CODES ET DONNÉES FIGÉES (Étape 5) : Si un code défaut est communiqué, demande aussi les données figées ("freeze frame") si la valise les affiche — régime moteur, température, vitesse au moment où le code s'est déclenché. Ces données changent souvent l'interprétation du code et évitent de partir sur une fausse piste.
 6. TEST GUIDÉ (Étape 6) : Propose UN SEUL TEST À LA FOIS au format :
    TEST [N] — [nom]
@@ -2997,14 +3144,17 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const { text: rawText, voiceName } = req.body;
       // Prononciation : "DiagAssist" collé est lu "diagnostic" par la synthèse vocale.
       const text = typeof rawText === "string" ? rawText.replace(/diag\s*assist(?!\w)/gi, "Diag Assist") : rawText;
-      if (!text) {
+      if (!text || typeof text !== "string") {
         return res.status(400).json({ success: false, message: "Le texte est requis." });
+      }
+      if (text.length > 5000) {
+        return res.status(413).json({ success: false, message: "Texte trop long pour la synthèse vocale (5000 caractères max)." });
       }
       if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
         return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas la synthèse vocale. Veuillez souscrire à une formule." });
       }
 
-      const requestedVoice = voiceName || "fr-FR-Neural2-B";
+      const requestedVoice = typeof voiceName === "string" && voiceName.length <= 80 ? voiceName : "fr-FR-Neural2-B";
 
       // If ElevenLabs voice is requested
       if (requestedVoice.startsWith("eleven-")) {
@@ -3161,8 +3311,19 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const activeChannel = "whatsapp" as const;
 
       // Clean the number
-      const cleanPhone = phoneNumber.replace(/\s+/g, "");
+      const cleanPhone = String(phoneNumber).replace(/[\s.()-]/g, "");
+      if (!/^\d{8,14}$/.test(cleanPhone) || (countryCode !== undefined && !/^\+\d{1,4}$/.test(String(countryCode)))) {
+        return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+      }
       const fullPhone = `${countryCode || "+225"}${cleanPhone}`;
+
+      // Anti-abus par numéro : 1 envoi / 60 s et 5 / heure (évite le spam et le "SMS pumping").
+      const sendLog = (otpSendLog.get(fullPhone) || []).filter((t) => Date.now() - t < 60 * 60 * 1000);
+      if (sendLog.length >= 5 || (sendLog.length > 0 && Date.now() - sendLog[sendLog.length - 1] < 60 * 1000)) {
+        return res.status(429).json({ success: false, message: "Veuillez patienter avant de redemander un code." });
+      }
+      sendLog.push(Date.now());
+      otpSendLog.set(fullPhone, sendLog);
 
       // En production, Twilio DOIT être configuré : sinon le code ne serait ni envoyé ni révélé,
       // ce qui bloquerait silencieusement toute connexion. On préfère un message d'erreur clair.
@@ -3172,7 +3333,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
 
       // Generate random 6-digit OTP code
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpCode = secureCode6();
 
       // Store in memory with a 10 minutes expiry limit
       otpStorage.set(fullPhone, {
@@ -3200,13 +3361,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
             to: toNumber,
           });
           sentRealMessage = true;
-          console.log(`[Twilio WhatsApp] Code OTP réel ${otpCode} envoyé à ${toNumber} avec succès depuis ${fromNumber} !`);
+          console.log(`[Twilio WhatsApp] Code OTP envoyé à ${toNumber} depuis ${fromNumber}.`);
         } catch (twilioErr: any) {
           console.error(`Erreur d'envoi Twilio (${activeChannel}) :`, twilioErr);
           errorDetails = twilioErr.message;
         }
       } else {
-        console.log(`[OTP Mode Simulation] Code de sécurité généré pour ${fullPhone} (${activeChannel}) : ${otpCode} (Renseignez vos clés Twilio dans les secrets pour envoyer de vrais messages).`);
+        console.log(`[OTP Mode Simulation] Code généré pour ${fullPhone}${process.env.NODE_ENV === "production" ? "" : ` : ${otpCode}`} (renseignez les clés Twilio pour envoyer de vrais messages).`);
       }
 
       // Sécurité : ne JAMAIS renvoyer le code OTP au client en production, même en mode simulation
@@ -3224,7 +3385,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         message: sentRealMessage
           ? "Un code de validation réel vient d'être envoyé sur votre compte WhatsApp."
           : "Mode simulation actif (WhatsApp). Utilisez le code fourni ci-dessous ou configurez Twilio.",
-        errorDetails,
+        errorDetails: process.env.NODE_ENV === "production" ? undefined : errorDetails,
       });
     } catch (err: any) {
       console.error("Erreur dans send-otp:", err);
@@ -3287,7 +3448,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         return res.status(400).json({ success: false, message: "Le code a expiré. Veuillez en demander un nouveau." });
       }
  
-      if (stored.code !== code) {
+      if (!safeEqual(stored.code, String(code))) {
         attempts.count += 1;
         otpAttempts.set(fullPhone, attempts);
         return res.status(400).json({ success: false, message: "Code de validation incorrect." });
@@ -3298,7 +3459,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       otpAttempts.delete(fullPhone);
 
       if (password) {
-        createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
+        // L'OTP prouve la possession du numéro : on peut (ré)initialiser le mot de passe, mais jamais
+        // retirer le rôle admin ni écraser l'email/nom existants.
+        const prev = userAccounts.get(fullPhone);
+        createAccount(fullPhone, password, prev?.isAdmin ?? false, prev?.email, typeof name === "string" && name.trim() ? name.trim() : prev?.name);
+        if (prev) revokeSessionsFor(fullPhone);
         console.log(`[Auth] Compte créé/mis à jour par auto-inscription pour ${fullPhone}.`);
       }
 
@@ -3347,14 +3512,27 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // et c'est l'admin qui active réellement le forfait via /api/admin/activate-plan après vérification du paiement Wave.
   const pendingActivations = new Map<string, { phone: string; plan: string; amount?: number; note?: string; requestedAt: number }>();
 
-  app.post("/api/user/request-plan", requireAuth, (req: any, res) => {
+  app.post("/api/user/request-plan", authLimiter, requireAuth, (req: any, res) => {
     const { plan, amount, note } = req.body;
-    if (!plan) {
-      return res.status(400).json({ success: false, message: "Le plan est requis." });
+    if (!plan || typeof plan !== "string" || !(plan in PLAN_LIMITS)) {
+      return res.status(400).json({ success: false, message: "Plan invalide." });
     }
     const { phone } = req.session;
+    // Une seule demande en attente par numéro et par forfait, et taille de la file bornée.
+    for (const [id, v] of pendingActivations) {
+      if (v.phone === phone && v.plan === plan) pendingActivations.delete(id);
+    }
+    if (pendingActivations.size >= 1000) {
+      const oldest = pendingActivations.keys().next().value;
+      if (oldest) pendingActivations.delete(oldest);
+    }
     const requestId = crypto.randomBytes(8).toString("hex");
-    pendingActivations.set(requestId, { phone, plan, amount, note, requestedAt: Date.now() });
+    pendingActivations.set(requestId, {
+      phone, plan,
+      amount: Number.isFinite(Number(amount)) ? Number(amount) : undefined,
+      note: typeof note === "string" ? note.slice(0, 300) : undefined,
+      requestedAt: Date.now(),
+    });
     console.log(`[Activation en attente] ${phone} demande le forfait "${plan}" (réf: ${requestId}). À valider manuellement après vérification du paiement Wave.`);
     res.json({
       success: true,
@@ -3505,6 +3683,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(404).json({ success: false, message: "Compte introuvable." });
     }
     createAccount(phone, password, existing.isAdmin, existing.email, existing.name);
+    revokeSessionsFor(phone);
     console.log(`[Admin] Mot de passe réinitialisé pour ${phone}.`);
     res.json({ success: true, message: `Mot de passe mis à jour pour ${phone}.` });
   });
@@ -3541,6 +3720,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     const existing = userAccounts.get(phone);
     createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
+    revokeSessionsFor(phone, req.sessionToken);
     res.json({ success: true, message: "Mot de passe mis à jour." });
   });
 
@@ -3560,7 +3740,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.json(genericResponse);
     }
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = secureCode6();
     passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000 });
 
     try {
@@ -3588,7 +3768,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     const normalized = email.trim().toLowerCase();
     const record = passwordResetCodes.get(normalized);
-    if (!record || record.code !== code.trim()) {
+    if (!record || !safeEqual(record.code, String(code).trim())) {
+      if (record) {
+        record.attempts = (record.attempts || 0) + 1;
+        if (record.attempts >= 5) passwordResetCodes.delete(normalized); // le code est invalidé après 5 essais
+      }
       return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
     }
     if (Date.now() > record.expiresAt) {
@@ -3598,6 +3782,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const existing = userAccounts.get(record.phone);
     createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
     passwordResetCodes.delete(normalized);
+    revokeSessionsFor(record.phone);
     res.json({ success: true, message: "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
   });
 
@@ -3717,6 +3902,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const { imageUrl, linkUrl, displayType } = req.body;
     if (!imageUrl) {
       return res.status(400).json({ success: false, message: "L'image (URL) est requise." });
+    }
+    // Pas de schéma javascript:/data:html — images en https/data:image, liens en http(s) uniquement.
+    const okImage = typeof imageUrl === "string" && (/^https?:\/\//i.test(imageUrl) || /^data:image\/(png|jpe?g|gif|webp);base64,/i.test(imageUrl));
+    const okLink = !linkUrl || (typeof linkUrl === "string" && /^https?:\/\//i.test(linkUrl));
+    if (!okImage || !okLink) {
+      return res.status(400).json({ success: false, message: "URL d'image ou de lien invalide (http/https uniquement)." });
     }
     if (displayType !== "banner" && displayType !== "floating") {
       return res.status(400).json({ success: false, message: "displayType doit être 'banner' ou 'floating'." });
@@ -3947,6 +4138,21 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, product: rows[0] });
   });
 
+  const cleanText = (v: unknown, max: number): string | undefined =>
+    typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
+
+  // Plafond de commandes/demandes par numéro et par 24 h : empêche d'utiliser la boutique pour
+  // déclencher des relances WhatsApp en rafale vers le numéro d'un tiers.
+  async function shopPhoneUnderDailyCap(phone: string): Promise<boolean> {
+    if (!dbPool) return true;
+    const r = await dbPool.query(
+      `SELECT (SELECT COUNT(DISTINCT order_ref) FROM shop_orders WHERE customer_phone = $1 AND created_at > NOW() - INTERVAL '24 hours')
+            + (SELECT COUNT(*) FROM shop_part_requests WHERE customer_phone = $1 AND created_at > NOW() - INTERVAL '24 hours') AS n`,
+      [phone]
+    );
+    return Number(r.rows[0]?.n || 0) < 5;
+  }
+
   // Crée/retrouve le client CRM par téléphone (appelé à chaque commande ou demande)
   async function upsertShopCustomer(phone: string, name?: string, city?: string, category?: string) {
     if (!dbPool) return;
@@ -4099,21 +4305,26 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   app.post("/api/shop/orders", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { phone, name, city, product_id, quantity, notes } = req.body;
+    const { phone, name, city, product_id, notes } = req.body;
     if (!phone || !product_id) return res.status(400).json({ success: false, message: "Téléphone et produit requis." });
-    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+    const cleanPhone = normalizeShopPhone(phone);
+    if (!cleanPhone) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+    const productId = Number(product_id);
+    if (!Number.isInteger(productId) || productId <= 0) return res.status(400).json({ success: false, message: "Produit invalide." });
+    const quantity = Math.min(100, Math.max(1, Math.floor(Number(req.body.quantity) || 1)));
+    if (!(await shopPhoneUnderDailyCap(cleanPhone))) return res.status(429).json({ success: false, message: "Trop de demandes pour ce numéro aujourd'hui." });
 
-    const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [product_id]);
+    const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1 AND is_active = true", [productId]);
     if (productRes.rows.length === 0) return res.status(404).json({ success: false, message: "Produit introuvable." });
     const product = productRes.rows[0];
 
-    await upsertShopCustomer(cleanPhone, name, city, "produit");
+    await upsertShopCustomer(cleanPhone, cleanText(name, 100), cleanText(city, 100), "produit");
     const orderRef = await nextOrderRef();
-    const dep = depositFor(product, quantity || 1);
+    const dep = depositFor(product, quantity);
     const orderRes = await dbPool.query(
       `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes, deposit_fcfa, deposit_status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null, dep.amount, dep.status]
+      [cleanPhone, productId, product.name, product.price_fcfa, quantity, orderRef, cleanText(notes, 500) || null, dep.amount, dep.status]
     );
     await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order" });
     const days = product.lead_time_days ? Number(product.lead_time_days) : null;
@@ -4161,25 +4372,31 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!phone || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Téléphone et au moins un article requis." });
     }
-    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+    const cleanPhone = normalizeShopPhone(phone);
+    if (!cleanPhone) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+    if (items.length > 30) return res.status(400).json({ success: false, message: "Panier trop volumineux." });
+    if (!(await shopPhoneUnderDailyCap(cleanPhone))) return res.status(429).json({ success: false, message: "Trop de demandes pour ce numéro aujourd'hui." });
 
-    await upsertShopCustomer(cleanPhone, name, city, "produit");
+    await upsertShopCustomer(cleanPhone, cleanText(name, 100), cleanText(city, 100), "produit");
     const orderRef = await nextOrderRef();
 
     const createdIds: number[] = [];
     let depositTotal = 0;
     let leadDays: number | null = null;
     for (const item of items) {
-      const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [item.product_id]);
+      const itemProductId = Number(item?.product_id);
+      if (!Number.isInteger(itemProductId) || itemProductId <= 0) continue;
+      const itemQty = Math.min(100, Math.max(1, Math.floor(Number(item.quantity) || 1)));
+      const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1 AND is_active = true", [itemProductId]);
       if (productRes.rows.length === 0) continue; // ignore un produit devenu introuvable plutôt que d'annuler toute la commande
       const product = productRes.rows[0];
-      const dep = depositFor(product, item.quantity || 1);
+      const dep = depositFor(product, itemQty);
       depositTotal += dep.amount;
       if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
       const orderRes = await dbPool.query(
         `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address, deposit_fcfa, deposit_status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null, dep.amount, dep.status]
+        [cleanPhone, itemProductId, product.name, product.price_fcfa, itemQty, orderRef, cleanText(city, 100) || null, cleanText(address, 300) || null, dep.amount, dep.status]
       );
       createdIds.push(orderRes.rows[0].id);
     }
@@ -4199,11 +4416,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // --- Public : suivi de commande par référence + téléphone ---
-  app.get("/api/shop/track", async (req, res) => {
+  app.get("/api/shop/track", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { ref, phone } = req.query as { ref?: string; phone?: string };
-    if (!phone) return res.status(400).json({ success: false, message: "Téléphone requis." });
-    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+    // Référence ET téléphone exigés : le numéro seul ne doit pas permettre de lister les commandes d'autrui.
+    if (!phone || !ref) return res.status(400).json({ success: false, message: "Référence et téléphone requis." });
+    const cleanPhone = normalizeShopPhone(phone);
+    if (!cleanPhone) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
 
     let query = "SELECT * FROM shop_orders WHERE customer_phone = $1";
     const params: any[] = [cleanPhone];
@@ -4233,13 +4452,20 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { phone, name, part_description, part_photo_base64, carte_grise_base64, extra_info } = req.body;
     if (!phone || !part_description) return res.status(400).json({ success: false, message: "Téléphone et description de la pièce requis." });
-    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+    const cleanPhone = normalizeShopPhone(phone);
+    if (!cleanPhone) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+    const MAX_B64 = 4_000_000; // ~3 Mo par image
+    const isImg = (v: unknown) => v === undefined || v === null || v === "" || (typeof v === "string" && v.length <= MAX_B64 && /^data:image\/(png|jpe?g|webp);base64,/i.test(v));
+    if (!isImg(part_photo_base64) || !isImg(carte_grise_base64)) {
+      return res.status(400).json({ success: false, message: "Image invalide ou trop volumineuse (JPEG/PNG/WebP, 3 Mo max)." });
+    }
+    if (!(await shopPhoneUnderDailyCap(cleanPhone))) return res.status(429).json({ success: false, message: "Trop de demandes pour ce numéro aujourd'hui." });
 
-    await upsertShopCustomer(cleanPhone, name, undefined, "pieces");
+    await upsertShopCustomer(cleanPhone, cleanText(name, 100), undefined, "pieces");
     const result = await dbPool.query(
       `INSERT INTO shop_part_requests (customer_phone, part_description, part_photo_base64, carte_grise_base64, extra_info)
        VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [cleanPhone, part_description, part_photo_base64 || null, carte_grise_base64 || null, extra_info || null]
+      [cleanPhone, cleanText(part_description, 1000), part_photo_base64 || null, carte_grise_base64 || null, cleanText(extra_info, 1000) || null]
     );
     await scheduleShopFollowups(cleanPhone, { kind: "part_request" });
     res.json({ success: true, message: "Demande envoyée. Nous préparons une cotation sous environ 15 jours.", request_id: result.rows[0].id });
@@ -4438,6 +4664,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.patch("/api/admin/shop/orders/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { status, notes, deposit_status } = req.body;
+    if (status !== undefined && !["nouvelle", "a_contacter", "contactee", "confirmee", "en_traitement", "prete", "livree", "annulee", "client_injoignable"].includes(status)) {
+      return res.status(400).json({ success: false, message: "Statut de commande invalide." });
+    }
     if (deposit_status !== undefined && !["non_requis", "en_attente", "recu"].includes(deposit_status)) {
       return res.status(400).json({ success: false, message: "Statut d'acompte invalide." });
     }
@@ -4702,7 +4931,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route : création de compte directe (numéro + mot de passe), protégée par le captcha
   // ci-dessus. Ne dépend d'aucun envoi SMS/WhatsApp — évite les pannes liées à un fournisseur
   // OTP mal configuré, tout en gardant une protection anti-bot minimale.
-  app.post("/api/auth/register", authLimiter, (req, res) => {
+  app.post("/api/auth/register", authLimiter, registerLimiter, (req, res) => {
     const { phoneNumber, countryCode, password, captchaId, captchaAnswer, name } = req.body;
     if (!phoneNumber || !password || !captchaId || captchaAnswer === undefined) {
       return res.status(400).json({ success: false, message: "Données manquantes pour créer le compte." });
@@ -4728,7 +4957,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (cleanNumber.length < 8) {
       return res.status(400).json({ success: false, message: "Veuillez saisir un numéro de téléphone valide." });
     }
+    if (!/^\d{8,14}$/.test(cleanNumber) || (countryCode !== undefined && !/^\+\d{1,4}$/.test(String(countryCode)))) {
+      return res.status(400).json({ success: false, message: "Veuillez saisir un numéro de téléphone valide." });
+    }
     const fullPhone = `${countryCode || "+225"}${cleanNumber}`;
+
+    // FAILLE CORRIGÉE : cette route écrasait le mot de passe (et le rôle admin) d'un compte existant.
+    // Un compte existant doit se connecter, ou réinitialiser son mot de passe via un canal vérifié.
+    if (userAccounts.has(fullPhone)) {
+      return res.status(409).json({ success: false, message: "Un compte existe déjà pour ce numéro. Connectez-vous ou réinitialisez votre mot de passe." });
+    }
 
     createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
     console.log(`[Auth] Compte créé par auto-inscription (captcha) pour ${fullPhone}.`);
@@ -4796,7 +5034,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!adminSecret) {
       return res.status(503).json({ success: false, message: "Accès admin non configuré sur le serveur." });
     }
-    if (code !== adminSecret) {
+    if (!safeEqual(code, adminSecret)) {
       return res.status(401).json({ success: false, message: "Code invalide." });
     }
     res.json({ success: true });
@@ -4829,6 +5067,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       if (now - entry.windowStart > 60 * 60 * 1000) {
         otpAttempts.delete(phone);
       }
+    }
+    for (const [phone, times] of otpSendLog) {
+      if (!times.some((t) => now - t < 60 * 60 * 1000)) otpSendLog.delete(phone);
+    }
+    for (const [email, rec] of passwordResetCodes) {
+      if (now > rec.expiresAt) passwordResetCodes.delete(email);
+    }
+    for (const [key, entry] of loginAttempts) {
+      if (now - entry.windowStart > 60 * 60 * 1000) loginAttempts.delete(key);
     }
   }, 15 * 60 * 1000); // toutes les 15 minutes
 
@@ -5311,6 +5558,15 @@ Directives pour ce tour :
   // HP-Web : recherche métier côté serveur, jamais depuis le navigateur.
   registerHpWebRoutes(app, requireAuth);
 
+  // Gestionnaire d'erreurs final : réponse JSON propre, sans fuite de détails internes.
+  app.use("/api", (err: any, req: any, res: any, next: any) => {
+    if (res.headersSent) return next(err);
+    console.error(`[Erreur ${req.method} ${req.path}]`, err?.message || err);
+    if (err?.type === "entity.too.large") return res.status(413).json({ success: false, message: "Requête trop volumineuse." });
+    if (err?.type === "entity.parse.failed") return res.status(400).json({ success: false, message: "Corps de requête invalide." });
+    res.status(500).json({ success: false, message: "Erreur serveur." });
+  });
+
   // Vite integration — DOIT être enregistré en dernier : app.get("*", ...) intercepte sinon
   // toute requête GET (y compris les routes API ci-dessus enregistrées après lui), qui reçoit
   // alors la page HTML de l'app au lieu du JSON attendu (bug réel trouvé en testant
@@ -5351,8 +5607,20 @@ Directives pour ce tour :
   };
   const addLiveUsage = (phone: string, ms: number) => {
     if (!phone || ms <= 0) return;
-    liveUsage.set(phone, { day: todayKey(), usedMs: getLiveUsedMs(phone) + ms });
+    const entry = { day: todayKey(), usedMs: getLiveUsedMs(phone) + ms };
+    liveUsage.set(phone, entry);
+    dbPool?.query(
+      `INSERT INTO live_usage (phone, day, used_ms) VALUES ($1,$2,$3)
+       ON CONFLICT (phone) DO UPDATE SET day = $2, used_ms = $3`,
+      [phone, entry.day, entry.usedMs]
+    ).catch((err: any) => console.error("[DB] Sauvegarde du temps Live échouée:", err.message));
   };
+  if (dbPool) {
+    try {
+      const r = await dbPool.query("SELECT phone, day, used_ms FROM live_usage WHERE day = $1", [todayKey()]);
+      for (const row of r.rows) liveUsage.set(row.phone, { day: row.day, usedMs: Number(row.used_ms) });
+    } catch (err: any) { console.error("[DB] Chargement du temps Live échoué:", err.message); }
+  }
 
   // Ouvre la session Gemini Live ; si la clé échoue (quota, clé invalide) et qu'une autre clé existe,
   // on tourne sur la clé suivante avant de renoncer.
@@ -5550,7 +5818,7 @@ résultat → nouvelle étape → confirmation de la cause → réparation → v
 - Sécurité hybride/électrique (avant l'étape 3, si applicable) : si le véhicule est hybride/électrique ou si sa motorisation n'est pas connue, demande d'abord le modèle exact avant toute inspection — les procédures haute tension varient par modèle. Une fois confirmé : avertis qu'il faut consigner le circuit haute tension et porter l'équipement isolant avant tout contact avec les câbles orange. Ne s'applique pas à un véhicule thermique classique.
 - Affichage des pièces : quand tu vérifies une pièce avec verifier_disponibilite_piece, une carte (photo, prix, disponibilité) s'affiche à l'écran du mécanicien. Dis-le en une courte phrase ("je vous affiche la pièce à l'écran").
 - Étape 4 (Outils) : Privilégie la lampe témoin 12V, le compressiomètre, la jauge carburant, le stéthoscope tournevis.
-  Si un outil manque, intègre UNE SEULE FOIS l'invitation d'achat structurée : "Je comprends que vous n'ayez pas de [nom de l'outil] sous la main. Cet outil est précieux ici car il va nous permettre de [rappel très bref de ce que ce test va révéler]. Si vous souhaitez vous en procurer un rapidement, nous pouvons vous le fournir : il vous suffit de contacter le 0707312797. Sinon, dites-le-moi et je verrai avec vous s'il existe une autre façon de procéder."
+  Si un outil manque, intègre UNE SEULE FOIS l'invitation d'achat structurée : "Vous n'avez pas de [nom de l'outil] sous la main. Cet outil est précieux ici car il va nous permettre de [rappel très bref de ce que ce test va révéler]. Si vous souhaitez vous en procurer un rapidement, nous pouvons vous le fournir : il vous suffit de contacter le 0707312797. Sinon, dites-le-moi et je verrai avec vous s'il existe une autre façon de procéder."
 - Étape 5 (Codes et données figées) : Si un code est donné, demande aussi les données figées (régime, température, vitesse au moment du code) si la valise les affiche.
 - Étape 6 (Test unique) : Propose UN SEUL TEST à la fois avec sa justification et la façon simple de le réaliser.
 - Étape 8 (Vérification post-réparation, OBLIGATOIRE) : Après réparation, ne clôture jamais sans confirmer par un essai que le symptôme initial ne revient pas et qu'aucun nouveau code n'apparaît.
@@ -6051,4 +6319,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("[Démarrage] Échec fatal:", err);
+  process.exit(1);
+});

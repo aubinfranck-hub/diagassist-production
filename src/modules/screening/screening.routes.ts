@@ -2,12 +2,28 @@ import crypto from "crypto";
 import type { Express } from "express";
 import type { Server } from "http";
 import { WebSocketServer } from "ws";
+import rateLimit from "express-rate-limit";
 import { GoogleGenAI, Type } from "@google/genai";
 import { getGeminiKeys } from "../../utils/geminiKeys";
 
 const sessions = new Map<string, any>();
 const clients = new Map<string, Set<any>>();
-const attempts = new Map<string, number>();
+// Essais d'appairage par code (publics) : plafond global par code et par IP, indépendant du deviceId
+// (un attaquant pouvait contourner la limite en changeant d'identifiant de tablette).
+const pairFailsByCode = new Map<string, { n: number; resetAt: number }>();
+const MAX_PAIR_FAILS_PER_CODE = 10;
+const PAIR_FAIL_WINDOW_MS = 15 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of pairFailsByCode) if (now > v.resetAt) pairFailsByCode.delete(k);
+}, 15 * 60 * 1000).unref();
+const pairByCodeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Trop de tentatives d'appairage. Réessayez dans quelques minutes." },
+});
 const PAIRING_TTL = 30 * 60 * 1000;
 const SESSION_TTL = 60 * 60 * 1000;
 const MAX_FRAME_BYTES = 2_500_000;
@@ -330,7 +346,7 @@ export function registerScreening(
     });
   });
 
-  app.post("/api/screening/pair-by-code", async (req: any, res) => {
+  app.post("/api/screening/pair-by-code", pairByCodeLimiter, async (req: any, res) => {
     const pairingCode = String(req.body?.pairingCode || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(pairingCode)) {
       return res.status(400).json({ success: false, message: "Code de connexion invalide." });
@@ -707,11 +723,20 @@ Ne fabrique aucune donnée absente de l'image.`,
               return ws.send(JSON.stringify({ type: "error", message: "Code d’appairage expiré. Créez une nouvelle session." }));
             }
             if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
-            const key = s.id + ":" + (ws._phone || deviceId);
-            if (m.pairingCode !== s.pairingCode) {
-              const n = (attempts.get(key) || 0) + 1;
-              attempts.set(key, n);
-              if (n >= 3) return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives. Créez une nouvelle session." }));
+            // Plafond par SESSION (et non par deviceId) : changer d'identifiant ne remet pas le compteur à zéro.
+            const key = s.id;
+            const nowTs = Date.now();
+            const fails = pairFailsByCode.get(key);
+            if (fails && nowTs <= fails.resetAt && fails.n >= MAX_PAIR_FAILS_PER_CODE) {
+              return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives. Créez une nouvelle session." }));
+            }
+            const providedCode = typeof m.pairingCode === "string" ? m.pairingCode : "";
+            const expectedBuf = Buffer.from(String(s.pairingCode));
+            const providedBuf = Buffer.from(providedCode);
+            if (providedBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(providedBuf, expectedBuf)) {
+              const cur = fails && nowTs <= fails.resetAt ? fails : { n: 0, resetAt: nowTs + PAIR_FAIL_WINDOW_MS };
+              cur.n += 1;
+              pairFailsByCode.set(key, cur);
               return ws.send(JSON.stringify({ type: "error", message: "Code incorrect." }));
             }
             if (s.technicianDeviceId && s.technicianDeviceId !== deviceId) return ws.send(JSON.stringify({ type: "error", message: "Cette session est déjà liée à une autre tablette." }));
