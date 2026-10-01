@@ -98,9 +98,28 @@ export function registerJekoPayments(
   // Marque un paiement confirmé et active le forfait — chemin commun au webhook et au filet de
   // sécurité par sondage ci-dessous, pour ne jamais dupliquer la logique d'activation.
   const confirmPayment = async (reference: string, record: PendingPayment) => {
+    // Idempotence : webhook rejoué, sondage client et réconciliation admin peuvent arriver en
+    // même temps ; seul le premier passage active le forfait (garde synchrone, avant tout await).
+    if (record.status === "success") return;
     record.status = "success";
     pending.set(reference, record);
-    await persistPayment(reference, record);
+    // Garde atomique côté base (multi-instance) : si une autre instance a déjà confirmé, on n'active pas.
+    if (deps.dbQuery) {
+      try {
+        const claimed = await deps.dbQuery(
+          `UPDATE jeko_payments SET status = 'success' WHERE reference = $1 AND status <> 'success' RETURNING reference`,
+          [reference]
+        );
+        if (claimed.rowCount === 0) {
+          const exists = await deps.dbQuery(`SELECT 1 FROM jeko_payments WHERE reference = $1`, [reference]);
+          if (exists.rowCount > 0) return; // déjà confirmé ailleurs
+          await persistPayment(reference, record);
+        }
+      } catch (err: any) {
+        console.error("[JEKO][DB] Confirmation atomique échouée:", err.message);
+        await persistPayment(reference, record);
+      }
+    }
     deps.setUserPlan(record.phone, record.plan);
     deps.onPlanActivated(record.phone, record.plan);
     console.log(`[JEKO] Paiement confirmé : forfait "${record.plan}" activé pour ${record.phone} (réf. ${reference}).`);
@@ -300,6 +319,8 @@ export function registerJekoPayments(
       return res.status(200).end();
     }
     const webhookAmount = Number(body?.amount?.amount);
+    // Si Jèko envoie un montant, il doit correspondre ; s'il n'en envoie pas, on s'appuie sur la
+    // signature HMAC, la référence et l'id Jèko (le montant attendu est celui enregistré à la création).
     if (Number.isFinite(webhookAmount) && webhookAmount !== record.amountCents) {
       console.warn(`[JEKO][Webhook] Montant différent pour ${reference} : reçu=${webhookAmount}, attendu=${record.amountCents}.`);
       return res.status(200).end();
