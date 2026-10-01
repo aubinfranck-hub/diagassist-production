@@ -159,6 +159,10 @@ export default function DiagAssistLiveScreen({
   const chatEndRef = useRef<HTMLDivElement>(null);
   const lastSpokenMsgIdRef = useRef<string>("");
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  // Une seule voix à la fois : chaque demande de synthèse reçoit un numéro, et une réponse tardive
+  // d'une demande périmée (appel arrêté, nouvelle réponse, interruption) est ignorée au lieu d'être jouée.
+  const ttsGenerationRef = useRef(0);
+  const ttsAbortRef = useRef<AbortController | null>(null);
 
   // Register Audio Ad Playback Handler for Priority Audio Ads at Natural Pauses
   useEffect(() => {
@@ -465,6 +469,7 @@ export default function DiagAssistLiveScreen({
   // Play chunk of 24kHz raw Int16 PCM audio from Gemini Live
   const playAudioChunk = (base64Data: string) => {
     if (!speakerEnabled) return;
+    if (ttsAudioRef.current || ttsAbortRef.current) stopSpeech(); // la voix du direct prend la main
     if (!audioCtxOutputRef.current) return;
     const ctx = audioCtxOutputRef.current;
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
@@ -505,6 +510,33 @@ export default function DiagAssistLiveScreen({
     } catch (err) {
       console.error("[LiveAudio] Error playing audio chunk:", err);
     }
+  };
+
+  // En mode secours le texte peut être long : à voix haute on ne lit que les deux premières phrases
+  // (règle DiagAssist : 2 phrases max), le texte complet reste affiché dans la transcription.
+  const voiceExcerpt = (text: string): string => {
+    const flat = text.replace(/\s+/g, " ").trim();
+    const sentences = flat.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [flat];
+    let out = "";
+    for (const sentence of sentences.slice(0, 2)) {
+      if ((out + sentence).length > 280 && out) break;
+      out += sentence;
+    }
+    return out.trim().slice(0, 320);
+  };
+
+  // Coupe toute synthèse vocale : demande en cours au serveur, audio joué, voix locale du navigateur.
+  const stopSpeech = () => {
+    ttsGenerationRef.current++;
+    try { ttsAbortRef.current?.abort(); } catch {}
+    ttsAbortRef.current = null;
+    if (ttsAudioRef.current) {
+      try { ttsAudioRef.current.pause(); } catch {}
+      ttsAudioRef.current = null;
+    }
+    try { window.speechSynthesis?.cancel(); } catch {}
+    setCurrentlySpeakingId(null);
+    globalAdManager.setGeminiSpeakingStatus(false);
   };
 
   // Repli : synthèse vocale locale du navigateur (voix robotique de l'appareil), utilisée
@@ -560,12 +592,11 @@ export default function DiagAssistLiveScreen({
     const cleanText = cleanPhoneticText(rawText);
     if (!cleanText) return;
 
-    try { window.speechSynthesis?.cancel(); } catch (e) {}
-    if (ttsAudioRef.current) {
-      try { ttsAudioRef.current.pause(); } catch (e) {}
-      ttsAudioRef.current = null;
-    }
-    setCurrentlySpeakingId(null);
+    stopAllAudioPlayback(); // jamais deux voix en même temps : on coupe aussi la voix du direct
+    stopSpeech();
+    const gen = ttsGenerationRef.current;
+    const controller = new AbortController();
+    ttsAbortRef.current = controller;
 
     try {
       const token = localStorage.getItem("auth_session_token");
@@ -574,9 +605,11 @@ export default function DiagAssistLiveScreen({
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token || ""}` },
         body: JSON.stringify({ text: cleanText, voiceName: preferredVoice }),
+        signal: controller.signal,
       });
       if (!response.ok) throw new Error("Réponse invalide de l'API de synthèse vocale.");
       const data = await response.json();
+      if (gen !== ttsGenerationRef.current) return; // appel arrêté ou voix remplacée pendant l'attente
       if (!data.success || !data.audioContent) throw new Error(data.message || "Pas d'audio renvoyé.");
 
       const audioObj = new Audio(`data:${data.mimeType || "audio/mp3"};base64,${data.audioContent}`);
@@ -594,11 +627,12 @@ export default function DiagAssistLiveScreen({
       audioObj.onerror = () => {
         setCurrentlySpeakingId(null);
         globalAdManager.setGeminiSpeakingStatus(false);
-        speakTextLocal(cleanText, msgId);
+        if (gen === ttsGenerationRef.current) speakTextLocal(cleanText, msgId);
       };
 
       await audioObj.play();
     } catch (err) {
+      if (gen !== ttsGenerationRef.current || (err as any)?.name === "AbortError") return;
       console.warn("Échec de la synthèse vocale cloud, repli sur la voix locale du navigateur :", err);
       speakTextLocal(cleanText, msgId);
     }
@@ -683,11 +717,7 @@ export default function DiagAssistLiveScreen({
       reconnectTimerRef.current = null;
     }
     stopAllAudioPlayback();
-    if (ttsAudioRef.current) {
-      try { ttsAudioRef.current.pause(); } catch {}
-      ttsAudioRef.current = null;
-    }
-    try { window.speechSynthesis?.cancel(); } catch {}
+    stopSpeech();
     setCallState("connecting");
     setLiveWhatsappUrl(null);
     playMicStartSound();
@@ -767,6 +797,7 @@ Codes DTC: ${dtcCodes}`;
           } else if (msg.type === "interrupted") {
             globalAdManager.setGeminiSpeakingStatus(false);
             stopAllAudioPlayback();
+            stopSpeech();
           } else if (msg.type === "outputTranscript" || msg.type === "inputTranscript") {
             // Fragments de transcription : on complète la ligne en cours tant que le même
             // interlocuteur parle, puis on passe à la ligne quand la parole change.
@@ -781,14 +812,14 @@ Codes DTC: ${dtcCodes}`;
               );
             }
           } else if (msg.type === "userTranscript") {
-            if (msg.text?.trim()) resetLiveInactivityTimer();
+            if (msg.text?.trim()) { resetLiveInactivityTimer(); stopSpeech(); } // le mécano parle : on se tait
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "Mécano: " + msg.text);
           } else if (msg.type === "text") {
             setLiveTranscript((prev) => prev + (prev ? "\n" : "") + "DiagAssist: " + msg.text);
             // Mode secours (DeepSeek, texte seul) : pas d'audio natif, on lit la réponse à voix haute
             // via /api/tts (Gemini TTS), avec repli sur la voix locale du navigateur.
             if (msg.fallback === "deepseek" && msg.text) {
-              speakText(String(msg.text));
+              speakText(voiceExcerpt(String(msg.text)));
             }
           } else if (msg.type === "turnComplete") {
             transcriptSpeakerRef.current = null;
@@ -922,13 +953,7 @@ Codes DTC: ${dtcCodes}`;
       audioCtxOutputRef.current = null;
     }
 
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
-    if (ttsAudioRef.current) {
-      try { ttsAudioRef.current.pause(); } catch (e) {}
-      ttsAudioRef.current = null;
-    }
+    stopSpeech();
 
     setCallState("idle");
     setIsLiveActive(false);

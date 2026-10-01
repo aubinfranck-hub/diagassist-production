@@ -1095,10 +1095,19 @@ async function liveToolCheckPartAvailability(
 ): Promise<{ text: string; orderRequestCreated: boolean; waConfirmUrl?: string; cards?: any[] }> {
   if (!dbPool) return { text: "La boutique de pièces n'est pas configurée sur ce serveur.", orderRequestCreated: false };
   try {
-    const { rows } = await dbPool.query(
-      "SELECT name, slug, price_fcfa, availability, photos, warranty, compatibility FROM shop_products WHERE is_active = true AND name ILIKE $1 ORDER BY name ASC LIMIT 5",
-      [`%${query}%`]
+    // Recherche par mots (singulier/pluriel indifférents) sur le nom, la marque et la compatibilité :
+    // « bougie Peugeot 406 » trouve « BOUGIE ... » même si le nom ne contient pas tous les mots.
+    const tokens = query.toLowerCase().split(/[^a-z0-9àâçéèêëîïôûùüÿœ]+/i).filter((t) => t.length >= 3)
+      .map((t) => (t.length > 4 && /[sx]$/.test(t) ? t.slice(0, -1) : t)).slice(0, 5);
+    const searchSql = (patterns: string[]) => dbPool!.query(
+      `SELECT name, slug, price_fcfa, availability, photos, warranty, compatibility FROM shop_products
+        WHERE is_active = true AND (name || ' ' || COALESCE(brand, '') || ' ' || COALESCE(compatibility, '')) ILIKE ALL($1::text[])
+        ORDER BY (availability = 'disponible') DESC, name ASC LIMIT 5`,
+      [patterns]
     );
+    let { rows } = await searchSql((tokens.length ? tokens : [query]).map((t) => `%${t}%`));
+    // Rien avec tous les mots : on retombe sur le premier mot (le type de pièce) seul.
+    if (rows.length === 0 && tokens.length > 1) ({ rows } = await searchSql([`%${tokens[0]}%`]));
     // Cartes affichées à l'écran du mécanicien (photo, prix, disponibilité) — 3 max. Les photos
     // en data-URL très lourdes sont ignorées pour ne pas saturer le WebSocket.
     const cards = rows.slice(0, 3).map((r: any) => {
@@ -1123,7 +1132,7 @@ async function liveToolCheckPartAvailability(
     const dispo = rows.filter((r: any) => r.availability === "disponible" || r.availability === "sur_commande");
     if (dispo.length > 0) {
       const lines = dispo.map((r: any) => `${r.name} : ${r.price_fcfa ? `${r.price_fcfa} F CFA` : "prix non renseigné"} (${availabilityLabel[r.availability] || r.availability})`);
-      return { text: `Pièces trouvées dans la boutique : ${lines.join(" | ")}. Une carte avec la photo et le prix est affichée à l'écran du mécanicien.`, orderRequestCreated: false, cards };
+      return { text: `Pièces trouvées dans la boutique : ${lines.join(" | ")}. Une carte avec la photo et le prix est affichée à l'écran du mécanicien. Annonce la pièce et son prix en une phrase, sans formule de politesse.`, orderRequestCreated: false, cards };
     }
 
     // Pièce introuvable ou en rupture — enregistrer une demande de commande
@@ -1153,7 +1162,10 @@ async function liveToolCheckPartAvailability(
       : `La pièce "${pieceLabel}" est actuellement en rupture de stock.`;
 
     return {
-      text: `${notFoundMsg} Une demande de commande a été enregistrée${phone ? ` pour le numéro ${phone}` : ""}. Le client sera recontacté dès qu'elle arrive.`,
+      text: `${notFoundMsg} AUCUNE fiche ni carte n'est affichée à l'écran : ne dis JAMAIS que la pièce est affichée. ` +
+        (phone ? `Une demande de commande a été enregistrée pour le ${phone}. ` : "Aucune demande n'a pu être enregistrée (numéro inconnu). ") +
+        `Réponds en une ou deux phrases : pièce pas en stock, recommande de nous contacter au 0707312797 pour une pièce garantie.` +
+        (vehicule ? "" : " Le véhicule n'est pas connu : demande uniquement « Véhicule ? »."),
       orderRequestCreated: true,
       waConfirmUrl,
       cards,
@@ -5459,7 +5471,10 @@ Directives pour ce tour :
     const deepSeekHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
     const deepSeekReply = async (userContent: string | any[], historyLabel: string) => {
       const fallback = await callDeepSeekFallback(userContent, {
-        systemInstruction: deepSeekFallbackSystemInstruction,
+        // Le mode secours ne suit pas toujours les règles vocales : on les répète en dernier, là où elles pèsent le plus.
+        systemInstruction: deepSeekFallbackSystemInstruction + `
+
+RAPPEL FINAL (MODE VOCAL, NON NÉGOCIABLE) : deux phrases maximum. Jamais de "Bonjour", de "Je comprends" ni de compliment sur l'outil du mécanicien. Ne cite jamais un code défaut que le mécanicien n'a pas donné : si tu n'en as pas, demande "Code défaut ?". Une seule question à la fois.`,
         history: deepSeekHistory.slice(-10),
       });
       deepSeekHistory.push({ role: "user", content: historyLabel });
@@ -5518,6 +5533,8 @@ COURTOISIE ET TON OBLIGATOIRES EN LIVE VOCAL :
 - Réponses courtes (2 phrases max) : diagnostic rapide, puis action physique immédiate.
 - Silence actif : si le mécanicien ne pose pas de question, ne dis rien et laisse-le travailler.
 - Donnée manquante : demande uniquement "Code défaut ?" ou "Symptôme exact ?".
+- Ne conclus JAMAIS par une formule de politesse ("N'hésitez pas", "Au revoir", "Avez-vous besoin d'autre chose ?") : après un "non" du mécanicien, reste silencieux.
+- N'affirme jamais qu'une pièce, une fiche ou une page est affichée à l'écran si l'outil ne l'a pas confirmé.
 
 RÈGLE D'OR (NON NÉGOCIABLE) :
 NE JAMAIS SAUTER DIRECTEMENT D'UN CODE DÉFAUT OU D'UN SYMPTÔME À UNE PIÈCE À REMPLACER.
