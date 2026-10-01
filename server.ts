@@ -690,6 +690,18 @@ async function deleteBannerFromDb(id: string): Promise<void> {
 
 const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number; isAdmin: boolean; email?: string; name?: string }>();
 
+// Comparaison de chaînes en temps constant (hash des deux côtés pour égaliser les longueurs)
+function safeEqual(a: string, b: string): boolean {
+  const ha = crypto.createHash("sha256").update(a).digest();
+  const hb = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// Code à 6 chiffres cryptographiquement sûr (OTP, réinitialisation de mot de passe)
+function randomSixDigitCode(): string {
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
 function hashPassword(password: string, salt: string): string {
   return crypto.scryptSync(password, salt, 64).toString("hex");
 }
@@ -802,10 +814,11 @@ function requireAuth(req: any, res: any, next: any) {
 // Sans ADMIN_SECRET configuré, toutes les routes admin refusent l'accès (fail-closed).
 function requireAdminAuth(req: any, res: any, next: any) {
   const adminSecret = process.env.ADMIN_SECRET;
-  const providedCode = req.headers["x-admin-code"] || req.body?.code;
+  const providedCode = req.headers["x-admin-code"];
 
   // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
-  if (adminSecret && providedCode && providedCode === adminSecret) {
+  // Comparaison en temps constant ; le secret ne transite que par l'en-tête, jamais par le corps.
+  if (adminSecret && typeof providedCode === "string" && safeEqual(providedCode, adminSecret)) {
     return next();
   }
 
@@ -861,6 +874,13 @@ function checkAndIncrementUsage(phone: string, plan: string): { allowed: boolean
   usage.diagnosisCount += 1;
   usageTracking.set(phone, usage);
   return { allowed: true };
+}
+
+// Rend un diagnostic décompté quand le traitement IA a échoué côté serveur (le client ne doit pas
+// perdre un diagnostic de son quota pour une panne Gemini/réseau).
+function refundUsage(phone: string): void {
+  const usage = usageTracking.get(phone);
+  if (usage && usage.diagnosisCount > 0) usage.diagnosisCount -= 1;
 }
 
 // Support de plusieurs clés Gemini (rotation automatique en cas de quota dépassé sur l'une
@@ -2329,6 +2349,25 @@ async function startServer() {
     legacyHeaders: false,
     message: { success: false, message: "Trop de tentatives de connexion. Veuillez réessayer dans quelques minutes." },
   });
+  // Anti-abus coût IA : plafond par UTILISATEUR (téléphone de la session) et non par IP, pour les
+  // routes qui appellent Gemini/ElevenLabs sans décompter le quota de diagnostics.
+  const aiUserLimiter = (max: number) => rateLimit({
+    windowMs: 60 * 1000,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req: any) => `u:${req.session?.phone || "anon"}`,
+    validate: false,
+    message: { success: false, message: "Trop de requêtes. Ralentissez un peu." },
+  });
+  const chatLimiter = aiUserLimiter(30);
+  const ttsLimiter = aiUserLimiter(30);
+  const lookupLimiter = aiUserLimiter(10);
+  const loopStepLimiter = aiUserLimiter(30);
+  const MAX_TTS_CHARS = 2000;
+  const MAX_CHAT_MESSAGE_CHARS = 8000;
+  const MAX_CHAT_HISTORY_ITEMS = 40;
+
   // Limite les routes boutique publiques (commande/demande de pièce) sans authentification —
   // évite le spam/abus sur des endpoints ouverts à tous.
   const shopPublicLimiter = rateLimit({
@@ -2338,6 +2377,25 @@ async function startServer() {
     legacyHeaders: false,
     message: { success: false, message: "Trop de demandes. Veuillez réessayer dans quelques minutes." },
   });
+
+  // Limiteur global sur tout /api/admin : empêche de tester le secret admin sans limite
+  // sur les routes qui n'avaient pas leur propre adminLimiter (boutique, Jèko...).
+  app.use("/api/admin", rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de requêtes administrateur." },
+  }));
+  // Échecs d'authentification admin : 20 par 15 min et par IP (les succès ne comptent pas).
+  app.use("/api/admin", rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    skipSuccessfulRequests: true,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de tentatives d'accès administrateur." },
+  }));
 
   // API Route: Health Check
   app.get("/api/health", (req, res) => {
@@ -2702,6 +2760,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       // FUITE D'INFORMATION CORRIGÉE : le détail technique brut de l'erreur (potentiellement
       // des informations d'infrastructure interne) n'est plus renvoyé au client, seulement loggé.
       console.error("Error during diagnosis:", error);
+      if (req.session?.phone) refundUsage(req.session.phone);
       res.status(500).json({
         success: false,
         message: "Une erreur est survenue lors de l'analyse avec l'IA. Veuillez réessayer dans un instant.",
@@ -2714,7 +2773,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
   // vérifiées. Fait maintenant une vraie recherche web ciblée sur le composant précis, puis
   // structure UNIQUEMENT ce qui a été trouvé — le modèle doit répondre "Non trouvé dans les
   // sources" plutôt que d'inventer une valeur numérique absente de la recherche.
-  app.post("/api/diagnose/technical-lookup", requireAuth, async (req: any, res) => {
+  app.post("/api/diagnose/technical-lookup", requireAuth, lookupLimiter, async (req: any, res) => {
     try {
       const { brandModelInfo, probableCauses, dtcCodesDetected } = req.body;
       const { plan } = req.session;
@@ -2785,12 +2844,18 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
   });
 
   // API Route: Contextual follow-up chat
-  app.post("/api/chat", requireAuth, async (req: any, res) => {
+  app.post("/api/chat", requireAuth, chatLimiter, async (req: any, res) => {
     try {
       const { message, history, diagnosticContext } = req.body;
 
       if (!message) {
         return res.status(400).json({ success: false, message: "Le message est requis." });
+      }
+      if (typeof message !== "string" || message.length > MAX_CHAT_MESSAGE_CHARS) {
+        return res.status(400).json({ success: false, message: "Message trop long." });
+      }
+      if (Array.isArray(history) && history.length > MAX_CHAT_HISTORY_ITEMS) {
+        return res.status(400).json({ success: false, message: "Historique trop long." });
       }
 
       // BUG CORRIGÉ : cette route n'imposait aucune vérification de forfait — un compte
@@ -2992,13 +3057,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // FAILLE CORRIGÉE : cette route n'exigeait aucune authentification (coût API illimité pour
   // n'importe qui), et utilisait en secours une VRAIE clé API ElevenLabs codée en dur dans le
   // code source. Cette clé doit être révoquée/régénérée dans votre compte ElevenLabs sans délai.
-  app.post("/api/tts", requireAuth, async (req: any, res) => {
+  app.post("/api/tts", requireAuth, ttsLimiter, async (req: any, res) => {
     try {
       const { text: rawText, voiceName } = req.body;
       // Prononciation : "DiagAssist" collé est lu "diagnostic" par la synthèse vocale.
       const text = typeof rawText === "string" ? rawText.replace(/diag\s*assist(?!\w)/gi, "Diag Assist") : rawText;
       if (!text) {
         return res.status(400).json({ success: false, message: "Le texte est requis." });
+      }
+      if (typeof text !== "string" || text.length > MAX_TTS_CHARS) {
+        return res.status(400).json({ success: false, message: "Texte trop long pour la synthèse vocale." });
       }
       if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
         return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas la synthèse vocale. Veuillez souscrire à une formule." });
@@ -3172,7 +3240,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
 
       // Generate random 6-digit OTP code
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpCode = randomSixDigitCode();
 
       // Store in memory with a 10 minutes expiry limit
       otpStorage.set(fullPhone, {
@@ -3200,13 +3268,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
             to: toNumber,
           });
           sentRealMessage = true;
-          console.log(`[Twilio WhatsApp] Code OTP réel ${otpCode} envoyé à ${toNumber} avec succès depuis ${fromNumber} !`);
+          console.log(`[Twilio WhatsApp] Code OTP envoyé à ${toNumber} depuis ${fromNumber}.`);
         } catch (twilioErr: any) {
           console.error(`Erreur d'envoi Twilio (${activeChannel}) :`, twilioErr);
           errorDetails = twilioErr.message;
         }
       } else {
-        console.log(`[OTP Mode Simulation] Code de sécurité généré pour ${fullPhone} (${activeChannel}) : ${otpCode} (Renseignez vos clés Twilio dans les secrets pour envoyer de vrais messages).`);
+        console.log(`[OTP Mode Simulation] Code généré pour ${fullPhone} (${activeChannel}).${process.env.NODE_ENV === "production" ? "" : ` Code (dev uniquement) : ${otpCode}`}`);
       }
 
       // Sécurité : ne JAMAIS renvoyer le code OTP au client en production, même en mode simulation
@@ -3560,7 +3628,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.json(genericResponse);
     }
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = randomSixDigitCode();
     passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000 });
 
     try {
@@ -4730,6 +4798,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     const fullPhone = `${countryCode || "+225"}${cleanNumber}`;
 
+    // FAILLE CORRIGÉE : sans cette vérification, n'importe qui pouvait écraser le mot de passe (et le
+    // rôle admin) d'un compte existant en connaissant seulement son numéro. La reprise d'un compte
+    // existant passe par la connexion, le mot de passe oublié ou la vérification OTP.
+    if (userAccounts.has(fullPhone)) {
+      return res.status(409).json({ success: false, message: "Un compte existe déjà pour ce numéro. Connectez-vous ou utilisez « mot de passe oublié »." });
+    }
+
     createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
     console.log(`[Auth] Compte créé par auto-inscription (captcha) pour ${fullPhone}.`);
     const token = createSession(fullPhone);
@@ -4796,7 +4871,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!adminSecret) {
       return res.status(503).json({ success: false, message: "Accès admin non configuré sur le serveur." });
     }
-    if (code !== adminSecret) {
+    if (typeof code !== "string" || !safeEqual(code, adminSecret)) {
       return res.status(401).json({ success: false, message: "Code invalide." });
     }
     res.json({ success: true });
@@ -5101,12 +5176,13 @@ Instructions Tour 0 :
       });
     } catch (error: any) {
       console.error("Erreur lors de l'initialisation de la boucle de diagnostic:", error);
+      if (req.session?.phone) refundUsage(req.session.phone);
       res.status(500).json({ success: false, message: "Erreur serveur lors du diagnostic. Veuillez réessayer." });
     }
   });
 
   // Next Turn in Diagnostic Loop (Tour 1 to N)
-  app.post("/api/diagnostic/loop/step", requireAuth, async (req: any, res) => {
+  app.post("/api/diagnostic/loop/step", requireAuth, loopStepLimiter, async (req: any, res) => {
     try {
       const {
         sessionId,
@@ -5118,6 +5194,9 @@ Instructions Tour 0 :
         scannerModel,
       } = req.body;
 
+      if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
+        return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas de poursuivre ce diagnostic." });
+      }
       if (!sessionId || !loopStateStore.has(sessionId)) {
         return res.status(404).json({ success: false, message: "Session de diagnostic introuvable ou expirée." });
       }
