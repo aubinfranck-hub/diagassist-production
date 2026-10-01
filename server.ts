@@ -770,7 +770,7 @@ function seedAdminAccountIfNeeded(): void {
 
 // --- Récupération de mot de passe par email (SMTP Gmail) ---
 // Codes de réinitialisation : email -> { code, phone, expiresAt }
-const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number }>();
+const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number; attempts: number }>();
 
 function getEmailTransporter() {
   if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return null;
@@ -794,11 +794,30 @@ function findPhoneByEmail(email: string): string | null {
   return null;
 }
 
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Révoque toutes les sessions d'un numéro (après changement/réinitialisation du mot de passe),
+// sauf éventuellement celle qui vient d'effectuer le changement.
+function revokeSessionsForPhone(phone: string, exceptToken?: string): void {
+  for (const [token, sess] of sessions) {
+    if (sess.phone === phone && token !== exceptToken) {
+      sessions.delete(token);
+      deleteSessionFromDb(token).catch(() => {});
+    }
+  }
+}
+
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
   const session = sessions.get(token);
   if (!token || !session) {
+    return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  }
+  // Expiration absolue des sessions (30 jours), appliquée aussi sans redémarrage du serveur.
+  if (Date.now() - session.createdAt > SESSION_TTL_MS) {
+    sessions.delete(token);
+    deleteSessionFromDb(token).catch(() => {});
     return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
   }
   // Toujours resynchroniser le plan de la session avec le forfait persistant à jour
@@ -3609,6 +3628,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     const existing = userAccounts.get(phone);
     createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
+    revokeSessionsForPhone(phone, req.sessionToken);
     res.json({ success: true, message: "Mot de passe mis à jour." });
   });
 
@@ -3629,7 +3649,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
 
     const code = randomSixDigitCode();
-    passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000 });
+    passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000, attempts: 0 });
 
     try {
       await transporter.sendMail({
@@ -3656,7 +3676,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     const normalized = email.trim().toLowerCase();
     const record = passwordResetCodes.get(normalized);
-    if (!record || record.code !== code.trim()) {
+    if (!record) {
+      return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
+    }
+    if (record.code !== String(code).trim()) {
+      // 5 essais maximum par code : au-delà, le code est invalidé (anti brute-force des 900 000 codes).
+      record.attempts += 1;
+      if (record.attempts >= 5) passwordResetCodes.delete(normalized);
       return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
     }
     if (Date.now() > record.expiresAt) {
@@ -3666,6 +3692,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const existing = userAccounts.get(record.phone);
     createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
     passwordResetCodes.delete(normalized);
+    revokeSessionsForPhone(record.phone);
     res.json({ success: true, message: "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
   });
 
@@ -4894,6 +4921,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       if (now - (state._lastActivity || 0) > LOOP_SESSION_MAX_AGE_MS) {
         loopStateStore.delete(id);
       }
+    }
+    for (const [email, entry] of passwordResetCodes) {
+      if (now > entry.expiresAt) passwordResetCodes.delete(email);
     }
     for (const [phone, entry] of otpStorage) {
       if (now > entry.expiresAt) {
