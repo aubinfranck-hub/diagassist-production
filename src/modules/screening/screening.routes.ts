@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
 import type { Express } from "express";
 import type { Server } from "http";
 import { WebSocketServer } from "ws";
@@ -7,7 +8,22 @@ import { getGeminiKeys } from "../../utils/geminiKeys";
 
 const sessions = new Map<string, any>();
 const clients = new Map<string, Set<any>>();
-const attempts = new Map<string, number>();
+// Essais de code d'appairage ratés PAR SESSION (et non par tablette : un attaquant changerait de deviceId).
+// Au-delà de MAX_PAIRING_FAILURES, la session refuse tout nouvel appairage (une nouvelle session est à créer).
+const attempts = new Map<string, { count: number; firstAt: number }>();
+const MAX_PAIRING_FAILURES = 5;
+const PAIRING_FAILURE_WINDOW_MS = 30 * 60 * 1000;
+const SESSION_TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of attempts) if (now - v.firstAt > PAIRING_FAILURE_WINDOW_MS) attempts.delete(k);
+}, 5 * 60 * 1000).unref();
+
+function safeEqualStr(a: string, b: string): boolean {
+  const ha = crypto.createHash("sha256").update(a).digest();
+  const hb = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
 const PAIRING_TTL = 30 * 60 * 1000;
 const SESSION_TTL = 60 * 60 * 1000;
 const MAX_FRAME_BYTES = 2_500_000;
@@ -285,7 +301,14 @@ export function registerScreening(
       console.log(`[SCREENING][DB] ${sessions.size} session(s) rechargée(s).`);
     }).catch((err: any) => console.error("[SCREENING][DB] chargement échoué:", err.message));
   }
-  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES + 100_000 });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_FRAME_BYTES + 100_000,
+    handleProtocols: (protocols: Set<string>) => {
+      for (const p of protocols) if (p.startsWith("auth.")) return p;
+      return false;
+    },
+  });
 
   app.post("/api/screening/sessions", deps.requireAuth, async (req: any, res) => {
     if (deps.getEffectivePlan(req.session.phone) !== "premium") {
@@ -330,7 +353,18 @@ export function registerScreening(
     });
   });
 
-  app.post("/api/screening/pair-by-code", async (req: any, res) => {
+  // Route publique : un attaquant pourrait énumérer les 1 000 000 de codes à 6 chiffres. Limite par IP.
+  const pairByCodeLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    // Seuls les échecs comptent : derrière un opérateur mobile, plusieurs tablettes partagent une IP.
+    skipSuccessfulRequests: true,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de tentatives. Réessayez dans quelques minutes." },
+  });
+
+  app.post("/api/screening/pair-by-code", pairByCodeLimiter, async (req: any, res) => {
     const pairingCode = String(req.body?.pairingCode || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(pairingCode)) {
       return res.status(400).json({ success: false, message: "Code de connexion invalide." });
@@ -649,8 +683,19 @@ Ne fabrique aucune donnée absente de l'image.`,
       return;
     }
 
-    const token = url.searchParams.get("token") || "";
-    const auth = deps.sessions.get(token);
+    // Le jeton voyage de préférence dans le sous-protocole "auth.<token>" (pas dans l'URL, qui est
+    // journalisée par les proxys) ; le paramètre ?token= reste accepté pour les anciens clients.
+    const protoToken = String(request.headers["sec-websocket-protocol"] || "")
+      .split(",").map((x) => x.trim()).find((x) => x.startsWith("auth."))?.slice(5);
+    const token = protoToken || url.searchParams.get("token") || "";
+    let auth = deps.sessions.get(token);
+    // Session expirée (30 jours) : traitée comme anonyme, donc refusée pour les rôles authentifiés.
+    if (auth && Date.now() - auth.createdAt > SESSION_TOKEN_MAX_AGE_MS) auth = undefined;
+    if (token && !auth) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
 
     // Controller/coach connections use the normal authenticated session token.
     // Technician tablets may connect without a bearer token because the QR carries only
@@ -707,13 +752,17 @@ Ne fabrique aucune donnée absente de l'image.`,
               return ws.send(JSON.stringify({ type: "error", message: "Code d’appairage expiré. Créez une nouvelle session." }));
             }
             if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
-            const key = s.id + ":" + (ws._phone || deviceId);
-            if (m.pairingCode !== s.pairingCode) {
-              const n = (attempts.get(key) || 0) + 1;
-              attempts.set(key, n);
-              if (n >= 3) return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives. Créez une nouvelle session." }));
+            const key = s.id;
+            const rec = attempts.get(key);
+            const failures = rec && Date.now() - rec.firstAt <= PAIRING_FAILURE_WINDOW_MS ? rec.count : 0;
+            if (failures >= MAX_PAIRING_FAILURES) {
+              return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives. Créez une nouvelle session." }));
+            }
+            if (typeof m.pairingCode !== "string" || !safeEqualStr(m.pairingCode, String(s.pairingCode))) {
+              attempts.set(key, { count: failures + 1, firstAt: failures > 0 && rec ? rec.firstAt : Date.now() });
               return ws.send(JSON.stringify({ type: "error", message: "Code incorrect." }));
             }
+            attempts.delete(key);
             if (s.technicianDeviceId && s.technicianDeviceId !== deviceId) return ws.send(JSON.stringify({ type: "error", message: "Cette session est déjà liée à une autre tablette." }));
             if (s.technicianDeviceId !== deviceId) {
               s.technicianDeviceId = deviceId;

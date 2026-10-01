@@ -45,7 +45,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
     const connect=()=>{
       if(stopped||sessionEndedLocal)return;
       const protocol=location.protocol==="https:"?"wss":"ws";
-      const ws=new WebSocket(protocol+"://"+location.host+"/api/screening/stream?token="+encodeURIComponent(token));
+      const ws=token?new WebSocket(protocol+"://"+location.host+"/api/screening/stream",["auth."+token]):new WebSocket(protocol+"://"+location.host+"/api/screening/stream");
       wsRef.current=ws;
       ws.onopen=()=>{
         reconnectAttempt=0;

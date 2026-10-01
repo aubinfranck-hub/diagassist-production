@@ -5589,7 +5589,7 @@ Directives pour ce tour :
         .split(",").map((x) => x.trim()).find((x) => x.startsWith("auth."))?.slice(5);
       const token = protoToken || searchParams.get("token") || "";
       const session = sessions.get(token);
-      if (!token || !session) {
+      if (!token || !session || Date.now() - session.createdAt > SESSION_TTL_MS) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
