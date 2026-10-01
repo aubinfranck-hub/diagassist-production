@@ -542,8 +542,8 @@ export default function IntegratedVoiceController({
       
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const authToken = localStorage.getItem("auth_session_token") || "";
-      const wsUrl = `${protocol}//${window.location.host}/api/live-ws?token=${encodeURIComponent(authToken)}`;
-      const ws = new WebSocket(wsUrl);
+      const wsUrl = `${protocol}//${window.location.host}/api/live-ws`;
+      const ws = new WebSocket(wsUrl, [`auth.${authToken}`]);
       wsRef.current = ws;
       
       ws.onopen = () => {

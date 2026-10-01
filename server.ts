@@ -289,6 +289,12 @@ async function initDatabase(): Promise<void> {
       expires_at BIGINT NOT NULL,
       PRIMARY KEY (kind, key)
     );
+    CREATE TABLE IF NOT EXISTS live_usage (
+      phone TEXT NOT NULL,
+      day TEXT NOT NULL,
+      used_ms BIGINT NOT NULL DEFAULT 0,
+      PRIMARY KEY (phone, day)
+    );
     CREATE TABLE IF NOT EXISTS connection_history (
       id SERIAL PRIMARY KEY,
       phone TEXT NOT NULL,
@@ -5544,7 +5550,30 @@ Directives pour ce tour :
   };
   const addLiveUsage = (phone: string, ms: number) => {
     if (!phone || ms <= 0) return;
-    liveUsage.set(phone, { day: todayKey(), usedMs: getLiveUsedMs(phone) + ms });
+    const day = todayKey();
+    liveUsage.set(phone, { day, usedMs: getLiveUsedMs(phone) + ms });
+    // Persisté : un redémarrage du serveur ne remet plus le compteur à zéro.
+    if (dbPool) {
+      dbPool.query(
+        `INSERT INTO live_usage (phone, day, used_ms) VALUES ($1, $2, $3)
+         ON CONFLICT (phone, day) DO UPDATE SET used_ms = live_usage.used_ms + EXCLUDED.used_ms`,
+        [phone, day, Math.round(ms)]
+      ).catch((err: any) => console.warn("[LIVE] usage non enregistré:", err?.message || err));
+    }
+  };
+  // Recharge l'usage du jour depuis la base (une fois par numéro et par jour et par processus).
+  const liveUsageHydrated = new Map<string, string>();
+  const hydrateLiveUsage = async (phone: string) => {
+    const day = todayKey();
+    if (!dbPool || !phone || liveUsageHydrated.get(phone) === day) return;
+    try {
+      const r = await dbPool.query("SELECT used_ms FROM live_usage WHERE phone = $1 AND day = $2", [phone, day]);
+      const dbMs = r.rows[0] ? Number(r.rows[0].used_ms) : 0;
+      if (dbMs > getLiveUsedMs(phone)) liveUsage.set(phone, { day, usedMs: dbMs });
+      liveUsageHydrated.set(phone, day);
+    } catch (err: any) {
+      console.warn("[LIVE] lecture usage impossible:", err?.message || err);
+    }
   };
 
   // Ouvre la session Gemini Live ; si la clé échoue (quota, clé invalide) et qu'une autre clé existe,
@@ -5579,15 +5608,15 @@ Directives pour ce tour :
     },
   });
 
-  server.on("upgrade", (request, socket, head) => {
-    const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
+  server.on("upgrade", async (request, socket, head) => {
+    const { pathname } = new URL(request.url || "", `http://${request.headers.host}`);
     if (pathname === "/api/live-ws") {
       // FAILLE CORRIGÉE : ce endpoint WebSocket (assistant vocal live via Gemini) n'exigeait
       // aucune authentification — n'importe qui pouvait s'y connecter directement et consommer
       // l'API Gemini à volonté, sans compte, sans forfait, sans limite, aux frais de l'opérateur.
       const protoToken = String(request.headers["sec-websocket-protocol"] || "")
         .split(",").map((x) => x.trim()).find((x) => x.startsWith("auth."))?.slice(5);
-      const token = protoToken || searchParams.get("token") || "";
+      const token = protoToken || "";
       const session = sessions.get(token);
       if (!token || !session || Date.now() - session.createdAt > SESSION_TTL_MS) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
@@ -5601,6 +5630,7 @@ Directives pour ce tour :
         return;
       }
       const dailyCap = LIVE_DAILY_MS[effectivePlan] ?? 0;
+      await hydrateLiveUsage(session.phone);
       if (getLiveUsedMs(session.phone) >= dailyCap) {
         socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
         socket.destroy();
@@ -5645,6 +5675,21 @@ Directives pour ce tour :
       try { clientWs.send(JSON.stringify({ type: "limit", message: "Durée maximale de l'appel atteinte pour aujourd'hui ou pour cette session." })); clientWs.close(4008, "limit"); } catch {}
     }, Math.min(LIVE_MAX_SESSION_MS, remainingBudget));
 
+    // Décompte du temps toutes les 30 s (et non plus seulement à la fermeture) : deux appels simultanés
+    // ou une coupure brutale du serveur ne contournent plus le plafond quotidien.
+    let countedUntil = connStartedAt;
+    const flushUsage = () => {
+      const now = Date.now();
+      addLiveUsage(connPhone, now - countedUntil);
+      countedUntil = now;
+    };
+    const usageTimer = setInterval(() => {
+      flushUsage();
+      if (getLiveUsedMs(connPhone) >= (LIVE_DAILY_MS[connPlan] ?? 0)) {
+        try { clientWs.send(JSON.stringify({ type: "limit", message: "Durée maximale de l'appel atteinte pour aujourd'hui." })); clientWs.close(4008, "limit"); } catch {}
+      }
+    }, 30_000);
+
     // Ping/pong : détecte les connexions mortes (proxy, réseau mobile).
     let isAlive = true;
     clientWs.on("pong", () => { isAlive = true; });
@@ -5678,8 +5723,14 @@ RAPPEL FINAL (MODE VOCAL, NON NÉGOCIABLE) : deux phrases maximum. Jamais de "Bo
     const liveAgentSessionId = crypto.randomBytes(12).toString("hex");
     let liveAgentState: LiveAgentState | null = null;
 
+    // Débit maximal de messages par seconde (audio, images, texte) : au-delà, les messages sont ignorés.
+    let msgWindowAt = Date.now();
+    let msgInWindow = 0;
     clientWs.on("message", async (data) => {
       try {
+        const nowMs = Date.now();
+        if (nowMs - msgWindowAt >= 1000) { msgWindowAt = nowMs; msgInWindow = 0; }
+        if (++msgInWindow > 100) return;
         const message = JSON.parse(data.toString());
 
         if (message.type === "start") {
@@ -6142,11 +6193,15 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             });
           }
         } else if (message.type === "image" || message.type === "video" || message.type === "media") {
-          if (geminiSession) {
+          const liveMime = String(message.mimeType || "image/jpeg").toLowerCase();
+          const liveB64 = message.data || message.image;
+          if (geminiSession && (!["image/jpeg", "image/png", "image/webp"].includes(liveMime) || typeof liveB64 !== "string" || liveB64.length > 6_000_000)) {
+            clientWs.send(JSON.stringify({ type: "error", message: "Photo non prise en charge (JPEG, PNG ou WebP, taille limitée)." }));
+          } else if (geminiSession) {
             console.log("[WebSocket] Sending realtime media/image input to Gemini Live session via sendRealtimeInput...");
             try {
               geminiSession.sendRealtimeInput({
-                video: { data: message.data || message.image, mimeType: message.mimeType || "image/jpeg" }
+                video: { data: liveB64, mimeType: liveMime }
               });
               clientWs.send(JSON.stringify({ type: "mediaAck", status: "ok", message: "Photo transmise à Gemini Live." }));
             } catch (err: any) {
@@ -6228,12 +6283,13 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
       console.log("[WebSocket] Client disconnected from real-time voice bridge.");
       isClosed = true;
       clearTimeout(limitTimer);
+      clearInterval(usageTimer);
       clearInterval(heartbeat);
       mySet.delete(clientWs);
       if (mySet.size === 0) liveConnections.delete(connPhone);
       if (!usageCounted) {
         usageCounted = true;
-        addLiveUsage(connPhone, Date.now() - connStartedAt);
+        flushUsage();
       }
       if (geminiSession) {
         try {

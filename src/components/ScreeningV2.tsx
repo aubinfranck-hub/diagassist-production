@@ -29,6 +29,7 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
   const [pilotLog,setPilotLog]=useState<string[]>([]);
   const [pilotDone,setPilotDone]=useState<{summary:string;dtcs:string[]}|null>(null);
   const [pilotBusy,setPilotBusy]=useState(false);
+  const [pilotConfirm,setPilotConfirm]=useState<{label:string;reason:string}|null>(null);
   const peerRef=useRef<RTCPeerConnection|null>(null);
   const voiceStreamRef=useRef<MediaStream|null>(null);
   const voiceAudioRef=useRef<HTMLAudioElement|null>(null);
@@ -73,9 +74,10 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
               onSessionEnd?.();
             }
           }
-          if(m.type==="pilot_status"){setAutoPilot(m.active);}
+          if(m.type==="pilot_status"){setAutoPilot(m.active);if(!m.active)setPilotConfirm(null);}
+          if(m.type==="pilot_confirm"){setPilotConfirm({label:String(m.label||""),reason:String(m.reason||"")});}
           if(m.type==="pilot_action"){setPilotLog(prev=>[...prev.slice(-49), m.log||`[${m.step}] ${m.tool} — ${m.reason}`]);}
-          if(m.type==="pilot_done"){setAutoPilot(false);setPilotBusy(false);setPilotDone({summary:m.summary||"",dtcs:m.dtcs||[]});setStatus("Autopilot terminé.");}
+          if(m.type==="pilot_done"){setAutoPilot(false);setPilotConfirm(null);setPilotBusy(false);setPilotDone({summary:m.summary||"",dtcs:m.dtcs||[]});setStatus("Autopilot terminé.");}
           if(m.type==="human_coach_requested"){setHumanCoachRequested(true);setStatus("Coach humain demandé.");}
           if(m.type==="session_ended"){
             sessionEndedLocal=true;
@@ -185,6 +187,19 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
 
   useEffect(()=>()=>endVoice(false),[]);
 
+  const answerPilotConfirm=async(approve:boolean)=>{
+    setPilotConfirm(null);
+    try{
+      const res=await fetch("/api/screening/sessions/"+encodeURIComponent(sessionId)+"/autopilot/confirm",{
+        method:"POST",
+        headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},
+        body:JSON.stringify({approve})
+      });
+      const data=await res.json();
+      if(!res.ok||!data.success)throw new Error(data.message||"Impossible.");
+    }catch(e:any){setStatus(e.message||"Erreur validation autopilot.");}
+  };
+
   const toggleAutoPilot=async(enable:boolean)=>{
     if(sessionEnded||pilotBusy)return;
     setPilotBusy(true);
@@ -274,6 +289,14 @@ export default function ScreeningV2({ sessionId, pairingCode, role, onSessionEnd
           : <button onClick={()=>toggleAutoPilot(true)} disabled={pilotBusy||!connected} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-black">▶ Démarrer</button>
         }
       </div>
+
+      {pilotConfirm&&<div className="rounded-2xl border border-amber-500/40 bg-amber-950/30 p-3 space-y-2">
+        <div className="text-xs font-black uppercase tracking-widest text-amber-300">Validation requise</div>
+        <p className="text-sm text-slate-200">L'autopilote veut appuyer sur « {pilotConfirm.label} ».</p>
+        {role!=="coach"
+          ?<div className="flex gap-2"><button onClick={()=>answerPilotConfirm(true)} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-black">Autoriser</button><button onClick={()=>answerPilotConfirm(false)} className="px-3 py-2 rounded-lg bg-slate-700 text-white text-xs font-black">Refuser</button></div>
+          :<p className="text-[10px] text-slate-400">En attente du technicien.</p>}
+      </div>}
 
       <div className="flex flex-wrap gap-1.5">
         <button onClick={()=>command("request_screen")} className="px-3 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold">Actualiser</button>
