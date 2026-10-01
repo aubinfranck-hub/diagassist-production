@@ -319,8 +319,9 @@ export function registerJekoPayments(
       return res.status(200).end();
     }
     const webhookAmount = Number(body?.amount?.amount);
-    // Montant absent ou illisible : on refuse (avant, le contrôle était simplement sauté).
-    if (!Number.isFinite(webhookAmount) || webhookAmount !== record.amountCents) {
+    // Si Jèko envoie un montant, il doit correspondre ; s'il n'en envoie pas, on s'appuie sur la
+    // signature HMAC, la référence et l'id Jèko (le montant attendu est celui enregistré à la création).
+    if (Number.isFinite(webhookAmount) && webhookAmount !== record.amountCents) {
       console.warn(`[JEKO][Webhook] Montant différent pour ${reference} : reçu=${webhookAmount}, attendu=${record.amountCents}.`);
       return res.status(200).end();
     }
