@@ -40,7 +40,6 @@ function hpWebNavViaClient(clientWs: any, action: string, args: Record<string, u
 dotenv.config();
 
 // A temporary server-side storage for active OTPs (expires in 10 minutes)
-const otpStorage = new Map<string, { code: string; expiresAt: number }>();
 
 // Sessions actives : token -> { phone, plan, createdAt }
 const sessions = new Map<string, { phone: string; plan: string; createdAt: number }>();
@@ -97,13 +96,6 @@ const otpAttempts = new Map<string, { count: number; windowStart: number }>();
 
 // Captcha simple (question arithmétique) pour la création de compte directe, sans dépendance
 // à un service SMS/WhatsApp externe. À usage unique, expire après 10 minutes.
-const captchaStorage = new Map<string, { answer: number; expiresAt: number }>();
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, entry] of captchaStorage) {
-    if (now > entry.expiresAt) captchaStorage.delete(id);
-  }
-}, 5 * 60 * 1000).unref();
 
 // --- Forfait persistant PAR NUMÉRO DE TÉLÉPHONE (et non par session) ---
 // BUG CORRIGÉ : avant, le plan était stocké uniquement dans la session en mémoire et
@@ -184,9 +176,77 @@ function createSession(phone: string): string {
 // au démarrage — les Maps en mémoire restent utilisées pour des lectures instantanées partout
 // ailleurs dans le code (aucun autre changement nécessaire), mais chaque écriture est aussi
 // répercutée dans la base pour survivre aux redémarrages.
+// TLS vers Postgres : par défaut le chiffrement est actif sans vérification du certificat (comportement
+// historique, compatible Render). Pour vérifier le certificat serveur, définir DATABASE_SSL_CA (PEM de
+// l'autorité) ; pour une base locale sans TLS, DATABASE_SSL=off.
+function buildDbSsl(): false | { rejectUnauthorized: boolean; ca?: string } {
+  if (process.env.DATABASE_SSL === "off") return false;
+  const ca = process.env.DATABASE_SSL_CA?.replace(/\\n/g, "\n");
+  return ca ? { rejectUnauthorized: true, ca } : { rejectUnauthorized: false };
+}
 const dbPool = process.env.DATABASE_URL
-  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: buildDbSsl() })
   : null;
+
+// Stockage de codes à durée de vie courte (OTP, captcha, réinitialisation de mot de passe) :
+// cache mémoire + écriture en base (table auth_codes), pour survivre à un redémarrage ou à une
+// seconde instance. Sans base (dev local), seul le cache mémoire est utilisé.
+class ExpiringCodeStore<T extends { expiresAt: number }> {
+  private mem = new Map<string, T>();
+  constructor(private kind: string) {}
+
+  async get(key: string): Promise<T | undefined> {
+    const cached = this.mem.get(key);
+    if (cached) return cached;
+    if (!dbPool) return undefined;
+    try {
+      const r = await dbPool.query("SELECT payload FROM auth_codes WHERE kind = $1 AND key = $2", [this.kind, key]);
+      const payload = r.rows[0]?.payload as T | undefined;
+      if (payload) this.mem.set(key, payload);
+      return payload;
+    } catch (err: any) {
+      console.error(`[DB] Lecture auth_codes (${this.kind}) échouée:`, err.message);
+      return undefined;
+    }
+  }
+
+  async set(key: string, value: T): Promise<void> {
+    this.mem.set(key, value);
+    if (!dbPool) return;
+    try {
+      await dbPool.query(
+        `INSERT INTO auth_codes (kind, key, payload, expires_at) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (kind, key) DO UPDATE SET payload = $3, expires_at = $4`,
+        [this.kind, key, JSON.stringify(value), value.expiresAt]
+      );
+    } catch (err: any) {
+      console.error(`[DB] Écriture auth_codes (${this.kind}) échouée:`, err.message);
+    }
+  }
+
+  async delete(key: string): Promise<void> {
+    this.mem.delete(key);
+    if (!dbPool) return;
+    try {
+      await dbPool.query("DELETE FROM auth_codes WHERE kind = $1 AND key = $2", [this.kind, key]);
+    } catch (err: any) {
+      console.error(`[DB] Suppression auth_codes (${this.kind}) échouée:`, err.message);
+    }
+  }
+
+  async purgeExpired(now: number): Promise<void> {
+    for (const [k, v] of this.mem) if (now > v.expiresAt) this.mem.delete(k);
+    if (!dbPool) return;
+    await dbPool.query("DELETE FROM auth_codes WHERE kind = $1 AND expires_at < $2", [this.kind, now]).catch(() => {});
+  }
+}
+
+// Code OTP en attente (10 min), par numéro complet
+const otpStorage = new ExpiringCodeStore<{ code: string; expiresAt: number }>("otp");
+// Captcha arithmétique à usage unique (10 min)
+const captchaStorage = new ExpiringCodeStore<{ answer: number; expiresAt: number }>("captcha");
+// Code de réinitialisation par e-mail (15 min, 5 essais)
+const passwordResetCodes = new ExpiringCodeStore<{ code: string; phone: string; expiresAt: number; attempts: number }>("reset");
 
 async function initDatabase(): Promise<void> {
   if (!dbPool) {
@@ -221,6 +281,13 @@ async function initDatabase(): Promise<void> {
       phone TEXT NOT NULL,
       plan TEXT NOT NULL,
       created_at BIGINT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_codes (
+      kind TEXT NOT NULL,
+      key TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      expires_at BIGINT NOT NULL,
+      PRIMARY KEY (kind, key)
     );
     CREATE TABLE IF NOT EXISTS connection_history (
       id SERIAL PRIMARY KEY,
@@ -770,7 +837,6 @@ function seedAdminAccountIfNeeded(): void {
 
 // --- Récupération de mot de passe par email (SMTP Gmail) ---
 // Codes de réinitialisation : email -> { code, phone, expiresAt }
-const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number; attempts: number }>();
 
 function getEmailTransporter() {
   if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return null;
@@ -2296,8 +2362,30 @@ async function startServer() {
   app.set("trust proxy", 1);
 
   // Sécurité HTTP standard (headers)
+  // CSP appliquée en production uniquement (le serveur Vite de dev injecte des scripts inline).
+  // Le front compilé n'utilise que des scripts du même domaine ; styles inline (Tailwind, animations)
+  // et polices Google autorisés ; WebSocket Live/Screening sur le même domaine.
   app.use(helmet({
-    contentSecurityPolicy: false, // désactivé pour ne pas casser Vite en dev ; à durcir en prod si besoin
+    contentSecurityPolicy: process.env.NODE_ENV === "production"
+      ? {
+          useDefaults: true,
+          directives: {
+            "default-src": ["'self'"],
+            "script-src": ["'self'"],
+            "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
+            "img-src": ["'self'", "data:", "blob:", "https:"],
+            "media-src": ["'self'", "data:", "blob:", "https:"],
+            "connect-src": ["'self'", "ws:", "wss:"],
+            "frame-src": ["https://www.google.com"],
+            "worker-src": ["'self'", "blob:"],
+            "object-src": ["'none'"],
+            "base-uri": ["'self'"],
+            "form-action": ["'self'"],
+            "frame-ancestors": ["'self'"],
+          },
+        }
+      : false,
     crossOriginEmbedderPolicy: false,
   }));
 
@@ -3262,7 +3350,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const otpCode = randomSixDigitCode();
 
       // Store in memory with a 10 minutes expiry limit
-      otpStorage.set(fullPhone, {
+      await otpStorage.set(fullPhone, {
         code: otpCode,
         expiresAt: Date.now() + 10 * 60 * 1000,
       });
@@ -3362,7 +3450,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         });
       }
  
-      const stored = otpStorage.get(fullPhone);
+      const stored = await otpStorage.get(fullPhone);
       if (!stored) {
         attempts.count += 1;
         otpAttempts.set(fullPhone, attempts);
@@ -3370,7 +3458,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
  
       if (Date.now() > stored.expiresAt) {
-        otpStorage.delete(fullPhone);
+        await otpStorage.delete(fullPhone);
         return res.status(400).json({ success: false, message: "Le code a expiré. Veuillez en demander un nouveau." });
       }
  
@@ -3381,7 +3469,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
  
       // Consume OTP
-      otpStorage.delete(fullPhone);
+      await otpStorage.delete(fullPhone);
       otpAttempts.delete(fullPhone);
 
       if (password) {
@@ -3649,7 +3737,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
 
     const code = randomSixDigitCode();
-    passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000, attempts: 0 });
+    await passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000, attempts: 0 });
 
     try {
       await transporter.sendMail({
@@ -3666,7 +3754,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route: réinitialisation effective du mot de passe avec le code reçu par email
-  app.post("/api/auth/reset-password", authLimiter, (req, res) => {
+  app.post("/api/auth/reset-password", authLimiter, async (req, res) => {
     const { email, code, newPassword } = req.body;
     if (!email || !code || !newPassword) {
       return res.status(400).json({ success: false, message: "Email, code et nouveau mot de passe requis." });
@@ -3675,23 +3763,24 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(400).json({ success: false, message: "Le nouveau mot de passe doit faire au moins 6 caractères." });
     }
     const normalized = email.trim().toLowerCase();
-    const record = passwordResetCodes.get(normalized);
+    const record = await passwordResetCodes.get(normalized);
     if (!record) {
       return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
     }
     if (record.code !== String(code).trim()) {
       // 5 essais maximum par code : au-delà, le code est invalidé (anti brute-force des 900 000 codes).
       record.attempts += 1;
-      if (record.attempts >= 5) passwordResetCodes.delete(normalized);
+      if (record.attempts >= 5) await passwordResetCodes.delete(normalized);
+      else await passwordResetCodes.set(normalized, record);
       return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
     }
     if (Date.now() > record.expiresAt) {
-      passwordResetCodes.delete(normalized);
+      await passwordResetCodes.delete(normalized);
       return res.status(400).json({ success: false, message: "Ce code a expiré. Veuillez en demander un nouveau." });
     }
     const existing = userAccounts.get(record.phone);
     createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
-    passwordResetCodes.delete(normalized);
+    await passwordResetCodes.delete(normalized);
     revokeSessionsForPhone(record.phone);
     res.json({ success: true, message: "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
   });
@@ -4786,18 +4875,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route : génère une question captcha simple (anti-bot) pour la création de compte.
   // Aucune dépendance à un service externe (reCAPTCHA, Twilio...) : juste une question
   // arithmétique dont la réponse est vérifiée côté serveur.
-  app.post("/api/auth/captcha", authLimiter, (req, res) => {
+  app.post("/api/auth/captcha", authLimiter, async (req, res) => {
     const a = Math.floor(Math.random() * 8) + 2; // 2-9
     const b = Math.floor(Math.random() * 8) + 2; // 2-9
     const captchaId = crypto.randomBytes(16).toString("hex");
-    captchaStorage.set(captchaId, { answer: a + b, expiresAt: Date.now() + 10 * 60 * 1000 });
+    await captchaStorage.set(captchaId, { answer: a + b, expiresAt: Date.now() + 10 * 60 * 1000 });
     res.json({ success: true, captchaId, question: `Combien font ${a} + ${b} ?` });
   });
 
   // API Route : création de compte directe (numéro + mot de passe), protégée par le captcha
   // ci-dessus. Ne dépend d'aucun envoi SMS/WhatsApp — évite les pannes liées à un fournisseur
   // OTP mal configuré, tout en gardant une protection anti-bot minimale.
-  app.post("/api/auth/register", authLimiter, (req, res) => {
+  app.post("/api/auth/register", authLimiter, async (req, res) => {
     const { phoneNumber, countryCode, password, captchaId, captchaAnswer, name } = req.body;
     if (!phoneNumber || !password || !captchaId || captchaAnswer === undefined) {
       return res.status(400).json({ success: false, message: "Données manquantes pour créer le compte." });
@@ -4806,18 +4895,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
     }
 
-    const captcha = captchaStorage.get(captchaId);
+    const captcha = await captchaStorage.get(captchaId);
     if (!captcha) {
       return res.status(400).json({ success: false, message: "Captcha expiré ou invalide. Veuillez réessayer." });
     }
     if (Date.now() > captcha.expiresAt) {
-      captchaStorage.delete(captchaId);
+      await captchaStorage.delete(captchaId);
       return res.status(400).json({ success: false, message: "Captcha expiré. Veuillez réessayer." });
     }
     if (Number(captchaAnswer) !== captcha.answer) {
       return res.status(400).json({ success: false, message: "Réponse incorrecte. Veuillez réessayer." });
     }
-    captchaStorage.delete(captchaId); // usage unique
+    await captchaStorage.delete(captchaId); // usage unique
 
     const cleanNumber = String(phoneNumber).replace(/\s+/g, "");
     if (cleanNumber.length < 8) {
@@ -4922,14 +5011,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         loopStateStore.delete(id);
       }
     }
-    for (const [email, entry] of passwordResetCodes) {
-      if (now > entry.expiresAt) passwordResetCodes.delete(email);
-    }
-    for (const [phone, entry] of otpStorage) {
-      if (now > entry.expiresAt) {
-        otpStorage.delete(phone);
-      }
-    }
+    otpStorage.purgeExpired(now);
+    captchaStorage.purgeExpired(now);
+    passwordResetCodes.purgeExpired(now);
     for (const [phone, entry] of otpAttempts) {
       if (now - entry.windowStart > 60 * 60 * 1000) {
         otpAttempts.delete(phone);
