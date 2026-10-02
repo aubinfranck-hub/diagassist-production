@@ -4986,7 +4986,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     // Anti brute-force par numéro (indépendant du rate-limit global par IP)
     const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
     const MAX_ATTEMPTS_PER_PHONE = 8;
-    const attempts = loginAttempts.get(fullPhone) || { count: 0, windowStart: Date.now() };
+    // Clé numéro + IP : un tiers ne peut plus verrouiller le compte d'un autre depuis une autre IP.
+    const loginKey = `${fullPhone}|${req.ip}`;
+    const attempts = loginAttempts.get(loginKey) || { count: 0, windowStart: Date.now() };
     if (Date.now() - attempts.windowStart > ATTEMPT_WINDOW_MS) {
       attempts.count = 0;
       attempts.windowStart = Date.now();
@@ -4997,11 +4999,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
     if (!userAccounts.has(fullPhone) || !verifyAccountPassword(fullPhone, password)) {
       attempts.count += 1;
-      loginAttempts.set(fullPhone, attempts);
+      loginAttempts.set(loginKey, attempts);
       return res.status(401).json({ success: false, message: "Numéro ou mot de passe incorrect." });
     }
 
-    loginAttempts.delete(fullPhone);
+    loginAttempts.delete(loginKey);
 
     // SESSION UNIQUE : seuls les comptes admin peuvent être connectés sur plusieurs appareils.
     // Pour un client normal, toute nouvelle connexion déconnecte de force les sessions
@@ -5662,9 +5664,10 @@ Directives pour ce tour :
       // l'API Gemini à volonté, sans compte, sans forfait, sans limite, aux frais de l'opérateur.
       const protoToken = String(request.headers["sec-websocket-protocol"] || "")
         .split(",").map((x) => x.trim()).find((x) => x.startsWith("auth."))?.slice(5);
-      const token = protoToken || searchParams.get("token") || "";
-      const session = sessions.get(token);
-      if (!token || !session) {
+      // Token UNIQUEMENT via le sous-protocole : jamais dans l'URL (journaux de proxy).
+      const token = protoToken || "";
+      const session = token ? sessions.get(token) : undefined;
+      if (!token || !session || Date.now() - session.createdAt > SESSION_TTL_MS) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;

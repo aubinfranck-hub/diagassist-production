@@ -542,8 +542,8 @@ export default function IntegratedVoiceController({
       
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const authToken = localStorage.getItem("auth_session_token") || "";
-      const wsUrl = `${protocol}//${window.location.host}/api/live-ws?token=${encodeURIComponent(authToken)}`;
-      const ws = new WebSocket(wsUrl);
+      // Le token voyage dans le sous-protocole (pas dans l'URL, donc pas dans les journaux de proxy).
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/live-ws`, [`auth.${authToken}`]);
       wsRef.current = ws;
       
       ws.onopen = () => {

@@ -19,7 +19,7 @@ function useShopAuth() {
   const [checking, setChecking] = useState(true);
   useEffect(() => {
     const existingToken = localStorage.getItem("auth_session_token");
-    const manualCode = localStorage.getItem("shop_admin_code");
+    const manualCode = sessionStorage.getItem("shop_admin_code");
     (async () => {
       if (existingToken) {
         const candidate = { header: "Authorization", value: `Bearer ${existingToken}` };
@@ -30,13 +30,13 @@ function useShopAuth() {
         const candidate = { header: "x-admin-code", value: manualCode };
         const test = await fetch("/api/admin/shop/dashboard", { headers: { "x-admin-code": manualCode } }).then((r) => r.json()).catch(() => ({ success: false }));
         if (test.success) { setAuth(candidate); setChecking(false); return; }
-        localStorage.removeItem("shop_admin_code");
+        sessionStorage.removeItem("shop_admin_code");
       }
       setChecking(false);
     })();
   }, []);
-  const saveCode = (code: string) => { localStorage.setItem("shop_admin_code", code); setAuth({ header: "x-admin-code", value: code }); };
-  const clear = () => { localStorage.removeItem("shop_admin_code"); setAuth(null); };
+  const saveCode = (code: string) => { sessionStorage.setItem("shop_admin_code", code); setAuth({ header: "x-admin-code", value: code }); };
+  const clear = () => { sessionStorage.removeItem("shop_admin_code"); setAuth(null); };
   return { auth, checking, saveCode, clear };
 }
 

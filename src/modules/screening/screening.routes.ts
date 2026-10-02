@@ -301,7 +301,20 @@ export function registerScreening(
       console.log(`[SCREENING][DB] ${sessions.size} session(s) rechargée(s).`);
     }).catch((err: any) => console.error("[SCREENING][DB] chargement échoué:", err.message));
   }
-  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES + 100_000 });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_FRAME_BYTES + 100_000,
+    // Le token de session voyage dans le sous-protocole "auth.<token>" (jamais dans l'URL).
+    handleProtocols: (protocols: Set<string>) => {
+      for (const p of protocols) if (p.startsWith("auth.")) return p;
+      return false;
+    },
+  });
+  // Purge des sessions expirées (la Map ne se vidait que sur accès).
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, s] of sessions) if (now > s.expiresAt) { sessions.delete(id); clients.delete(id); }
+  }, 10 * 60 * 1000).unref();
 
   app.post("/api/screening/sessions", deps.requireAuth, async (req: any, res) => {
     if (deps.getEffectivePlan(req.session.phone) !== "premium") {
@@ -665,8 +678,9 @@ Ne fabrique aucune donnée absente de l'image.`,
       return;
     }
 
-    const token = url.searchParams.get("token") || "";
-    const auth = deps.sessions.get(token);
+    const protoToken = String(request.headers["sec-websocket-protocol"] || "")
+      .split(",").map((x) => x.trim()).find((x) => x.startsWith("auth."))?.slice(5) || "";
+    const auth = protoToken ? deps.sessions.get(protoToken) : undefined;
 
     // Controller/coach connections use the normal authenticated session token.
     // Technician tablets may connect without a bearer token because the QR carries only
