@@ -2504,6 +2504,14 @@ async function startServer() {
 
   // Limite les routes boutique publiques (commande/demande de pièce) sans authentification —
   // évite le spam/abus sur des endpoints ouverts à tous.
+  // Suivi de commande : le téléphone est le seul secret, on freine l'énumération.
+  const shopTrackLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de recherches. Veuillez réessayer dans quelques minutes." },
+  });
   const shopPublicLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 20,
@@ -4433,10 +4441,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // --- Public : suivi de commande par référence + téléphone ---
-  app.get("/api/shop/track", async (req, res) => {
+  app.get("/api/shop/track", shopTrackLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { ref, phone } = req.query as { ref?: string; phone?: string };
-    if (!phone) return res.status(400).json({ success: false, message: "Téléphone requis." });
+    if (typeof phone !== "string" || !phone || (ref !== undefined && typeof ref !== "string")) return res.status(400).json({ success: false, message: "Téléphone requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
 
     let query = "SELECT * FROM shop_orders WHERE customer_phone = $1";
@@ -4462,12 +4470,44 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, orders });
   });
 
+  // --- Webhook Twilio entrant : « STOP » désinscrit le numéro des relances WhatsApp ---
+  app.post("/api/shop/whatsapp/inbound", async (req, res) => {
+    const token = (process.env.TWILIO_AUTH_TOKEN || "").trim();
+    const baseUrl = (process.env.APP_URL || "").trim().replace(/\/$/, "");
+    const signature = req.headers["x-twilio-signature"];
+    if (!token || !baseUrl || typeof signature !== "string" ||
+        !twilio.validateRequest(token, signature, `${baseUrl}/api/shop/whatsapp/inbound`, req.body || {})) {
+      return res.status(403).send("Forbidden");
+    }
+    const from = String(req.body?.From || "").replace(/^whatsapp:/, "").replace(/[\s-]/g, "");
+    const text = String(req.body?.Body || "").trim().toUpperCase();
+    try {
+      if (dbPool && from && ["STOP", "ARRET", "ARRÊT", "DESINSCRIPTION", "UNSUBSCRIBE"].includes(text)) {
+        // Les numéros sont saisis sous plusieurs formes (0707…, +225 07…) : on compare les 10 derniers chiffres.
+        const tail = from.replace(/\D/g, "").slice(-10);
+        await dbPool.query("UPDATE shop_customers SET whatsapp_optout = true WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1", [tail]);
+        await dbPool.query("UPDATE shop_followups SET status = 'annulee', last_error = 'désinscription' WHERE RIGHT(REGEXP_REPLACE(customer_phone, '\\D', '', 'g'), 10) = $1 AND status = 'programmee'", [tail]);
+      }
+    } catch (err: any) {
+      console.error("[CRM WhatsApp] inbound:", err?.message || err);
+    }
+    res.type("text/xml").send("<Response></Response>");
+  });
+
   // --- Public : demande de pièce à l'étranger (avec carte grise) ---
   app.post("/api/shop/part-requests", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { phone, name, part_description, part_photo_base64, carte_grise_base64, extra_info, whatsapp_consent } = req.body;
     if (!phone || !part_description) return res.status(400).json({ success: false, message: "Téléphone et description de la pièce requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
+    // Images : data-URL JPEG/PNG/WebP de 5 Mo maximum (refuse javascript:, data:text/html, etc.).
+    const validImage = (v: any) => v == null || v === "" || (typeof v === "string" && v.length <= 7_000_000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(v));
+    if (!validImage(part_photo_base64) || !validImage(carte_grise_base64)) {
+      return res.status(400).json({ success: false, message: "Image invalide (JPEG, PNG ou WebP, 5 Mo maximum)." });
+    }
+    if (typeof part_description !== "string" || part_description.length > 2000 || (extra_info != null && (typeof extra_info !== "string" || extra_info.length > 2000))) {
+      return res.status(400).json({ success: false, message: "Description trop longue." });
+    }
 
     await upsertShopCustomer(cleanPhone, name, undefined, "pieces");
     const result = await dbPool.query(

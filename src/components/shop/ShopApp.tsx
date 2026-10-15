@@ -970,18 +970,20 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
 // ─── TRACKING ─────────────────────────────────────────────────────────────────
 function ShopTracking() {
   const [ref, setRef] = useState("");
+  const [phone, setPhone] = useState("");
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ref.trim()) return;
+    if (!phone.trim()) { setErr("Le numéro de téléphone de la commande est requis."); return; }
     setLoading(true); setErr(""); setOrder(null);
     try {
-      const data = await fetchJSON(`/api/shop/track?ref=${encodeURIComponent(ref.trim())}`);
-      if (data.order) setOrder(data.order);
-      else setErr("Aucune commande trouvée pour cette référence.");
+      const qs = `phone=${encodeURIComponent(phone.trim())}${ref.trim() ? `&ref=${encodeURIComponent(ref.trim())}` : ""}`;
+      const data = await fetchJSON(`/api/shop/track?${qs}`);
+      if (data.orders && data.orders.length > 0) setOrder(data.orders[0]);
+      else setErr("Aucune commande trouvée pour ces informations.");
     } catch { setErr("Erreur réseau. Réessayez."); }
     finally { setLoading(false); }
   };
@@ -997,10 +999,13 @@ function ShopTracking() {
         <div className="text-center space-y-2">
           <span className="text-xs font-black uppercase tracking-widest" style={{ color: C.red }}>Logistique DiagAssist</span>
           <h1 className="text-2xl sm:text-3xl font-black text-white">Suivi de commande</h1>
-          <p className="text-sm text-neutral-400">Entrez votre référence de commande (ex : DA-2026-000001) ou votre numéro de téléphone.</p>
+          <p className="text-sm text-neutral-400">Entrez le numéro de téléphone de la commande et, si vous l'avez, sa référence (ex : DA-2026-000001).</p>
         </div>
-        <form onSubmit={handleSearch} className="flex rounded-xl overflow-hidden border" style={{ borderColor: C.border }}>
-          <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Référence ou numéro de téléphone"
+        <form onSubmit={handleSearch} className="flex flex-col sm:flex-row rounded-xl overflow-hidden border" style={{ borderColor: C.border }}>
+          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Téléphone de la commande"
+            className="flex-1 px-4 py-3 text-sm text-white outline-none placeholder-neutral-500"
+            style={{ background: C.dark }} />
+          <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Référence (optionnel)"
             className="flex-1 px-4 py-3 text-sm text-white outline-none placeholder-neutral-500"
             style={{ background: C.dark }} />
           <button type="submit" disabled={loading}
@@ -1024,9 +1029,7 @@ function ShopTracking() {
               </span>
             </div>
             <div className="text-sm text-neutral-300 space-y-1">
-              <p><span className="font-bold text-white">Client :</span> {order.customer_name}</p>
-              <p><span className="font-bold text-white">Livraison :</span> {order.shipping_address}</p>
-              {order.items && <p><span className="font-bold text-white">Articles :</span> {order.items.length}</p>}
+              {order.items && order.items.map((i: any, k: number) => <p key={k}>{i.product_name} × {i.quantity}</p>)}
             </div>
             <a href={waLink(`Bonjour DiagAssist, suivi commande ${order.order_ref || order.id}. Quel est le statut de ma livraison ?`)}
               target="_blank" rel="noreferrer"
