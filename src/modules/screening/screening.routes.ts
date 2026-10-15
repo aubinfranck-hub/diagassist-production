@@ -2,6 +2,7 @@ import crypto from "crypto";
 import type { Express } from "express";
 import type { Server } from "http";
 import { WebSocketServer } from "ws";
+import rateLimit from "express-rate-limit";
 import { GoogleGenAI, Type } from "@google/genai";
 import { getGeminiKeys } from "../../utils/geminiKeys";
 
@@ -287,6 +288,14 @@ export function registerScreening(
   }
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES + 100_000 });
 
+  const pairLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de tentatives. Réessayez dans quelques minutes." },
+  });
+
   app.post("/api/screening/sessions", deps.requireAuth, async (req: any, res) => {
     if (deps.getEffectivePlan(req.session.phone) !== "premium") {
       return res.status(403).json({
@@ -330,7 +339,7 @@ export function registerScreening(
     });
   });
 
-  app.post("/api/screening/pair-by-code", async (req: any, res) => {
+  app.post("/api/screening/pair-by-code", pairLimiter, async (req: any, res) => {
     const pairingCode = String(req.body?.pairingCode || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(pairingCode)) {
       return res.status(400).json({ success: false, message: "Code de connexion invalide." });
@@ -707,7 +716,7 @@ Ne fabrique aucune donnée absente de l'image.`,
               return ws.send(JSON.stringify({ type: "error", message: "Code d’appairage expiré. Créez une nouvelle session." }));
             }
             if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
-            const key = s.id + ":" + (ws._phone || deviceId);
+            const key = s.id; // par session (pas par deviceId, choisi par l'appelant)
             if (m.pairingCode !== s.pairingCode) {
               const n = (attempts.get(key) || 0) + 1;
               attempts.set(key, n);
