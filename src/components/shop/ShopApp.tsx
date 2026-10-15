@@ -751,6 +751,7 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
     first_name: "", last_name: "", phone: "", email: "", address: "",
     city: "Abidjan", shipping_method: "abidjan", payment_method: "wave", notes: ""
   });
+  const [wa, setWa] = useState(false);
   const [loading, setLoading] = useState(false);
   const [orderRef, setOrderRef] = useState("");
   const [depositInfo, setDepositInfo] = useState<{ amount: number; days: number | null } | null>(null);
@@ -773,6 +774,7 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
           customer_name: `${form.first_name} ${form.last_name}`,
           customer_phone: form.phone,
           customer_email: form.email || undefined,
+          whatsapp_consent: wa,
           shipping_address: `${form.address}, ${form.city}`,
           shipping_method: form.shipping_method,
           payment_method: form.payment_method,
@@ -907,6 +909,11 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
                 className="w-full px-3 py-2 rounded-lg text-sm text-white outline-none resize-none"
                 style={{ background: C.dark, border: `1px solid ${C.border}` }} />
             </div>
+
+            <label className="flex items-start gap-2 text-xs text-neutral-400">
+              <input type="checkbox" checked={wa} onChange={(e) => setWa(e.target.checked)} className="mt-0.5" />
+              J'accepte de recevoir des relances WhatsApp sur ma commande (réponse STOP pour arrêter).
+            </label>
 
             <button onClick={() => { if (!form.first_name || !form.last_name || !form.phone) { setErr("Nom et téléphone obligatoires."); return; } setErr(""); setStep(2); }}
               className="w-full py-3 rounded-xl font-extrabold text-white text-sm" style={{ background: C.red }}>

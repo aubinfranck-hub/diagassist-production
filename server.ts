@@ -520,6 +520,8 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS order_ref TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
+      ALTER TABLE shop_customers ADD COLUMN IF NOT EXISTS whatsapp_consent_at TIMESTAMP;
+      ALTER TABLE shop_customers ADD COLUMN IF NOT EXISTS whatsapp_optout BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS related_order_ref TEXT;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'manual';
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
@@ -879,6 +881,20 @@ function revokeSessionsForPhone(phone: string, exceptToken?: string): void {
   }
 }
 
+// Express 4 n'intercepte pas les rejets des handlers async : on les renvoie en 500 au lieu de laisser le processus tomber.
+function asyncRoute(handler: (req: any, res: any) => Promise<any>) {
+  return (req: any, res: any, next: any) => {
+    handler(req, res).catch((err) => {
+      console.error("[route] erreur:", err?.message || err);
+      if (!res.headersSent) res.status(500).json({ success: false, message: "Erreur serveur." });
+    });
+  };
+}
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason instanceof Error ? reason.message : reason);
+});
+
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
@@ -918,6 +934,11 @@ function requireAdminAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
   const session = token ? sessions.get(token) : undefined;
+  if (session && Date.now() - session.createdAt > SESSION_TTL_MS) {
+    sessions.delete(token);
+    deleteSessionFromDb(token).catch(() => {});
+    return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  }
   if (session && userAccounts.get(session.phone)?.isAdmin) {
     return next();
   }
@@ -4069,41 +4090,41 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Routes (utilisateur connecté) : menus en cascade marque > modèle > génération > moteur
-  app.get("/api/vehicles/brands", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/brands", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, brands: [] });
     const { rows } = await dbPool.query("SELECT DISTINCT brand FROM vehicles ORDER BY brand ASC");
     res.json({ success: true, brands: rows.map((r) => r.brand) });
-  });
+  }));
 
-  app.get("/api/vehicles/models", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/models", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, models: [] });
-    const brand = req.query.brand as string;
-    if (!brand) return res.status(400).json({ success: false, message: "Marque requise." });
+    const brand = req.query.brand;
+    if (typeof brand !== "string" || !brand) return res.status(400).json({ success: false, message: "Marque requise." });
     const { rows } = await dbPool.query("SELECT DISTINCT model FROM vehicles WHERE brand = $1 ORDER BY model ASC", [brand]);
     res.json({ success: true, models: rows.map((r) => r.model) });
-  });
+  }));
 
-  app.get("/api/vehicles/generations", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/generations", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, generations: [] });
-    const { brand, model } = req.query as { brand?: string; model?: string };
-    if (!brand || !model) return res.status(400).json({ success: false, message: "Marque et modèle requis." });
+    const { brand, model } = req.query;
+    if (typeof brand !== "string" || typeof model !== "string" || !brand || !model) return res.status(400).json({ success: false, message: "Marque et modèle requis." });
     const { rows } = await dbPool.query(
       "SELECT DISTINCT generation, MIN(year_start) as year_start, MAX(year_stop) as year_stop, MAX(image_url) as image_url FROM vehicles WHERE brand = $1 AND model = $2 GROUP BY generation ORDER BY year_start DESC NULLS LAST",
       [brand, model]
     );
     res.json({ success: true, generations: rows });
-  });
+  }));
 
-  app.get("/api/vehicles/modifications", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/modifications", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, modifications: [] });
-    const { brand, model, generation } = req.query as { brand?: string; model?: string; generation?: string };
-    if (!brand || !model || !generation) return res.status(400).json({ success: false, message: "Marque, modèle et génération requis." });
+    const { brand, model, generation } = req.query;
+    if (typeof brand !== "string" || typeof model !== "string" || typeof generation !== "string" || !brand || !model || !generation) return res.status(400).json({ success: false, message: "Marque, modèle et génération requis." });
     const { rows } = await dbPool.query(
       "SELECT engine_code, engine_displacement, power_hp, fuel_system, cylinders, year_start, year_stop FROM vehicles WHERE brand = $1 AND model = $2 AND generation = $3 ORDER BY engine_displacement ASC",
       [brand, model, generation]
     );
     res.json({ success: true, modifications: rows });
-  });
+  }));
 
   // ============================================================
   // BOUTIQUE / CRM — section indépendante du diagnostic technique
@@ -4163,12 +4184,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     orderRef?: string;
     productName?: string;
     kind?: "order" | "part_request";
+    consent?: boolean;
   }) {
     if (!dbPool) return;
+    // Aucune relance commerciale sans consentement explicite du client (case cochée à la commande).
+    if (options.consent !== true) return;
+    await dbPool.query("UPDATE shop_customers SET whatsapp_consent_at = CURRENT_TIMESTAMP WHERE phone = $1 AND whatsapp_optout = false", [phone]);
     const kind = options.kind || "order";
     const baseMessage = kind === "part_request"
-      ? "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande de pièce. Souhaitez-vous toujours que nous poursuivions la recherche ?"
-      : `Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre commande${options.orderRef ? ` ${options.orderRef}` : ""}${options.productName ? ` (${options.productName})` : ""}. Souhaitez-vous confirmer votre besoin ?`;
+      ? "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande de pièce. Souhaitez-vous toujours que nous poursuivions la recherche ? Répondez STOP pour ne plus recevoir de messages."
+      : `Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre commande${options.orderRef ? ` ${options.orderRef}` : ""}${options.productName ? ` (${options.productName})` : ""}. Souhaitez-vous confirmer votre besoin ? Répondez STOP pour ne plus recevoir de messages.`;
 
     const delays = kind === "part_request"
       ? [{ days: 2, suffix: "Relance demande de pièce J+2" }]
@@ -4258,6 +4283,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
           if (request.rows[0]?.completed) continue;
         }
 
+        // Consentement obligatoire, désinscription respectée, 2 relances automatiques par numéro et par jour au plus.
+        const consent = await dbPool.query("SELECT whatsapp_consent_at, whatsapp_optout FROM shop_customers WHERE phone = $1", [followup.customer_phone]);
+        if (!consent.rows[0]?.whatsapp_consent_at || consent.rows[0]?.whatsapp_optout) {
+          await dbPool.query("UPDATE shop_followups SET status = 'annulee', last_error = 'pas de consentement' WHERE id = $1 AND status = 'programmee'", [followup.id]);
+          continue;
+        }
+        const sentToday = await dbPool.query(
+          "SELECT COUNT(*) FROM shop_followups WHERE customer_phone = $1 AND status = 'envoyee' AND sent_at >= CURRENT_DATE",
+          [followup.customer_phone]
+        );
+        if (Number(sentToday.rows[0].count) >= 2) continue;
+
         await dbPool.query(
           "UPDATE shop_followups SET attempts = attempts + 1 WHERE id = $1",
           [followup.id]
@@ -4289,23 +4326,23 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   app.post("/api/shop/orders", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { phone, name, city, product_id, quantity, notes } = req.body;
+    const { phone, name, city, product_id, quantity, notes, whatsapp_consent } = req.body;
     if (!phone || !product_id) return res.status(400).json({ success: false, message: "Téléphone et produit requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
 
-    const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [product_id]);
+    const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1 AND is_active IS NOT FALSE", [product_id]);
     if (productRes.rows.length === 0) return res.status(404).json({ success: false, message: "Produit introuvable." });
     const product = productRes.rows[0];
 
     await upsertShopCustomer(cleanPhone, name, city, "produit");
     const orderRef = await nextOrderRef();
-    const dep = depositFor(product, quantity || 1);
+    const dep = depositFor(product, cleanQty(quantity));
     const orderRes = await dbPool.query(
       `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes, deposit_fcfa, deposit_status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null, dep.amount, dep.status]
+      [cleanPhone, product_id, product.name, product.price_fcfa, cleanQty(quantity), orderRef, notes || null, dep.amount, dep.status]
     );
-    await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order" });
+    await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order", consent: whatsapp_consent === true });
     const days = product.lead_time_days ? Number(product.lead_time_days) : null;
     res.json({
       success: true,
@@ -4315,6 +4352,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // Acompte d'un produit sur commande : pourcentage du total de la ligne, verse en boutique.
+  // Quantité commandée : entier de 1 à 100 (refuse négatifs, décimaux et valeurs absurdes).
+  function cleanQty(q: any): number {
+    const n = Math.floor(Number(q));
+    return Number.isFinite(n) ? Math.min(100, Math.max(1, n)) : 1;
+  }
+
   function depositFor(product: any, quantity: number): { amount: number; status: "non_requis" | "en_attente" } {
     const pct = Number(product.deposit_pct || 0);
     const price = Number(product.price_fcfa || 0);
@@ -4348,7 +4391,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const city: string | undefined = body.city;
     const address: string | undefined = body.address ?? body.shipping_address;
     const items: { product_id: number; quantity: number }[] = body.items;
-    if (!phone || !Array.isArray(items) || items.length === 0) {
+    if (!phone || !Array.isArray(items) || items.length === 0 || items.length > 20) {
       return res.status(400).json({ success: false, message: "Téléphone et au moins un article requis." });
     }
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
@@ -4360,16 +4403,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     let depositTotal = 0;
     let leadDays: number | null = null;
     for (const item of items) {
-      const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [item.product_id]);
+      const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1 AND is_active IS NOT FALSE", [item.product_id]);
       if (productRes.rows.length === 0) continue; // ignore un produit devenu introuvable plutôt que d'annuler toute la commande
       const product = productRes.rows[0];
-      const dep = depositFor(product, item.quantity || 1);
+      const dep = depositFor(product, cleanQty(item.quantity));
       depositTotal += dep.amount;
       if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
       const orderRes = await dbPool.query(
         `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address, deposit_fcfa, deposit_status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null, dep.amount, dep.status]
+        [cleanPhone, item.product_id, product.name, product.price_fcfa, cleanQty(item.quantity), orderRef, city || null, address || null, dep.amount, dep.status]
       );
       createdIds.push(orderRes.rows[0].id);
     }
@@ -4380,6 +4423,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       orderRef,
       productName: firstProductName.rows[0]?.product_name_snapshot || undefined,
       kind: "order",
+      consent: body.whatsapp_consent === true,
     });
     res.json({
       success: true,
@@ -4421,7 +4465,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : demande de pièce à l'étranger (avec carte grise) ---
   app.post("/api/shop/part-requests", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { phone, name, part_description, part_photo_base64, carte_grise_base64, extra_info } = req.body;
+    const { phone, name, part_description, part_photo_base64, carte_grise_base64, extra_info, whatsapp_consent } = req.body;
     if (!phone || !part_description) return res.status(400).json({ success: false, message: "Téléphone et description de la pièce requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
 
@@ -4431,7 +4475,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
        VALUES ($1,$2,$3,$4,$5) RETURNING id`,
       [cleanPhone, part_description, part_photo_base64 || null, carte_grise_base64 || null, extra_info || null]
     );
-    await scheduleShopFollowups(cleanPhone, { kind: "part_request" });
+    await scheduleShopFollowups(cleanPhone, { kind: "part_request", consent: whatsapp_consent === true });
     res.json({ success: true, message: "Demande envoyée. Nous préparons une cotation sous environ 15 jours.", request_id: result.rows[0].id });
   });
 
