@@ -15,6 +15,7 @@ import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
+import { registerGuideRoutes } from "./src/modules/guide/guide.routes";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
 import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
 import { getGeminiKeys } from "./src/utils/geminiKeys";
@@ -2783,6 +2784,9 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       res.status(500).json({ success: false, message: "Erreur lors de la recherche technique. Veuillez réessayer." });
     }
   });
+
+  // Guide technique PDF par modèle de véhicule / équipement de diagnostic
+  registerGuideRoutes(app, { requireAuth, limiter: diagnoseLimiter, generate: (c, cfg) => generateContentWithFallbackAndRetry(c, cfg) });
 
   // API Route: Contextual follow-up chat
   app.post("/api/chat", requireAuth, async (req: any, res) => {

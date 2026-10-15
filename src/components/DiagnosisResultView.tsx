@@ -235,6 +235,35 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
 
   const USD_TO_EUR = 0.92;
 
+  // Guide technique PDF (équipement Diagzone) pour le véhicule du diagnostic
+  const [guideLoading, setGuideLoading] = useState(false);
+  const [guideError, setGuideError] = useState<string | null>(null);
+  const downloadGuide = async () => {
+    setGuideLoading(true);
+    setGuideError(null);
+    try {
+      const res = await fetch("/api/guide/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("auth_session_token") || ""}` },
+        body: JSON.stringify({ vehicle: diagnosis.brandModelInfo, equipment: "Diagzone" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.message || "Impossible de générer le guide.");
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Guide Technique - ${diagnosis.brandModelInfo}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setGuideError(e?.message || "Erreur réseau.");
+    } finally {
+      setGuideLoading(false);
+    }
+  };
+
   const isPremiumActive = currentPlan === "free_trial" || currentPlan === "premium" || currentPlan === "payg_active";
 
   // Fiche technique approfondie : recherche web réelle sur le composant précis (remplace
@@ -325,6 +354,18 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
             )}
           </div>
           <div className="flex flex-wrap items-center gap-3 shrink-0">
+            {isPremiumActive && diagnosis.brandModelInfo && (
+              <button
+                onClick={downloadGuide}
+                disabled={guideLoading}
+                title="Télécharger le guide technique PDF de ce modèle (codage, appairage, réapprentissages)"
+                className="px-4 py-2.5 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-500 disabled:opacity-60 text-white flex items-center gap-2 transition-colors print:hidden"
+              >
+                <FileDown className="w-4 h-4" />
+                {guideLoading ? "Génération du guide…" : "Guide technique PDF"}
+              </button>
+            )}
+            {guideError && <span className="text-xs text-red-400 print:hidden">{guideError}</span>}
             <button
               onClick={() => window.print()}
               title="Générer un PDF propre ou imprimer le rapport complet"
