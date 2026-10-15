@@ -4,6 +4,10 @@ name: Build DiagAssist Scanner Release
 on:
   workflow_dispatch:
   push:
+    # Uniquement sur main : ce workflow publie l'APK en le poussant directement sur main ; lancé depuis
+    # une autre branche il y pousserait du code non relu.
+    branches:
+      - main
     paths:
       - "android/diagassist-technician/**"
       - ".github/workflows/build-technician-release.yml"
@@ -13,6 +17,7 @@ permissions:
 
 jobs:
   build-release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     defaults:
       run:

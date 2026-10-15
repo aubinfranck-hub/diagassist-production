@@ -40,7 +40,6 @@ function hpWebNavViaClient(clientWs: any, action: string, args: Record<string, u
 dotenv.config();
 
 // A temporary server-side storage for active OTPs (expires in 10 minutes)
-const otpStorage = new Map<string, { code: string; expiresAt: number }>();
 
 // Sessions actives : token -> { phone, plan, createdAt }
 const sessions = new Map<string, { phone: string; plan: string; createdAt: number }>();
@@ -97,13 +96,6 @@ const otpAttempts = new Map<string, { count: number; windowStart: number }>();
 
 // Captcha simple (question arithmétique) pour la création de compte directe, sans dépendance
 // à un service SMS/WhatsApp externe. À usage unique, expire après 10 minutes.
-const captchaStorage = new Map<string, { answer: number; expiresAt: number }>();
-setInterval(() => {
-  const now = Date.now();
-  for (const [id, entry] of captchaStorage) {
-    if (now > entry.expiresAt) captchaStorage.delete(id);
-  }
-}, 5 * 60 * 1000).unref();
 
 // --- Forfait persistant PAR NUMÉRO DE TÉLÉPHONE (et non par session) ---
 // BUG CORRIGÉ : avant, le plan était stocké uniquement dans la session en mémoire et
@@ -184,9 +176,77 @@ function createSession(phone: string): string {
 // au démarrage — les Maps en mémoire restent utilisées pour des lectures instantanées partout
 // ailleurs dans le code (aucun autre changement nécessaire), mais chaque écriture est aussi
 // répercutée dans la base pour survivre aux redémarrages.
+// TLS vers Postgres : par défaut le chiffrement est actif sans vérification du certificat (comportement
+// historique, compatible Render). Pour vérifier le certificat serveur, définir DATABASE_SSL_CA (PEM de
+// l'autorité) ; pour une base locale sans TLS, DATABASE_SSL=off.
+function buildDbSsl(): false | { rejectUnauthorized: boolean; ca?: string } {
+  if (process.env.DATABASE_SSL === "off") return false;
+  const ca = process.env.DATABASE_SSL_CA?.replace(/\\n/g, "\n");
+  return ca ? { rejectUnauthorized: true, ca } : { rejectUnauthorized: false };
+}
 const dbPool = process.env.DATABASE_URL
-  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: buildDbSsl() })
   : null;
+
+// Stockage de codes à durée de vie courte (OTP, captcha, réinitialisation de mot de passe) :
+// cache mémoire + écriture en base (table auth_codes), pour survivre à un redémarrage ou à une
+// seconde instance. Sans base (dev local), seul le cache mémoire est utilisé.
+class ExpiringCodeStore<T extends { expiresAt: number }> {
+  private mem = new Map<string, T>();
+  constructor(private kind: string) {}
+
+  async get(key: string): Promise<T | undefined> {
+    const cached = this.mem.get(key);
+    if (cached) return cached;
+    if (!dbPool) return undefined;
+    try {
+      const r = await dbPool.query("SELECT payload FROM auth_codes WHERE kind = $1 AND key = $2", [this.kind, key]);
+      const payload = r.rows[0]?.payload as T | undefined;
+      if (payload) this.mem.set(key, payload);
+      return payload;
+    } catch (err: any) {
+      console.error(`[DB] Lecture auth_codes (${this.kind}) échouée:`, err.message);
+      return undefined;
+    }
+  }
+
+  async set(key: string, value: T): Promise<void> {
+    this.mem.set(key, value);
+    if (!dbPool) return;
+    try {
+      await dbPool.query(
+        `INSERT INTO auth_codes (kind, key, payload, expires_at) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (kind, key) DO UPDATE SET payload = $3, expires_at = $4`,
+        [this.kind, key, JSON.stringify(value), value.expiresAt]
+      );
+    } catch (err: any) {
+      console.error(`[DB] Écriture auth_codes (${this.kind}) échouée:`, err.message);
+    }
+  }
+
+  async delete(key: string): Promise<void> {
+    this.mem.delete(key);
+    if (!dbPool) return;
+    try {
+      await dbPool.query("DELETE FROM auth_codes WHERE kind = $1 AND key = $2", [this.kind, key]);
+    } catch (err: any) {
+      console.error(`[DB] Suppression auth_codes (${this.kind}) échouée:`, err.message);
+    }
+  }
+
+  async purgeExpired(now: number): Promise<void> {
+    for (const [k, v] of this.mem) if (now > v.expiresAt) this.mem.delete(k);
+    if (!dbPool) return;
+    await dbPool.query("DELETE FROM auth_codes WHERE kind = $1 AND expires_at < $2", [this.kind, now]).catch(() => {});
+  }
+}
+
+// Code OTP en attente (10 min), par numéro complet
+const otpStorage = new ExpiringCodeStore<{ code: string; expiresAt: number }>("otp");
+// Captcha arithmétique à usage unique (10 min)
+const captchaStorage = new ExpiringCodeStore<{ answer: number; expiresAt: number }>("captcha");
+// Code de réinitialisation par e-mail (15 min, 5 essais)
+const passwordResetCodes = new ExpiringCodeStore<{ code: string; phone: string; expiresAt: number; attempts: number }>("reset");
 
 async function initDatabase(): Promise<void> {
   if (!dbPool) {
@@ -221,6 +281,19 @@ async function initDatabase(): Promise<void> {
       phone TEXT NOT NULL,
       plan TEXT NOT NULL,
       created_at BIGINT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_codes (
+      kind TEXT NOT NULL,
+      key TEXT NOT NULL,
+      payload JSONB NOT NULL,
+      expires_at BIGINT NOT NULL,
+      PRIMARY KEY (kind, key)
+    );
+    CREATE TABLE IF NOT EXISTS live_usage (
+      phone TEXT NOT NULL,
+      day TEXT NOT NULL,
+      used_ms BIGINT NOT NULL DEFAULT 0,
+      PRIMARY KEY (phone, day)
     );
     CREATE TABLE IF NOT EXISTS connection_history (
       id SERIAL PRIMARY KEY,
@@ -447,6 +520,8 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS order_ref TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
+      ALTER TABLE shop_customers ADD COLUMN IF NOT EXISTS whatsapp_consent_at TIMESTAMP;
+      ALTER TABLE shop_customers ADD COLUMN IF NOT EXISTS whatsapp_optout BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS related_order_ref TEXT;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'manual';
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
@@ -690,6 +765,18 @@ async function deleteBannerFromDb(id: string): Promise<void> {
 
 const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number; isAdmin: boolean; email?: string; name?: string }>();
 
+// Comparaison de chaînes en temps constant (hash des deux côtés pour égaliser les longueurs)
+function safeEqual(a: string, b: string): boolean {
+  const ha = crypto.createHash("sha256").update(a).digest();
+  const hb = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// Code à 6 chiffres cryptographiquement sûr (OTP, réinitialisation de mot de passe)
+function randomSixDigitCode(): string {
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
 function hashPassword(password: string, salt: string): string {
   return crypto.scryptSync(password, salt, 64).toString("hex");
 }
@@ -758,7 +845,6 @@ function seedAdminAccountIfNeeded(): void {
 
 // --- Récupération de mot de passe par email (SMTP Gmail) ---
 // Codes de réinitialisation : email -> { code, phone, expiresAt }
-const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number }>();
 
 function getEmailTransporter() {
   if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return null;
@@ -782,11 +868,44 @@ function findPhoneByEmail(email: string): string | null {
   return null;
 }
 
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Révoque toutes les sessions d'un numéro (après changement/réinitialisation du mot de passe),
+// sauf éventuellement celle qui vient d'effectuer le changement.
+function revokeSessionsForPhone(phone: string, exceptToken?: string): void {
+  for (const [token, sess] of sessions) {
+    if (sess.phone === phone && token !== exceptToken) {
+      sessions.delete(token);
+      deleteSessionFromDb(token).catch(() => {});
+    }
+  }
+}
+
+// Express 4 n'intercepte pas les rejets des handlers async : on les renvoie en 500 au lieu de laisser le processus tomber.
+function asyncRoute(handler: (req: any, res: any) => Promise<any>) {
+  return (req: any, res: any, next: any) => {
+    handler(req, res).catch((err) => {
+      console.error("[route] erreur:", err?.message || err);
+      if (!res.headersSent) res.status(500).json({ success: false, message: "Erreur serveur." });
+    });
+  };
+}
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason instanceof Error ? reason.message : reason);
+});
+
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
   const session = sessions.get(token);
   if (!token || !session) {
+    return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  }
+  // Expiration absolue des sessions (30 jours), appliquée aussi sans redémarrage du serveur.
+  if (Date.now() - session.createdAt > SESSION_TTL_MS) {
+    sessions.delete(token);
+    deleteSessionFromDb(token).catch(() => {});
     return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
   }
   // Toujours resynchroniser le plan de la session avec le forfait persistant à jour
@@ -802,10 +921,11 @@ function requireAuth(req: any, res: any, next: any) {
 // Sans ADMIN_SECRET configuré, toutes les routes admin refusent l'accès (fail-closed).
 function requireAdminAuth(req: any, res: any, next: any) {
   const adminSecret = process.env.ADMIN_SECRET;
-  const providedCode = req.headers["x-admin-code"] || req.body?.code;
+  const providedCode = req.headers["x-admin-code"];
 
   // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
-  if (adminSecret && providedCode && providedCode === adminSecret) {
+  // Comparaison en temps constant ; le secret ne transite que par l'en-tête, jamais par le corps.
+  if (adminSecret && typeof providedCode === "string" && safeEqual(providedCode, adminSecret)) {
     return next();
   }
 
@@ -814,6 +934,11 @@ function requireAdminAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
   const session = token ? sessions.get(token) : undefined;
+  if (session && Date.now() - session.createdAt > SESSION_TTL_MS) {
+    sessions.delete(token);
+    deleteSessionFromDb(token).catch(() => {});
+    return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  }
   if (session && userAccounts.get(session.phone)?.isAdmin) {
     return next();
   }
@@ -861,6 +986,13 @@ function checkAndIncrementUsage(phone: string, plan: string): { allowed: boolean
   usage.diagnosisCount += 1;
   usageTracking.set(phone, usage);
   return { allowed: true };
+}
+
+// Rend un diagnostic décompté quand le traitement IA a échoué côté serveur (le client ne doit pas
+// perdre un diagnostic de son quota pour une panne Gemini/réseau).
+function refundUsage(phone: string): void {
+  const usage = usageTracking.get(phone);
+  if (usage && usage.diagnosisCount > 0) usage.diagnosisCount -= 1;
 }
 
 // Support de plusieurs clés Gemini (rotation automatique en cas de quota dépassé sur l'une
@@ -2257,8 +2389,30 @@ async function startServer() {
   app.set("trust proxy", 1);
 
   // Sécurité HTTP standard (headers)
+  // CSP appliquée en production uniquement (le serveur Vite de dev injecte des scripts inline).
+  // Le front compilé n'utilise que des scripts du même domaine ; styles inline (Tailwind, animations)
+  // et polices Google autorisés ; WebSocket Live/Screening sur le même domaine.
   app.use(helmet({
-    contentSecurityPolicy: false, // désactivé pour ne pas casser Vite en dev ; à durcir en prod si besoin
+    contentSecurityPolicy: process.env.NODE_ENV === "production"
+      ? {
+          useDefaults: true,
+          directives: {
+            "default-src": ["'self'"],
+            "script-src": ["'self'"],
+            "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
+            "img-src": ["'self'", "data:", "blob:", "https:"],
+            "media-src": ["'self'", "data:", "blob:", "https:"],
+            "connect-src": ["'self'", "ws:", "wss:"],
+            "frame-src": ["https://www.google.com"],
+            "worker-src": ["'self'", "blob:"],
+            "object-src": ["'none'"],
+            "base-uri": ["'self'"],
+            "form-action": ["'self'"],
+            "frame-ancestors": ["'self'"],
+          },
+        }
+      : false,
     crossOriginEmbedderPolicy: false,
   }));
 
@@ -2329,8 +2483,35 @@ async function startServer() {
     legacyHeaders: false,
     message: { success: false, message: "Trop de tentatives de connexion. Veuillez réessayer dans quelques minutes." },
   });
+  // Anti-abus coût IA : plafond par UTILISATEUR (téléphone de la session) et non par IP, pour les
+  // routes qui appellent Gemini/ElevenLabs sans décompter le quota de diagnostics.
+  const aiUserLimiter = (max: number) => rateLimit({
+    windowMs: 60 * 1000,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req: any) => `u:${req.session?.phone || "anon"}`,
+    validate: false,
+    message: { success: false, message: "Trop de requêtes. Ralentissez un peu." },
+  });
+  const chatLimiter = aiUserLimiter(30);
+  const ttsLimiter = aiUserLimiter(30);
+  const lookupLimiter = aiUserLimiter(10);
+  const loopStepLimiter = aiUserLimiter(30);
+  const MAX_TTS_CHARS = 2000;
+  const MAX_CHAT_MESSAGE_CHARS = 8000;
+  const MAX_CHAT_HISTORY_ITEMS = 40;
+
   // Limite les routes boutique publiques (commande/demande de pièce) sans authentification —
   // évite le spam/abus sur des endpoints ouverts à tous.
+  // Suivi de commande : le téléphone est le seul secret, on freine l'énumération.
+  const shopTrackLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de recherches. Veuillez réessayer dans quelques minutes." },
+  });
   const shopPublicLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 20,
@@ -2338,6 +2519,25 @@ async function startServer() {
     legacyHeaders: false,
     message: { success: false, message: "Trop de demandes. Veuillez réessayer dans quelques minutes." },
   });
+
+  // Limiteur global sur tout /api/admin : empêche de tester le secret admin sans limite
+  // sur les routes qui n'avaient pas leur propre adminLimiter (boutique, Jèko...).
+  app.use("/api/admin", rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de requêtes administrateur." },
+  }));
+  // Échecs d'authentification admin : 20 par 15 min et par IP (les succès ne comptent pas).
+  app.use("/api/admin", rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    skipSuccessfulRequests: true,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de tentatives d'accès administrateur." },
+  }));
 
   // API Route: Health Check
   app.get("/api/health", (req, res) => {
@@ -2702,6 +2902,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       // FUITE D'INFORMATION CORRIGÉE : le détail technique brut de l'erreur (potentiellement
       // des informations d'infrastructure interne) n'est plus renvoyé au client, seulement loggé.
       console.error("Error during diagnosis:", error);
+      if (req.session?.phone) refundUsage(req.session.phone);
       res.status(500).json({
         success: false,
         message: "Une erreur est survenue lors de l'analyse avec l'IA. Veuillez réessayer dans un instant.",
@@ -2714,7 +2915,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
   // vérifiées. Fait maintenant une vraie recherche web ciblée sur le composant précis, puis
   // structure UNIQUEMENT ce qui a été trouvé — le modèle doit répondre "Non trouvé dans les
   // sources" plutôt que d'inventer une valeur numérique absente de la recherche.
-  app.post("/api/diagnose/technical-lookup", requireAuth, async (req: any, res) => {
+  app.post("/api/diagnose/technical-lookup", requireAuth, lookupLimiter, async (req: any, res) => {
     try {
       const { brandModelInfo, probableCauses, dtcCodesDetected } = req.body;
       const { plan } = req.session;
@@ -2785,12 +2986,18 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
   });
 
   // API Route: Contextual follow-up chat
-  app.post("/api/chat", requireAuth, async (req: any, res) => {
+  app.post("/api/chat", requireAuth, chatLimiter, async (req: any, res) => {
     try {
       const { message, history, diagnosticContext } = req.body;
 
       if (!message) {
         return res.status(400).json({ success: false, message: "Le message est requis." });
+      }
+      if (typeof message !== "string" || message.length > MAX_CHAT_MESSAGE_CHARS) {
+        return res.status(400).json({ success: false, message: "Message trop long." });
+      }
+      if (Array.isArray(history) && history.length > MAX_CHAT_HISTORY_ITEMS) {
+        return res.status(400).json({ success: false, message: "Historique trop long." });
       }
 
       // BUG CORRIGÉ : cette route n'imposait aucune vérification de forfait — un compte
@@ -2992,13 +3199,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // FAILLE CORRIGÉE : cette route n'exigeait aucune authentification (coût API illimité pour
   // n'importe qui), et utilisait en secours une VRAIE clé API ElevenLabs codée en dur dans le
   // code source. Cette clé doit être révoquée/régénérée dans votre compte ElevenLabs sans délai.
-  app.post("/api/tts", requireAuth, async (req: any, res) => {
+  app.post("/api/tts", requireAuth, ttsLimiter, async (req: any, res) => {
     try {
       const { text: rawText, voiceName } = req.body;
       // Prononciation : "DiagAssist" collé est lu "diagnostic" par la synthèse vocale.
       const text = typeof rawText === "string" ? rawText.replace(/diag\s*assist(?!\w)/gi, "Diag Assist") : rawText;
       if (!text) {
         return res.status(400).json({ success: false, message: "Le texte est requis." });
+      }
+      if (typeof text !== "string" || text.length > MAX_TTS_CHARS) {
+        return res.status(400).json({ success: false, message: "Texte trop long pour la synthèse vocale." });
       }
       if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
         return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas la synthèse vocale. Veuillez souscrire à une formule." });
@@ -3172,10 +3382,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
 
       // Generate random 6-digit OTP code
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpCode = randomSixDigitCode();
 
       // Store in memory with a 10 minutes expiry limit
-      otpStorage.set(fullPhone, {
+      await otpStorage.set(fullPhone, {
         code: otpCode,
         expiresAt: Date.now() + 10 * 60 * 1000,
       });
@@ -3200,13 +3410,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
             to: toNumber,
           });
           sentRealMessage = true;
-          console.log(`[Twilio WhatsApp] Code OTP réel ${otpCode} envoyé à ${toNumber} avec succès depuis ${fromNumber} !`);
+          console.log(`[Twilio WhatsApp] Code OTP envoyé à ${toNumber} depuis ${fromNumber}.`);
         } catch (twilioErr: any) {
           console.error(`Erreur d'envoi Twilio (${activeChannel}) :`, twilioErr);
           errorDetails = twilioErr.message;
         }
       } else {
-        console.log(`[OTP Mode Simulation] Code de sécurité généré pour ${fullPhone} (${activeChannel}) : ${otpCode} (Renseignez vos clés Twilio dans les secrets pour envoyer de vrais messages).`);
+        console.log(`[OTP Mode Simulation] Code généré pour ${fullPhone} (${activeChannel}).${process.env.NODE_ENV === "production" ? "" : ` Code (dev uniquement) : ${otpCode}`}`);
       }
 
       // Sécurité : ne JAMAIS renvoyer le code OTP au client en production, même en mode simulation
@@ -3275,7 +3485,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         });
       }
  
-      const stored = otpStorage.get(fullPhone);
+      const stored = await otpStorage.get(fullPhone);
       if (!stored) {
         attempts.count += 1;
         otpAttempts.set(fullPhone, attempts);
@@ -3283,7 +3493,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
  
       if (Date.now() > stored.expiresAt) {
-        otpStorage.delete(fullPhone);
+        await otpStorage.delete(fullPhone);
         return res.status(400).json({ success: false, message: "Le code a expiré. Veuillez en demander un nouveau." });
       }
  
@@ -3294,7 +3504,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
  
       // Consume OTP
-      otpStorage.delete(fullPhone);
+      await otpStorage.delete(fullPhone);
       otpAttempts.delete(fullPhone);
 
       if (password) {
@@ -3541,6 +3751,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     const existing = userAccounts.get(phone);
     createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
+    revokeSessionsForPhone(phone, req.sessionToken);
     res.json({ success: true, message: "Mot de passe mis à jour." });
   });
 
@@ -3560,8 +3771,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.json(genericResponse);
     }
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000 });
+    const code = randomSixDigitCode();
+    await passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000, attempts: 0 });
 
     try {
       await transporter.sendMail({
@@ -3578,7 +3789,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route: réinitialisation effective du mot de passe avec le code reçu par email
-  app.post("/api/auth/reset-password", authLimiter, (req, res) => {
+  app.post("/api/auth/reset-password", authLimiter, async (req, res) => {
     const { email, code, newPassword } = req.body;
     if (!email || !code || !newPassword) {
       return res.status(400).json({ success: false, message: "Email, code et nouveau mot de passe requis." });
@@ -3587,17 +3798,25 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(400).json({ success: false, message: "Le nouveau mot de passe doit faire au moins 6 caractères." });
     }
     const normalized = email.trim().toLowerCase();
-    const record = passwordResetCodes.get(normalized);
-    if (!record || record.code !== code.trim()) {
+    const record = await passwordResetCodes.get(normalized);
+    if (!record) {
+      return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
+    }
+    if (record.code !== String(code).trim()) {
+      // 5 essais maximum par code : au-delà, le code est invalidé (anti brute-force des 900 000 codes).
+      record.attempts += 1;
+      if (record.attempts >= 5) await passwordResetCodes.delete(normalized);
+      else await passwordResetCodes.set(normalized, record);
       return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
     }
     if (Date.now() > record.expiresAt) {
-      passwordResetCodes.delete(normalized);
+      await passwordResetCodes.delete(normalized);
       return res.status(400).json({ success: false, message: "Ce code a expiré. Veuillez en demander un nouveau." });
     }
     const existing = userAccounts.get(record.phone);
     createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
-    passwordResetCodes.delete(normalized);
+    await passwordResetCodes.delete(normalized);
+    revokeSessionsForPhone(record.phone);
     res.json({ success: true, message: "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
   });
 
@@ -3879,41 +4098,41 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Routes (utilisateur connecté) : menus en cascade marque > modèle > génération > moteur
-  app.get("/api/vehicles/brands", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/brands", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, brands: [] });
     const { rows } = await dbPool.query("SELECT DISTINCT brand FROM vehicles ORDER BY brand ASC");
     res.json({ success: true, brands: rows.map((r) => r.brand) });
-  });
+  }));
 
-  app.get("/api/vehicles/models", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/models", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, models: [] });
-    const brand = req.query.brand as string;
-    if (!brand) return res.status(400).json({ success: false, message: "Marque requise." });
+    const brand = req.query.brand;
+    if (typeof brand !== "string" || !brand) return res.status(400).json({ success: false, message: "Marque requise." });
     const { rows } = await dbPool.query("SELECT DISTINCT model FROM vehicles WHERE brand = $1 ORDER BY model ASC", [brand]);
     res.json({ success: true, models: rows.map((r) => r.model) });
-  });
+  }));
 
-  app.get("/api/vehicles/generations", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/generations", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, generations: [] });
-    const { brand, model } = req.query as { brand?: string; model?: string };
-    if (!brand || !model) return res.status(400).json({ success: false, message: "Marque et modèle requis." });
+    const { brand, model } = req.query;
+    if (typeof brand !== "string" || typeof model !== "string" || !brand || !model) return res.status(400).json({ success: false, message: "Marque et modèle requis." });
     const { rows } = await dbPool.query(
       "SELECT DISTINCT generation, MIN(year_start) as year_start, MAX(year_stop) as year_stop, MAX(image_url) as image_url FROM vehicles WHERE brand = $1 AND model = $2 GROUP BY generation ORDER BY year_start DESC NULLS LAST",
       [brand, model]
     );
     res.json({ success: true, generations: rows });
-  });
+  }));
 
-  app.get("/api/vehicles/modifications", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/modifications", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, modifications: [] });
-    const { brand, model, generation } = req.query as { brand?: string; model?: string; generation?: string };
-    if (!brand || !model || !generation) return res.status(400).json({ success: false, message: "Marque, modèle et génération requis." });
+    const { brand, model, generation } = req.query;
+    if (typeof brand !== "string" || typeof model !== "string" || typeof generation !== "string" || !brand || !model || !generation) return res.status(400).json({ success: false, message: "Marque, modèle et génération requis." });
     const { rows } = await dbPool.query(
       "SELECT engine_code, engine_displacement, power_hp, fuel_system, cylinders, year_start, year_stop FROM vehicles WHERE brand = $1 AND model = $2 AND generation = $3 ORDER BY engine_displacement ASC",
       [brand, model, generation]
     );
     res.json({ success: true, modifications: rows });
-  });
+  }));
 
   // ============================================================
   // BOUTIQUE / CRM — section indépendante du diagnostic technique
@@ -3973,12 +4192,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     orderRef?: string;
     productName?: string;
     kind?: "order" | "part_request";
+    consent?: boolean;
   }) {
     if (!dbPool) return;
+    // Aucune relance commerciale sans consentement explicite du client (case cochée à la commande).
+    if (options.consent !== true) return;
+    await dbPool.query("UPDATE shop_customers SET whatsapp_consent_at = CURRENT_TIMESTAMP WHERE phone = $1 AND whatsapp_optout = false", [phone]);
     const kind = options.kind || "order";
     const baseMessage = kind === "part_request"
-      ? "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande de pièce. Souhaitez-vous toujours que nous poursuivions la recherche ?"
-      : `Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre commande${options.orderRef ? ` ${options.orderRef}` : ""}${options.productName ? ` (${options.productName})` : ""}. Souhaitez-vous confirmer votre besoin ?`;
+      ? "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande de pièce. Souhaitez-vous toujours que nous poursuivions la recherche ? Répondez STOP pour ne plus recevoir de messages."
+      : `Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre commande${options.orderRef ? ` ${options.orderRef}` : ""}${options.productName ? ` (${options.productName})` : ""}. Souhaitez-vous confirmer votre besoin ? Répondez STOP pour ne plus recevoir de messages.`;
 
     const delays = kind === "part_request"
       ? [{ days: 2, suffix: "Relance demande de pièce J+2" }]
@@ -4068,6 +4291,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
           if (request.rows[0]?.completed) continue;
         }
 
+        // Consentement obligatoire, désinscription respectée, 2 relances automatiques par numéro et par jour au plus.
+        const consent = await dbPool.query("SELECT whatsapp_consent_at, whatsapp_optout FROM shop_customers WHERE phone = $1", [followup.customer_phone]);
+        if (!consent.rows[0]?.whatsapp_consent_at || consent.rows[0]?.whatsapp_optout) {
+          await dbPool.query("UPDATE shop_followups SET status = 'annulee', last_error = 'pas de consentement' WHERE id = $1 AND status = 'programmee'", [followup.id]);
+          continue;
+        }
+        const sentToday = await dbPool.query(
+          "SELECT COUNT(*) FROM shop_followups WHERE customer_phone = $1 AND status = 'envoyee' AND sent_at >= CURRENT_DATE",
+          [followup.customer_phone]
+        );
+        if (Number(sentToday.rows[0].count) >= 2) continue;
+
         await dbPool.query(
           "UPDATE shop_followups SET attempts = attempts + 1 WHERE id = $1",
           [followup.id]
@@ -4099,23 +4334,23 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   app.post("/api/shop/orders", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { phone, name, city, product_id, quantity, notes } = req.body;
+    const { phone, name, city, product_id, quantity, notes, whatsapp_consent } = req.body;
     if (!phone || !product_id) return res.status(400).json({ success: false, message: "Téléphone et produit requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
 
-    const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [product_id]);
+    const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1 AND is_active IS NOT FALSE", [product_id]);
     if (productRes.rows.length === 0) return res.status(404).json({ success: false, message: "Produit introuvable." });
     const product = productRes.rows[0];
 
     await upsertShopCustomer(cleanPhone, name, city, "produit");
     const orderRef = await nextOrderRef();
-    const dep = depositFor(product, quantity || 1);
+    const dep = depositFor(product, cleanQty(quantity));
     const orderRes = await dbPool.query(
       `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes, deposit_fcfa, deposit_status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null, dep.amount, dep.status]
+      [cleanPhone, product_id, product.name, product.price_fcfa, cleanQty(quantity), orderRef, notes || null, dep.amount, dep.status]
     );
-    await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order" });
+    await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order", consent: whatsapp_consent === true });
     const days = product.lead_time_days ? Number(product.lead_time_days) : null;
     res.json({
       success: true,
@@ -4125,6 +4360,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // Acompte d'un produit sur commande : pourcentage du total de la ligne, verse en boutique.
+  // Quantité commandée : entier de 1 à 100 (refuse négatifs, décimaux et valeurs absurdes).
+  function cleanQty(q: any): number {
+    const n = Math.floor(Number(q));
+    return Number.isFinite(n) ? Math.min(100, Math.max(1, n)) : 1;
+  }
+
   function depositFor(product: any, quantity: number): { amount: number; status: "non_requis" | "en_attente" } {
     const pct = Number(product.deposit_pct || 0);
     const price = Number(product.price_fcfa || 0);
@@ -4158,7 +4399,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const city: string | undefined = body.city;
     const address: string | undefined = body.address ?? body.shipping_address;
     const items: { product_id: number; quantity: number }[] = body.items;
-    if (!phone || !Array.isArray(items) || items.length === 0) {
+    if (!phone || !Array.isArray(items) || items.length === 0 || items.length > 20) {
       return res.status(400).json({ success: false, message: "Téléphone et au moins un article requis." });
     }
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
@@ -4170,16 +4411,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     let depositTotal = 0;
     let leadDays: number | null = null;
     for (const item of items) {
-      const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [item.product_id]);
+      const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1 AND is_active IS NOT FALSE", [item.product_id]);
       if (productRes.rows.length === 0) continue; // ignore un produit devenu introuvable plutôt que d'annuler toute la commande
       const product = productRes.rows[0];
-      const dep = depositFor(product, item.quantity || 1);
+      const dep = depositFor(product, cleanQty(item.quantity));
       depositTotal += dep.amount;
       if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
       const orderRes = await dbPool.query(
         `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address, deposit_fcfa, deposit_status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null, dep.amount, dep.status]
+        [cleanPhone, item.product_id, product.name, product.price_fcfa, cleanQty(item.quantity), orderRef, city || null, address || null, dep.amount, dep.status]
       );
       createdIds.push(orderRes.rows[0].id);
     }
@@ -4190,6 +4431,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       orderRef,
       productName: firstProductName.rows[0]?.product_name_snapshot || undefined,
       kind: "order",
+      consent: body.whatsapp_consent === true,
     });
     res.json({
       success: true,
@@ -4199,10 +4441,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // --- Public : suivi de commande par référence + téléphone ---
-  app.get("/api/shop/track", async (req, res) => {
+  app.get("/api/shop/track", shopTrackLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { ref, phone } = req.query as { ref?: string; phone?: string };
-    if (!phone) return res.status(400).json({ success: false, message: "Téléphone requis." });
+    if (typeof phone !== "string" || !phone || (ref !== undefined && typeof ref !== "string")) return res.status(400).json({ success: false, message: "Téléphone requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
 
     let query = "SELECT * FROM shop_orders WHERE customer_phone = $1";
@@ -4228,12 +4470,44 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, orders });
   });
 
+  // --- Webhook Twilio entrant : « STOP » désinscrit le numéro des relances WhatsApp ---
+  app.post("/api/shop/whatsapp/inbound", async (req, res) => {
+    const token = (process.env.TWILIO_AUTH_TOKEN || "").trim();
+    const baseUrl = (process.env.APP_URL || "").trim().replace(/\/$/, "");
+    const signature = req.headers["x-twilio-signature"];
+    if (!token || !baseUrl || typeof signature !== "string" ||
+        !twilio.validateRequest(token, signature, `${baseUrl}/api/shop/whatsapp/inbound`, req.body || {})) {
+      return res.status(403).send("Forbidden");
+    }
+    const from = String(req.body?.From || "").replace(/^whatsapp:/, "").replace(/[\s-]/g, "");
+    const text = String(req.body?.Body || "").trim().toUpperCase();
+    try {
+      if (dbPool && from && ["STOP", "ARRET", "ARRÊT", "DESINSCRIPTION", "UNSUBSCRIBE"].includes(text)) {
+        // Les numéros sont saisis sous plusieurs formes (0707…, +225 07…) : on compare les 10 derniers chiffres.
+        const tail = from.replace(/\D/g, "").slice(-10);
+        await dbPool.query("UPDATE shop_customers SET whatsapp_optout = true WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1", [tail]);
+        await dbPool.query("UPDATE shop_followups SET status = 'annulee', last_error = 'désinscription' WHERE RIGHT(REGEXP_REPLACE(customer_phone, '\\D', '', 'g'), 10) = $1 AND status = 'programmee'", [tail]);
+      }
+    } catch (err: any) {
+      console.error("[CRM WhatsApp] inbound:", err?.message || err);
+    }
+    res.type("text/xml").send("<Response></Response>");
+  });
+
   // --- Public : demande de pièce à l'étranger (avec carte grise) ---
   app.post("/api/shop/part-requests", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { phone, name, part_description, part_photo_base64, carte_grise_base64, extra_info } = req.body;
+    const { phone, name, part_description, part_photo_base64, carte_grise_base64, extra_info, whatsapp_consent } = req.body;
     if (!phone || !part_description) return res.status(400).json({ success: false, message: "Téléphone et description de la pièce requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
+    // Images : data-URL JPEG/PNG/WebP de 5 Mo maximum (refuse javascript:, data:text/html, etc.).
+    const validImage = (v: any) => v == null || v === "" || (typeof v === "string" && v.length <= 7_000_000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(v));
+    if (!validImage(part_photo_base64) || !validImage(carte_grise_base64)) {
+      return res.status(400).json({ success: false, message: "Image invalide (JPEG, PNG ou WebP, 5 Mo maximum)." });
+    }
+    if (typeof part_description !== "string" || part_description.length > 2000 || (extra_info != null && (typeof extra_info !== "string" || extra_info.length > 2000))) {
+      return res.status(400).json({ success: false, message: "Description trop longue." });
+    }
 
     await upsertShopCustomer(cleanPhone, name, undefined, "pieces");
     const result = await dbPool.query(
@@ -4241,7 +4515,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
        VALUES ($1,$2,$3,$4,$5) RETURNING id`,
       [cleanPhone, part_description, part_photo_base64 || null, carte_grise_base64 || null, extra_info || null]
     );
-    await scheduleShopFollowups(cleanPhone, { kind: "part_request" });
+    await scheduleShopFollowups(cleanPhone, { kind: "part_request", consent: whatsapp_consent === true });
     res.json({ success: true, message: "Demande envoyée. Nous préparons une cotation sous environ 15 jours.", request_id: result.rows[0].id });
   });
 
@@ -4691,18 +4965,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route : génère une question captcha simple (anti-bot) pour la création de compte.
   // Aucune dépendance à un service externe (reCAPTCHA, Twilio...) : juste une question
   // arithmétique dont la réponse est vérifiée côté serveur.
-  app.post("/api/auth/captcha", authLimiter, (req, res) => {
+  app.post("/api/auth/captcha", authLimiter, async (req, res) => {
     const a = Math.floor(Math.random() * 8) + 2; // 2-9
     const b = Math.floor(Math.random() * 8) + 2; // 2-9
     const captchaId = crypto.randomBytes(16).toString("hex");
-    captchaStorage.set(captchaId, { answer: a + b, expiresAt: Date.now() + 10 * 60 * 1000 });
+    await captchaStorage.set(captchaId, { answer: a + b, expiresAt: Date.now() + 10 * 60 * 1000 });
     res.json({ success: true, captchaId, question: `Combien font ${a} + ${b} ?` });
   });
 
   // API Route : création de compte directe (numéro + mot de passe), protégée par le captcha
   // ci-dessus. Ne dépend d'aucun envoi SMS/WhatsApp — évite les pannes liées à un fournisseur
   // OTP mal configuré, tout en gardant une protection anti-bot minimale.
-  app.post("/api/auth/register", authLimiter, (req, res) => {
+  app.post("/api/auth/register", authLimiter, async (req, res) => {
     const { phoneNumber, countryCode, password, captchaId, captchaAnswer, name } = req.body;
     if (!phoneNumber || !password || !captchaId || captchaAnswer === undefined) {
       return res.status(400).json({ success: false, message: "Données manquantes pour créer le compte." });
@@ -4711,24 +4985,31 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
     }
 
-    const captcha = captchaStorage.get(captchaId);
+    const captcha = await captchaStorage.get(captchaId);
     if (!captcha) {
       return res.status(400).json({ success: false, message: "Captcha expiré ou invalide. Veuillez réessayer." });
     }
     if (Date.now() > captcha.expiresAt) {
-      captchaStorage.delete(captchaId);
+      await captchaStorage.delete(captchaId);
       return res.status(400).json({ success: false, message: "Captcha expiré. Veuillez réessayer." });
     }
     if (Number(captchaAnswer) !== captcha.answer) {
       return res.status(400).json({ success: false, message: "Réponse incorrecte. Veuillez réessayer." });
     }
-    captchaStorage.delete(captchaId); // usage unique
+    await captchaStorage.delete(captchaId); // usage unique
 
     const cleanNumber = String(phoneNumber).replace(/\s+/g, "");
     if (cleanNumber.length < 8) {
       return res.status(400).json({ success: false, message: "Veuillez saisir un numéro de téléphone valide." });
     }
     const fullPhone = `${countryCode || "+225"}${cleanNumber}`;
+
+    // FAILLE CORRIGÉE : sans cette vérification, n'importe qui pouvait écraser le mot de passe (et le
+    // rôle admin) d'un compte existant en connaissant seulement son numéro. La reprise d'un compte
+    // existant passe par la connexion, le mot de passe oublié ou la vérification OTP.
+    if (userAccounts.has(fullPhone)) {
+      return res.status(409).json({ success: false, message: "Un compte existe déjà pour ce numéro. Connectez-vous ou utilisez « mot de passe oublié »." });
+    }
 
     createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
     console.log(`[Auth] Compte créé par auto-inscription (captcha) pour ${fullPhone}.`);
@@ -4796,7 +5077,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!adminSecret) {
       return res.status(503).json({ success: false, message: "Accès admin non configuré sur le serveur." });
     }
-    if (code !== adminSecret) {
+    if (typeof code !== "string" || !safeEqual(code, adminSecret)) {
       return res.status(401).json({ success: false, message: "Code invalide." });
     }
     res.json({ success: true });
@@ -4820,11 +5101,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         loopStateStore.delete(id);
       }
     }
-    for (const [phone, entry] of otpStorage) {
-      if (now > entry.expiresAt) {
-        otpStorage.delete(phone);
-      }
-    }
+    otpStorage.purgeExpired(now);
+    captchaStorage.purgeExpired(now);
+    passwordResetCodes.purgeExpired(now);
     for (const [phone, entry] of otpAttempts) {
       if (now - entry.windowStart > 60 * 60 * 1000) {
         otpAttempts.delete(phone);
@@ -5101,12 +5380,13 @@ Instructions Tour 0 :
       });
     } catch (error: any) {
       console.error("Erreur lors de l'initialisation de la boucle de diagnostic:", error);
+      if (req.session?.phone) refundUsage(req.session.phone);
       res.status(500).json({ success: false, message: "Erreur serveur lors du diagnostic. Veuillez réessayer." });
     }
   });
 
   // Next Turn in Diagnostic Loop (Tour 1 to N)
-  app.post("/api/diagnostic/loop/step", requireAuth, async (req: any, res) => {
+  app.post("/api/diagnostic/loop/step", requireAuth, loopStepLimiter, async (req: any, res) => {
     try {
       const {
         sessionId,
@@ -5118,6 +5398,9 @@ Instructions Tour 0 :
         scannerModel,
       } = req.body;
 
+      if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
+        return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas de poursuivre ce diagnostic." });
+      }
       if (!sessionId || !loopStateStore.has(sessionId)) {
         return res.status(404).json({ success: false, message: "Session de diagnostic introuvable ou expirée." });
       }
@@ -5351,7 +5634,30 @@ Directives pour ce tour :
   };
   const addLiveUsage = (phone: string, ms: number) => {
     if (!phone || ms <= 0) return;
-    liveUsage.set(phone, { day: todayKey(), usedMs: getLiveUsedMs(phone) + ms });
+    const day = todayKey();
+    liveUsage.set(phone, { day, usedMs: getLiveUsedMs(phone) + ms });
+    // Persisté : un redémarrage du serveur ne remet plus le compteur à zéro.
+    if (dbPool) {
+      dbPool.query(
+        `INSERT INTO live_usage (phone, day, used_ms) VALUES ($1, $2, $3)
+         ON CONFLICT (phone, day) DO UPDATE SET used_ms = live_usage.used_ms + EXCLUDED.used_ms`,
+        [phone, day, Math.round(ms)]
+      ).catch((err: any) => console.warn("[LIVE] usage non enregistré:", err?.message || err));
+    }
+  };
+  // Recharge l'usage du jour depuis la base (une fois par numéro et par jour et par processus).
+  const liveUsageHydrated = new Map<string, string>();
+  const hydrateLiveUsage = async (phone: string) => {
+    const day = todayKey();
+    if (!dbPool || !phone || liveUsageHydrated.get(phone) === day) return;
+    try {
+      const r = await dbPool.query("SELECT used_ms FROM live_usage WHERE phone = $1 AND day = $2", [phone, day]);
+      const dbMs = r.rows[0] ? Number(r.rows[0].used_ms) : 0;
+      if (dbMs > getLiveUsedMs(phone)) liveUsage.set(phone, { day, usedMs: dbMs });
+      liveUsageHydrated.set(phone, day);
+    } catch (err: any) {
+      console.warn("[LIVE] lecture usage impossible:", err?.message || err);
+    }
   };
 
   // Ouvre la session Gemini Live ; si la clé échoue (quota, clé invalide) et qu'une autre clé existe,
@@ -5386,17 +5692,17 @@ Directives pour ce tour :
     },
   });
 
-  server.on("upgrade", (request, socket, head) => {
-    const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
+  server.on("upgrade", async (request, socket, head) => {
+    const { pathname } = new URL(request.url || "", `http://${request.headers.host}`);
     if (pathname === "/api/live-ws") {
       // FAILLE CORRIGÉE : ce endpoint WebSocket (assistant vocal live via Gemini) n'exigeait
       // aucune authentification — n'importe qui pouvait s'y connecter directement et consommer
       // l'API Gemini à volonté, sans compte, sans forfait, sans limite, aux frais de l'opérateur.
       const protoToken = String(request.headers["sec-websocket-protocol"] || "")
         .split(",").map((x) => x.trim()).find((x) => x.startsWith("auth."))?.slice(5);
-      const token = protoToken || searchParams.get("token") || "";
+      const token = protoToken || "";
       const session = sessions.get(token);
-      if (!token || !session) {
+      if (!token || !session || Date.now() - session.createdAt > SESSION_TTL_MS) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
@@ -5408,6 +5714,7 @@ Directives pour ce tour :
         return;
       }
       const dailyCap = LIVE_DAILY_MS[effectivePlan] ?? 0;
+      await hydrateLiveUsage(session.phone);
       if (getLiveUsedMs(session.phone) >= dailyCap) {
         socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
         socket.destroy();
@@ -5452,6 +5759,21 @@ Directives pour ce tour :
       try { clientWs.send(JSON.stringify({ type: "limit", message: "Durée maximale de l'appel atteinte pour aujourd'hui ou pour cette session." })); clientWs.close(4008, "limit"); } catch {}
     }, Math.min(LIVE_MAX_SESSION_MS, remainingBudget));
 
+    // Décompte du temps toutes les 30 s (et non plus seulement à la fermeture) : deux appels simultanés
+    // ou une coupure brutale du serveur ne contournent plus le plafond quotidien.
+    let countedUntil = connStartedAt;
+    const flushUsage = () => {
+      const now = Date.now();
+      addLiveUsage(connPhone, now - countedUntil);
+      countedUntil = now;
+    };
+    const usageTimer = setInterval(() => {
+      flushUsage();
+      if (getLiveUsedMs(connPhone) >= (LIVE_DAILY_MS[connPlan] ?? 0)) {
+        try { clientWs.send(JSON.stringify({ type: "limit", message: "Durée maximale de l'appel atteinte pour aujourd'hui." })); clientWs.close(4008, "limit"); } catch {}
+      }
+    }, 30_000);
+
     // Ping/pong : détecte les connexions mortes (proxy, réseau mobile).
     let isAlive = true;
     clientWs.on("pong", () => { isAlive = true; });
@@ -5485,8 +5807,14 @@ RAPPEL FINAL (MODE VOCAL, NON NÉGOCIABLE) : deux phrases maximum. Jamais de "Bo
     const liveAgentSessionId = crypto.randomBytes(12).toString("hex");
     let liveAgentState: LiveAgentState | null = null;
 
+    // Débit maximal de messages par seconde (audio, images, texte) : au-delà, les messages sont ignorés.
+    let msgWindowAt = Date.now();
+    let msgInWindow = 0;
     clientWs.on("message", async (data) => {
       try {
+        const nowMs = Date.now();
+        if (nowMs - msgWindowAt >= 1000) { msgWindowAt = nowMs; msgInWindow = 0; }
+        if (++msgInWindow > 100) return;
         const message = JSON.parse(data.toString());
 
         if (message.type === "start") {
@@ -5949,11 +6277,15 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             });
           }
         } else if (message.type === "image" || message.type === "video" || message.type === "media") {
-          if (geminiSession) {
+          const liveMime = String(message.mimeType || "image/jpeg").toLowerCase();
+          const liveB64 = message.data || message.image;
+          if (geminiSession && (!["image/jpeg", "image/png", "image/webp"].includes(liveMime) || typeof liveB64 !== "string" || liveB64.length > 6_000_000)) {
+            clientWs.send(JSON.stringify({ type: "error", message: "Photo non prise en charge (JPEG, PNG ou WebP, taille limitée)." }));
+          } else if (geminiSession) {
             console.log("[WebSocket] Sending realtime media/image input to Gemini Live session via sendRealtimeInput...");
             try {
               geminiSession.sendRealtimeInput({
-                video: { data: message.data || message.image, mimeType: message.mimeType || "image/jpeg" }
+                video: { data: liveB64, mimeType: liveMime }
               });
               clientWs.send(JSON.stringify({ type: "mediaAck", status: "ok", message: "Photo transmise à Gemini Live." }));
             } catch (err: any) {
@@ -6035,12 +6367,13 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
       console.log("[WebSocket] Client disconnected from real-time voice bridge.");
       isClosed = true;
       clearTimeout(limitTimer);
+      clearInterval(usageTimer);
       clearInterval(heartbeat);
       mySet.delete(clientWs);
       if (mySet.size === 0) liveConnections.delete(connPhone);
       if (!usageCounted) {
         usageCounted = true;
-        addLiveUsage(connPhone, Date.now() - connStartedAt);
+        flushUsage();
       }
       if (geminiSession) {
         try {
