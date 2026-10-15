@@ -800,12 +800,34 @@ function requireAuth(req: any, res: any, next: any) {
 // --- Administration : protection par secret serveur (jamais exposé au client) ---
 // Définissez ADMIN_SECRET dans vos variables d'environnement en production.
 // Sans ADMIN_SECRET configuré, toutes les routes admin refusent l'accès (fail-closed).
+function safeEqualSecret(a: unknown, b: string): boolean {
+  if (typeof a !== "string" || !a) return false;
+  const ha = crypto.createHash("sha256").update(a).digest();
+  const hb = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// Anti brute-force du code admin : 10 échecs / 15 min par IP, sur TOUTES les routes admin.
+const adminFailures = new Map<string, { count: number; windowStart: number }>();
+const ADMIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const ADMIN_FAIL_MAX = 10;
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, e] of adminFailures) if (now - e.windowStart > ADMIN_FAIL_WINDOW_MS) adminFailures.delete(ip);
+}, 10 * 60 * 1000).unref();
+
 function requireAdminAuth(req: any, res: any, next: any) {
   const adminSecret = process.env.ADMIN_SECRET;
   const providedCode = req.headers["x-admin-code"] || req.body?.code;
+  const ip = String(req.ip || "unknown");
+
+  const failures = adminFailures.get(ip);
+  if (failures && Date.now() - failures.windowStart <= ADMIN_FAIL_WINDOW_MS && failures.count >= ADMIN_FAIL_MAX) {
+    return res.status(429).json({ success: false, message: "Trop de tentatives d'accès administrateur." });
+  }
 
   // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
-  if (adminSecret && providedCode && providedCode === adminSecret) {
+  if (adminSecret && providedCode && safeEqualSecret(providedCode, adminSecret)) {
     return next();
   }
 
@@ -820,6 +842,11 @@ function requireAdminAuth(req: any, res: any, next: any) {
 
   if (!adminSecret && !session) {
     return res.status(503).json({ success: false, message: "Accès admin non configuré sur le serveur (ADMIN_SECRET manquant)." });
+  }
+  if (providedCode) {
+    const e = failures && Date.now() - failures.windowStart <= ADMIN_FAIL_WINDOW_MS ? failures : { count: 0, windowStart: Date.now() };
+    e.count += 1;
+    adminFailures.set(ip, e);
   }
   return res.status(401).json({ success: false, message: "Accès administrateur refusé." });
 }
@@ -4097,9 +4124,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   setTimeout(() => { processDueShopFollowups().catch((err) => console.error("[CRM WhatsApp] Initial worker:", err)); }, 5000);
 
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
+  // Quantité valide : entier entre 1 et 100 (sinon 1).
+  const sanitizeQty = (q: any): number => {
+    const n = Number(q);
+    return Number.isInteger(n) && n >= 1 && n <= 100 ? n : 1;
+  };
+
   app.post("/api/shop/orders", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { phone, name, city, product_id, quantity, notes } = req.body;
+    const { phone, name, city, product_id, notes } = req.body;
+    const quantity = sanitizeQty(req.body.quantity);
     if (!phone || !product_id) return res.status(400).json({ success: false, message: "Téléphone et produit requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
 
@@ -4158,6 +4192,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const city: string | undefined = body.city;
     const address: string | undefined = body.address ?? body.shipping_address;
     const items: { product_id: number; quantity: number }[] = body.items;
+    if (Array.isArray(items) && items.length > 50) return res.status(400).json({ success: false, message: "Panier trop volumineux." });
     if (!phone || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Téléphone et au moins un article requis." });
     }
@@ -4173,13 +4208,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [item.product_id]);
       if (productRes.rows.length === 0) continue; // ignore un produit devenu introuvable plutôt que d'annuler toute la commande
       const product = productRes.rows[0];
-      const dep = depositFor(product, item.quantity || 1);
+      const dep = depositFor(product, sanitizeQty(item.quantity));
       depositTotal += dep.amount;
       if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
       const orderRes = await dbPool.query(
         `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address, deposit_fcfa, deposit_status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null, dep.amount, dep.status]
+        [cleanPhone, item.product_id, product.name, product.price_fcfa, sanitizeQty(item.quantity), orderRef, city || null, address || null, dep.amount, dep.status]
       );
       createdIds.push(orderRes.rows[0].id);
     }
@@ -4199,15 +4234,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // --- Public : suivi de commande par référence + téléphone ---
-  app.get("/api/shop/track", async (req, res) => {
+  app.get("/api/shop/track", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { ref, phone } = req.query as { ref?: string; phone?: string };
-    if (!phone) return res.status(400).json({ success: false, message: "Téléphone requis." });
+    if (!phone || !ref) return res.status(400).json({ success: false, message: "Référence et téléphone requis." });
     const cleanPhone = String(phone).replace(/[\s-]/g, "");
 
     let query = "SELECT * FROM shop_orders WHERE customer_phone = $1";
     const params: any[] = [cleanPhone];
-    if (ref) { params.push(ref); query += ` AND order_ref = $2`; }
+    params.push(String(ref)); query += ` AND order_ref = $2`;
     query += " ORDER BY created_at DESC LIMIT 50";
     const { rows } = await dbPool.query(query, params);
     if (rows.length === 0) return res.status(404).json({ success: false, message: "Aucune commande trouvée pour ces informations." });
@@ -4730,6 +4765,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     const fullPhone = `${countryCode || "+225"}${cleanNumber}`;
 
+    // Ne jamais écraser un compte existant : sinon n'importe qui pourrait en prendre le contrôle
+    // (la réinitialisation passe par l'OTP WhatsApp ou l'email, pas par cette route).
+    if (userAccounts.has(fullPhone)) {
+      return res.status(409).json({ success: false, message: "Un compte existe déjà pour ce numéro. Connectez-vous ou utilisez « mot de passe oublié »." });
+    }
+
     createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
     console.log(`[Auth] Compte créé par auto-inscription (captcha) pour ${fullPhone}.`);
     const token = createSession(fullPhone);
@@ -4796,7 +4837,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!adminSecret) {
       return res.status(503).json({ success: false, message: "Accès admin non configuré sur le serveur." });
     }
-    if (code !== adminSecret) {
+    if (!safeEqualSecret(code, adminSecret)) {
       return res.status(401).json({ success: false, message: "Code invalide." });
     }
     res.json({ success: true });
