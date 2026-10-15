@@ -232,7 +232,7 @@ class MainActivity : ComponentActivity() {
 
                     val session = json.optString("sessionId")
                     val pairing = json.optString("pairingCode")
-                    val ws = json.optString("wsUrl", "https://diagassist-production.onrender.com")
+                    val ws = TrustedServer.resolve(json.optString("wsUrl", TrustedServer.DEFAULT))
                     if (session.isBlank() || pairing.isBlank()) {
                         runOnUiThread {
                             Toast.makeText(this, "Réponse de connexion incomplète.", Toast.LENGTH_LONG).show()
@@ -295,7 +295,7 @@ class MainActivity : ComponentActivity() {
         val u = launchUri ?: return
         val session = u.getQueryParameter("sessionId") ?: ""
         val pairing = u.getQueryParameter("pairingCode") ?: ""
-        val ws = u.getQueryParameter("wsUrl") ?: "https://diagassist-production.onrender.com"
+        val ws = TrustedServer.resolve(u.getQueryParameter("wsUrl"))
 
         startForegroundService(Intent(this, ScreenCaptureService::class.java).apply {
             putExtra("resultCode", projectionResult)

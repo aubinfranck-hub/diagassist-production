@@ -57,7 +57,7 @@ class ScreenCaptureService : Service() {
         if (Build.VERSION.SDK_INT >= 29) startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) else startForeground(1001, notification)
         val code = intent?.getIntExtra("resultCode", 0) ?: return START_NOT_STICKY
         val data = intent.getParcelableExtra<Intent>("resultData") ?: return START_NOT_STICKY
-        wsBase = intent.getStringExtra("wsUrl") ?: "https://diagassist-production.onrender.com"
+        wsBase = TrustedServer.resolve(intent.getStringExtra("wsUrl"))
         currentSession = intent.getStringExtra("sessionId") ?: ""
         pairingCode = intent.getStringExtra("pairingCode") ?: ""
         authToken = intent.getStringExtra("token") ?: ""
