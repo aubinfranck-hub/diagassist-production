@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 // ---------------------------------------------------------------------------
 
 export type ServiceCode =
-  | "mecanique" | "electricite" | "diagnostic" | "batterie" | "pneumatiques" | "remorquage" | "vidange";
+  | "mecanique" | "electricite" | "diagnostic" | "batterie" | "pneumatiques" | "remorquage" | "vidange" | "moto";
 
 export type RequestStatus =
   | "brouillon" | "recherche" | "affectee" | "en_route" | "sur_place"
@@ -254,7 +254,7 @@ export const STATUS_SHORT: Record<string, string> = {
 
 export const SERVICE_FALLBACK_LABEL: Record<string, string> = {
   mecanique: "Mécanique", electricite: "Électricité", diagnostic: "Diagnostic", batterie: "Batterie",
-  pneumatiques: "Pneus", remorquage: "Remorquage", vidange: "Vidange",
+  pneumatiques: "Pneus", remorquage: "Remorquage", vidange: "Vidange", moto: "Moto",
 };
 
 export const LINE_LABEL: Record<string, string> = {
