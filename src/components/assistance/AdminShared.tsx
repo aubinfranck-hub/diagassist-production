@@ -65,7 +65,7 @@ export const STATUS_LABELS: Record<string, string> = {
 };
 export const SERVICE_LABELS: Record<string, string> = {
   mecanique: "Mécanique", electricite: "Électricité", diagnostic: "Diagnostic", batterie: "Batterie",
-  pneumatiques: "Pneumatiques", remorquage: "Remorquage", vidange: "Vidange", moto: "Moto",
+  pneumatiques: "Pneumatiques", remorquage: "Remorquage", vidange: "Vidange",
 };
 export const SERVICE_CODES = Object.keys(SERVICE_LABELS);
 export const statusLabel = (s?: string) => (s ? STATUS_LABELS[s] || s : "—");

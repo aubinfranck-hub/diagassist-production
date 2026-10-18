@@ -19,7 +19,6 @@ export const SERVICE_SEED: { code: string; label: string; description: string; s
   { code: "pneumatiques", label: "Pneumatiques", description: "Pneu crevé, éclaté ou à changer.", sort: 5 },
   { code: "remorquage", label: "Remorquage", description: "Évacuation du véhicule vers un garage.", sort: 6 },
   { code: "vidange", label: "Vidange sur rendez-vous", description: "Vidange et entretien courant.", sort: 7 },
-  { code: "moto", label: "Dépannage moto", description: "Panne ou crevaison sur un deux-roues.", sort: 8 },
 ];
 export const SERVICE_CODES = SERVICE_SEED.map((s) => s.code);
 
