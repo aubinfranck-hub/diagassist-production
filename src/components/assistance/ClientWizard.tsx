@@ -4,9 +4,10 @@ import {
   LocateFixed, MapPin, Camera, Video, X, ChevronDown, Loader2, ShieldCheck, Car,
 } from "lucide-react";
 import {
-  api, authToken, AssistanceStatus, compressImage, formatXOF, indicativeText, knownPhone, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
+  api, authToken, AssistanceError, AssistanceStatus, compressImage, formatXOF, indicativeText, knownPhone, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
 } from "./api";
 import { LatLng, MapScreen, useAddress } from "./AssistanceMaps";
+import { enqueueRequest, isOfflineError } from "./offlineQueue";
 import { btnPrimary, errText, inputCls, Notice } from "./ui";
 
 /** Données reprises depuis un diagnostic IA (écran de résultat). */
@@ -35,7 +36,7 @@ interface Attach { blob: Blob; name: string; mime: string; preview?: string; kin
 type GeoState = "idle" | "loading" | "denied" | "unavailable" | "timeout";
 
 export default function ClientWizard({
-  status, prefill, initialPos, initialAccuracy, onCreated, onClose,
+  status, prefill, initialPos, initialAccuracy, onCreated, onClose, onQueued,
 }: {
   status: AssistanceStatus;
   prefill?: AssistancePrefill | null;
@@ -43,6 +44,8 @@ export default function ClientWizard({
   initialAccuracy?: number;
   onCreated: (id: string) => void;
   onClose: () => void;
+  /** Appelé quand la demande a été gardée hors ligne (file d'attente locale). */
+  onQueued?: () => void;
 }) {
   // --- Panne ---
   const [tileId, setTileId] = useState<string>("");
@@ -152,24 +155,14 @@ export default function ClientWizard({
   const send = async () => {
     if (!pos || !tile || sending) return;
     setSending(true); setError("");
+    let body: Record<string, unknown> | null = null;
     try {
-      const mediaIds: string[] = [];
-      for (const a of attachments) {
-        let id = uploaded.current.get(a);
-        if (!id) {
-          const dataBase64 = await readAsBase64(a.blob);
-          const r = await api<{ media: { id: string } }>("/media", { body: { mime: a.mime, dataBase64, name: a.name } });
-          id = r.media.id;
-          uploaded.current.set(a, id);
-        }
-        mediaIds.push(id);
-      }
       const vehicle = {
         brand: brand.trim() || undefined, model: model.trim() || undefined,
         year: prefill?.vehicle?.year || undefined, engine: prefill?.vehicle?.engine || undefined, source: vehicleSource,
       };
       const codes = (prefill?.faultCodes || []).map((c) => c.trim().toUpperCase()).filter(Boolean);
-      const body: Record<string, unknown> = {
+      body = {
         service: serviceCode,
         vehicle,
         symptoms: symptomsText,
@@ -181,16 +174,39 @@ export default function ClientWizard({
           address: address || undefined, landmark: landmark.trim() || undefined, confirmed: true,
         },
         shareDiagnostic: !!(prefill?.summary && share),
-        mediaIds: mediaIds.length ? mediaIds : undefined,
         submit: true,
       };
       if (prefill?.summary && share) {
         body.diagnostic = { summary: prefill.summary, faultCodes: prefill.faultCodes, vehicle };
       }
+      if (!navigator.onLine) throw new AssistanceError("Pas de connexion.", 0, "OFFLINE");
+      const mediaIds: string[] = [];
+      for (const a of attachments) {
+        let id = uploaded.current.get(a);
+        if (!id) {
+          const dataBase64 = await readAsBase64(a.blob);
+          const r = await api<{ media: { id: string } }>("/media", { body: { mime: a.mime, dataBase64, name: a.name } });
+          id = r.media.id;
+          uploaded.current.set(a, id);
+        }
+        mediaIds.push(id);
+      }
+      body.mediaIds = mediaIds.length ? mediaIds : undefined;
       const r = await api<{ request: { id: string } }>("/requests", { body });
       onCreated(r.request.id);
     } catch (e) {
-      setError(errText(e));
+      if (body && isOfflineError(e)) {
+        // Pas de réseau : on garde la demande et on la renverra automatiquement.
+        const known = attachments.map((a) => uploaded.current.get(a)).filter((x): x is string => !!x);
+        body.mediaIds = known.length ? known : undefined;
+        const q = await enqueueRequest(body, attachments.filter((a) => !uploaded.current.has(a)));
+        if (q.ok) { onQueued ? onQueued() : onClose(); return; }
+        setError((q as { reason?: string }).reason === "full"
+          ? "Vous avez déjà 3 demandes en attente. Annulez-en une ou attendez le retour du réseau."
+          : "Pas de réseau et impossible de garder votre demande sur ce téléphone. Réessayez quand le réseau revient.");
+      } else {
+        setError(errText(e));
+      }
     } finally {
       setSending(false);
     }

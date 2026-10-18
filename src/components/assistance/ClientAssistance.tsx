@@ -7,6 +7,9 @@ import {
 import ClientWizard, { AssistancePrefill } from "./ClientWizard";
 import ClientTracking from "./ClientTracking";
 import { LatLng, MapScreen, useAddress } from "./AssistanceMaps";
+import { SosButton } from "./Sos";
+import PendingBanner from "./PendingBanner";
+import { usePendingRequests } from "./offlineQueue";
 import { btnPrimary, btnSecondary, errText, Notice, Spinner, StateBox } from "./ui";
 
 export type { AssistancePrefill } from "./ClientWizard";
@@ -86,6 +89,9 @@ export default function ClientAssistance({
 
   usePolling(loadAll, 15000, view.name !== "track", view.name);
 
+  // Demandes gardées hors ligne : rejeu à l'ouverture de l'accueil et au retour du réseau.
+  const pending = usePendingRequests(view.name === "home", (id) => { void loadAll(); setView({ name: "track", id }); });
+
   // ----- Indisponible -----
   if (unavailable) {
     return (
@@ -107,6 +113,7 @@ export default function ClientAssistance({
           initialAccuracy={homeAcc}
           onClose={() => { setWizardPrefill(null); setView({ name: "home" }); }}
           onCreated={(id) => { setWizardPrefill(null); void loadAll(); setView({ name: "track", id }); }}
+          onQueued={() => { setWizardPrefill(null); setView({ name: "home" }); }}
         />
       </Wrap>
     );
@@ -115,7 +122,10 @@ export default function ClientAssistance({
   if (view.name === "track") {
     return (
       <Wrap>
-        <ClientTracking requestId={view.id} status={status} onBack={() => { setView({ name: "home" }); void loadAll(); }} />
+        <div className="relative">
+          <ClientTracking requestId={view.id} status={status} onBack={() => { setView({ name: "home" }); void loadAll(); }} />
+          <SosButton className="absolute top-3 right-3 z-20" />
+        </div>
       </Wrap>
     );
   }
@@ -131,6 +141,7 @@ export default function ClientAssistance({
         client={homePos}
         accuracy={homeAcc}
         editable
+        topRight={<SosButton />}
         onChange={(p) => { setHomePos(p); setHomeAcc(undefined); setGeoMsg(""); }}
         footer={
           active ? (
@@ -138,13 +149,14 @@ export default function ClientAssistance({
               Voir ma demande en cours <ChevronRight className="w-5 h-5" />
             </button>
           ) : (
-            <button className={`${btnPrimary} !min-h-[60px] !text-lg`} disabled={!status || !anyAvailable || !online} onClick={() => { setWizardPrefill(null); setView({ name: "wizard" }); }}>
+            <button className={`${btnPrimary} !min-h-[60px] !text-lg`} disabled={!status || !anyAvailable} onClick={() => { setWizardPrefill(null); setView({ name: "wizard" }); }}>
               <LifeBuoy className="w-6 h-6" /> Je suis en panne
             </button>
           )
         }
       >
-        {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Vous êtes hors ligne. Reconnectez-vous pour demander de l'aide.</span></Notice>}
+        {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Vous êtes hors ligne. Vous pouvez quand même faire votre demande : elle sera envoyée dès que le réseau revient.</span></Notice>}
+        <PendingBanner items={pending.items} busy={pending.busy} notices={pending.notices} onCancel={pending.cancel} onDismiss={pending.dismissNotices} />
         {loadError && online && <Notice tone="warn" action={<button className={btnSecondary} onClick={() => void loadAll()}>Réessayer</button>}>{loadError}</Notice>}
 
         <div className="flex items-center gap-3">
