@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { 
   AlertOctagon, AlertTriangle, ShieldCheck, CheckCircle2, 
   Wrench, Clock, Euro, HelpCircle, Cpu, Volume2, VolumeX, BookOpen, Lock, Play, Square, Sparkles, Printer, RefreshCw, FileDown,
-  Phone, ShoppingBag, MessageCircle
+  Phone, ShoppingBag, MessageCircle, LifeBuoy
 } from "lucide-react";
 
 import { Diagnosis, ApiUsage, DtcCode, RepairStep, SubscriptionPlan } from "../types";
@@ -13,9 +13,11 @@ interface DiagnosisResultViewProps {
   apiUsage: ApiUsage;
   currentPlan: SubscriptionPlan;
   onUpgradeClick?: () => void;
+  /** Ouvre le parcours « Assistance automobile » avec ce diagnostic en pré-remplissage. */
+  onRequestMechanic?: () => void;
 }
 
-export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, onUpgradeClick }: DiagnosisResultViewProps) {
+export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, onUpgradeClick, onRequestMechanic }: DiagnosisResultViewProps) {
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isGeneratingTts, setIsGeneratingTts] = useState(false);
@@ -479,6 +481,25 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
           ))}
         </div>
       </div>
+
+      {/* Faire intervenir un mécanicien (assistance géolocalisée) */}
+      {onRequestMechanic && (
+        <div className="bg-slate-900/60 border border-white/[0.08] rounded-3xl p-5 md:p-6 flex flex-col sm:flex-row sm:items-center gap-4 print:hidden">
+          <div className="flex items-start gap-3 flex-1">
+            <div className="p-3 bg-red-600/15 text-red-500 rounded-2xl shrink-0"><LifeBuoy className="w-6 h-6" /></div>
+            <div>
+              <h3 className="text-base font-black text-white">Besoin d'un mécanicien sur place ?</h3>
+              <p className="text-xs text-slate-400 mt-1">Ces conclusions sont des pistes à vérifier. Un professionnel peut venir les contrôler. Vous choisirez à l'étape suivante si ce diagnostic lui est transmis.</p>
+            </div>
+          </div>
+          <button
+            onClick={onRequestMechanic}
+            className="min-h-[52px] px-6 rounded-2xl bg-red-600 hover:bg-red-700 text-[#ffffff] text-sm font-black shadow-lg shadow-red-600/25 transition cursor-pointer shrink-0"
+          >
+            Faire intervenir un mécanicien
+          </button>
+        </div>
+      )}
 
       {/* Recommandation Achat Pièce Défectueuse */}
       <div className="bg-gradient-to-r from-red-950/40 via-slate-900 to-amber-950/30 border-2 border-red-500/40 rounded-3xl p-6 md:p-8 text-slate-100 shadow-2xl relative overflow-hidden">

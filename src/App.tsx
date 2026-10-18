@@ -3,7 +3,7 @@ import { AnimatePresence } from "motion/react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText,
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench, Chrome,
-  Sun, Moon, Monitor, Users, ShoppingBag
+  Sun, Moon, Monitor, Users, ShoppingBag, LifeBuoy
 } from "lucide-react";
 
 import DiagnosticForm from "./components/DiagnosticForm";
@@ -21,6 +21,8 @@ import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
 import AutoQuestioningLoop from "./components/AutoQuestioningLoop";
 import ScreeningV2Panel from "./components/ScreeningV2Panel";
+import ClientAssistance, { AssistancePrefill } from "./components/assistance/ClientAssistance";
+import MechanicSpace from "./components/assistance/MechanicSpace";
 
 import { Diagnosis, ApiUsage, ChatMessage, SubscriptionPlan } from "./types";
 
@@ -209,7 +211,18 @@ export default function App() {
   }, []);
 
   // Navigation tabs
-  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening">("diagnose");
+  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening" | "assistance" | "depannage">(() => {
+    // Retour d'un paiement mobile : on rouvre le suivi, l'état réel est relu sur le serveur.
+    try {
+      if (localStorage.getItem("assistance_resume") === "1") { localStorage.removeItem("assistance_resume"); return "assistance"; }
+    } catch { /* ignore */ }
+    return "diagnose";
+  });
+  // Assistance automobile : pré-remplissage depuis un diagnostic IA (jamais transmis sans consentement)
+  const [assistancePrefill, setAssistancePrefill] = useState<AssistancePrefill | null>(null);
+  const [lastDiagInput, setLastDiagInput] = useState<{
+    vehicleBrand: string; vehicleModel: string; vehicleYear: string; vehicleEngine: string; textDescription: string;
+  } | null>(null);
 
   const [activeResultTab, setActiveResultTab] = useState<"report" | "chat" | "visual">("report");
   const [showMobileUserMenu, setShowMobileUserMenu] = useState(false);
@@ -458,6 +471,26 @@ export default function App() {
   const USD_TO_EUR = 0.92;
 
   // Trigger vehicle diagnosis request
+  const requestMechanicFromDiagnosis = () => {
+    if (!diagnosisResult) return;
+    const d = diagnosisResult;
+    const summary = [
+      `Véhicule : ${d.brandModelInfo}`,
+      "Pistes à vérifier (analyse automatique, non confirmée) :",
+      ...d.probableCauses.slice(0, 5).map((c) => `- ${c}`),
+    ].join("\n");
+    setAssistancePrefill({
+      vehicle: lastDiagInput
+        ? { brand: lastDiagInput.vehicleBrand, model: lastDiagInput.vehicleModel, year: lastDiagInput.vehicleYear, engine: lastDiagInput.vehicleEngine }
+        : undefined,
+      symptoms: lastDiagInput?.textDescription?.slice(0, 300),
+      faultCodes: d.dtcCodesDetected.map((c) => c.code),
+      summary,
+    });
+    setActiveTab("assistance");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const handleDiagnose = async (formData: {
     vehicleBrand: string;
     vehicleModel: string;
@@ -479,6 +512,7 @@ export default function App() {
     }
 
     setIsLoading(true);
+    setLastDiagInput(formData);
     setDiagnosisResult(null);
     setApiUsage(null);
     setChatHistory([]); // Clear prior chat logs for a new diagnosis
@@ -815,6 +849,24 @@ export default function App() {
 
                 <button
                   onClick={() => {
+                    setActiveTab("assistance");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
+                    activeTab === "assistance" || activeTab === "depannage"
+                      ? "bg-red-600 text-white shadow-lg shadow-red-600/25 border border-white/10"
+                      : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <LifeBuoy className="w-4.5 h-4.5" />
+                    <span>Assistance</span>
+                  </div>
+                  {(activeTab === "assistance" || activeTab === "depannage") && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                </button>
+
+                <button
+                  onClick={() => {
                     setActiveTab("prices");
                     window.scrollTo({ top: 0, behavior: "smooth" });
                   }}
@@ -1122,6 +1174,21 @@ export default function App() {
 
             <button
               onClick={() => {
+                setActiveTab("assistance");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
+                activeTab === "assistance" || activeTab === "depannage"
+                  ? "bg-slate-950 text-red-500 border border-white/[0.04]"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <LifeBuoy className="w-5 h-5" />
+              <span className="text-[9px] font-black uppercase tracking-wider">Assistance</span>
+            </button>
+
+            <button
+              onClick={() => {
                 setActiveTab("prices");
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
@@ -1164,6 +1231,24 @@ export default function App() {
                 
                 {/* Left side: Form Inputs */}
                 <div className="lg:col-span-5 space-y-4 print:hidden">
+              {/* Assistance automobile : accès direct pour un automobiliste en panne */}
+              <div className="premium-glass-card border border-red-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3 shadow-xl">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl bg-red-600/15 text-red-500 flex items-center justify-center shrink-0">
+                    <LifeBuoy className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-black text-white">Besoin d'un mécanicien ?</div>
+                    <div className="text-xs text-slate-400">Un professionnel près de vous peut venir sur place.</div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setAssistancePrefill(null); setActiveTab("assistance"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  className="min-h-[48px] px-5 rounded-xl bg-red-600 hover:bg-red-700 text-[#ffffff] text-sm font-black shadow-lg shadow-red-600/20 transition cursor-pointer shrink-0"
+                >
+                  Je suis en panne
+                </button>
+              </div>
               <DiagnosticForm onDiagnose={handleDiagnose} isLoading={isLoading} />
               
               {/* Optional Reset panel if results exist */}
@@ -1267,6 +1352,7 @@ export default function App() {
                       apiUsage={apiUsage!} 
                       currentPlan={currentPlan}
                       onUpgradeClick={() => setActiveTab("prices")}
+                      onRequestMechanic={requestMechanicFromDiagnosis}
                     />
                   ) : activeResultTab === "visual" ? (
                     <VisualRepairAssistant
@@ -1358,6 +1444,18 @@ export default function App() {
 
           </div>
         )}
+
+        {/* TAB: Assistance automobile (client) */}
+        {activeTab === "assistance" && (
+          <ClientAssistance
+            prefill={assistancePrefill}
+            onPrefillUsed={() => setAssistancePrefill(null)}
+            onOpenMechanicSpace={() => setActiveTab("depannage")}
+          />
+        )}
+
+        {/* TAB: Espace dépannage (mécanicien) */}
+        {activeTab === "depannage" && <MechanicSpace onBack={() => setActiveTab("assistance")} />}
 
         {/* TAB: DiagAssist Scanner — appairage tablette + coaching temps réel */}
         {activeTab === "screening" && accountType === "mechanic" && (

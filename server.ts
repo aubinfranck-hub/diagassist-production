@@ -12,7 +12,8 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
-import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
+import { registerJekoPayments, jekoIsConfigured, createJekoRedirectPayment, fetchJekoPaymentStatus } from "./src/modules/payments/jeko.routes";
+import { registerAssistance, initAssistance } from "./src/modules/assistance/assistance.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
@@ -2239,6 +2240,8 @@ async function generateContentWithFallbackAndRetry(
   throw lastError;
 }
 
+let assistanceSync: (() => Promise<void>) | null = null;
+
 async function startServer() {
   // Charge les données persistées AVANT toute autre chose : sessions/mots de passe/forfaits
   // doivent être en mémoire avant qu'une seule requête ne puisse arriver.
@@ -2275,6 +2278,8 @@ async function startServer() {
     "/api/diagnostic/loop/step",
     "/api/admin/banners",
     "/api/shop/part-requests",
+    "/api/assistance/media",
+    "/api/assistance/pro/documents",
   ]);
   const SMALL_PAYLOAD_LIMIT_BYTES = 2 * 1024 * 1024; // 2MB
   app.use((req, res, next) => {
@@ -3783,6 +3788,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     };
     mechanics.set(id, mechanic);
     persistMechanic(mechanic).catch(() => {});
+    // Chaque mécanicien du réseau est rattaché au dépannage (profil en attente de validation).
+    assistanceSync?.().catch(() => {});
     res.json({ success: true, mechanic });
   });
 
@@ -3792,6 +3799,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!m) return res.status(404).json({ success: false, message: "Mécanicien introuvable." });
     m.active = !m.active;
     persistMechanic(m).catch(() => {});
+    assistanceSync?.().catch(() => {});
     res.json({ success: true, mechanic: m });
   });
 
@@ -5295,7 +5303,25 @@ Directives pour ce tour :
 
   // Paiements d'abonnement automatisés (Orange/Wave/MTN/Moov via Jèko) : à la confirmation par
   // webhook, active le forfait exactement comme le fait l'admin manuellement aujourd'hui.
+  // Assistance automobile : demandes géolocalisées acceptées par un mécanicien validé. Enregistré avant
+  // Jèko car le webhook de paiement lui délègue les références "dgas-…".
+  const assistance = registerAssistance({
+    app,
+    pool: dbPool,
+    requireAuth,
+    requireAdminAuth,
+    sessions,
+    isAdminPhone: (phone: string) => !!userAccounts.get(phone)?.isAdmin,
+    getDirectory: () => Array.from(mechanics.values()),
+    sendWhatsApp: (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) ? sendShopWhatsApp : undefined,
+    jeko: { isConfigured: jekoIsConfigured, create: createJekoRedirectPayment, fetchStatus: fetchJekoPaymentStatus },
+    getOrigin: (req) => process.env.APP_URL || `https://${req.headers.host}`,
+  });
+  assistanceSync = assistance.syncDirectory;
+  await initAssistance(assistance).catch((err: any) => console.error("[ASSISTANCE] Initialisation échouée:", err.message));
+
   registerJekoPayments(app, {
+    onExternalWebhook: assistance.onExternalWebhook,
     requireAuth,
     requireAdminAuth,
     setUserPlan,
