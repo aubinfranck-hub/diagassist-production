@@ -1,8 +1,10 @@
 import crypto from "crypto";
+import rateLimit from "express-rate-limit";
+import { sessionIsValid } from "../security/runtime";
 import type { Express } from "express";
 import type { Server } from "http";
 import { WebSocketServer } from "ws";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, FunctionCallingConfigMode } from "@google/genai";
 import { getGeminiKeys } from "../../utils/geminiKeys";
 
 const sessions = new Map<string, any>();
@@ -35,6 +37,7 @@ function normalizeSessionId(id: string) {
 }
 
 function getSession(id: string) {
+  id = normalizeSessionId(id);
   const s = sessions.get(id);
   if (!s || Date.now() > s.expiresAt) {
     if (s) sessions.delete(id);
@@ -127,15 +130,15 @@ Regarde l'écran et choisis la prochaine action. Utilise exactement un des outil
       config: {
         tools: [{
           functionDeclarations: [
-            { name: "click", description: "Appuie sur un élément visible à la position x,y en pixels", parameters: { type: "OBJECT", properties: { x: { type: "NUMBER" }, y: { type: "NUMBER" }, reason: { type: "STRING" } }, required: ["x","y","reason"] } },
-            { name: "scroll", description: "Fait défiler l'écran. direction = 'up' ou 'down'", parameters: { type: "OBJECT", properties: { direction: { type: "STRING" }, reason: { type: "STRING" } }, required: ["direction","reason"] } },
-            { name: "input", description: "Saisit du texte dans un champ de saisie actif", parameters: { type: "OBJECT", properties: { text: { type: "STRING" }, reason: { type: "STRING" } }, required: ["text","reason"] } },
-            { name: "back", description: "Appuie sur le bouton retour Android", parameters: { type: "OBJECT", properties: { reason: { type: "STRING" } }, required: ["reason"] } },
-            { name: "wait", description: "Attend sans agir (chargement, animation en cours)", parameters: { type: "OBJECT", properties: { reason: { type: "STRING" } }, required: ["reason"] } },
-            { name: "done", description: "Diagnostic terminé — arrête le pilotage et résume les trouvailles", parameters: { type: "OBJECT", properties: { summary: { type: "STRING" }, dtcs: { type: "ARRAY", items: { type: "STRING" } } }, required: ["summary"] } }
+            { name: "click", description: "Appuie sur un élément visible à la position x,y en pixels", parameters: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, reason: { type: Type.STRING } }, required: ["x","y","reason"] } },
+            { name: "scroll", description: "Fait défiler l'écran. direction = 'up' ou 'down'", parameters: { type: Type.OBJECT, properties: { direction: { type: Type.STRING }, reason: { type: Type.STRING } }, required: ["direction","reason"] } },
+            { name: "input", description: "Saisit du texte dans un champ de saisie actif", parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING }, reason: { type: Type.STRING } }, required: ["text","reason"] } },
+            { name: "back", description: "Appuie sur le bouton retour Android", parameters: { type: Type.OBJECT, properties: { reason: { type: Type.STRING } }, required: ["reason"] } },
+            { name: "wait", description: "Attend sans agir (chargement, animation en cours)", parameters: { type: Type.OBJECT, properties: { reason: { type: Type.STRING } }, required: ["reason"] } },
+            { name: "done", description: "Diagnostic terminé — arrête le pilotage et résume les trouvailles", parameters: { type: Type.OBJECT, properties: { summary: { type: Type.STRING }, dtcs: { type: Type.ARRAY, items: { type: Type.STRING } } }, required: ["summary"] } }
           ]
         }],
-        toolConfig: { functionCallingConfig: { mode: "ANY" } }
+        toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.ANY } }
       }
     });
     const candidate = resp.candidates?.[0];
@@ -266,7 +269,7 @@ export function registerScreening(
     ).then((result: any) => {
       for (const row of result.rows || []) {
         if (row.status !== "completed" && Number(row.expires_at) <= Date.now()) continue;
-        sessions.set(row.id, {
+        sessions.set(normalizeSessionId(row.id), {
           id: row.id,
           technicianPhone: row.technician_phone,
           coachPhone: row.coach_phone || undefined,
@@ -286,6 +289,7 @@ export function registerScreening(
     }).catch((err: any) => console.error("[SCREENING][DB] chargement échoué:", err.message));
   }
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES + 100_000 });
+  server.on("shutdown", () => { for (const ws of wss.clients) ws.terminate(); wss.close(); });
 
   app.post("/api/screening/sessions", deps.requireAuth, async (req: any, res) => {
     if (deps.getEffectivePlan(req.session.phone) !== "premium") {
@@ -296,7 +300,7 @@ export function registerScreening(
       });
     }
 
-    const id = sessionCode();
+    const id = normalizeSessionId(sessionCode());
     const now = Date.now();
     const s = {
       id,
@@ -330,7 +334,8 @@ export function registerScreening(
     });
   });
 
-  app.post("/api/screening/pair-by-code", async (req: any, res) => {
+  const pairingLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 12, standardHeaders: true, legacyHeaders: false });
+  app.post("/api/screening/pair-by-code", pairingLimiter, async (req: any, res) => {
     const pairingCode = String(req.body?.pairingCode || "").replace(/\D/g, "");
     if (!/^\d{6}$/.test(pairingCode)) {
       return res.status(400).json({ success: false, message: "Code de connexion invalide." });
@@ -373,7 +378,7 @@ export function registerScreening(
           technicianDeviceId: row.technician_device_id || undefined,
           lastVisionAt: 0,
         }));
-        if (candidates.length === 1) sessions.set(candidates[0].id, candidates[0]);
+        if (candidates.length === 1) sessions.set(normalizeSessionId(candidates[0].id), candidates[0]);
       } catch (err: any) {
         console.error("[SCREENING][PAIR] récupération DB échouée:", err?.message || err);
       }
@@ -604,7 +609,8 @@ Ne fabrique aucune donnée absente de l'image.`,
 
   // Le coach humain rejoint avec son ID de session uniquement.
   // Le code d'appairage est strictement réservé à la tablette du technicien.
-  app.post("/api/screening/sessions/:id/join-coach", deps.requireAuth, async (req: any, res) => {
+  app.post("/api/screening/sessions/:id/join-coach", pairingLimiter, deps.requireAuth, async (req: any, res) => {
+    if (deps.getEffectivePlan(req.session.phone) !== "premium") return res.status(403).json({ success: false, message: "Le coaching temps réel est réservé au Premium.", requiredTier: "premium" });
     let s: any;
     try {
       s = await getSessionAsync(req.params.id);
@@ -649,8 +655,11 @@ Ne fabrique aucune donnée absente de l'image.`,
       return;
     }
 
-    const token = url.searchParams.get("token") || "";
-    const auth = deps.sessions.get(token);
+    const protoToken = String(request.headers["sec-websocket-protocol"] || "").split(",").map(x => x.trim()).find(x => x.startsWith("auth."))?.slice(5);
+    const token = protoToken || url.searchParams.get("token") || "";
+    const candidate = deps.sessions.get(token);
+    const auth = sessionIsValid(candidate) ? candidate : undefined;
+    if (token && !auth) { socket.end("HTTP/1.1 401 Unauthorized\r\n\r\n"); return; }
 
     // Controller/coach connections use the normal authenticated session token.
     // Technician tablets may connect without a bearer token because the QR carries only
@@ -663,6 +672,8 @@ Ne fabrique aucune donnée absente de l'image.`,
 
     wss.handleUpgrade(request, socket, head, ws => {
       (ws as any)._phone = auth?.phone || null;
+      (ws as any)._token = token;
+      (ws as any)._address = String(request.headers["x-forwarded-for"] || request.socket.remoteAddress || "").split(",").pop()?.trim();
       wss.emit("connection", ws);
     });
   });
@@ -674,6 +685,12 @@ Ne fabrique aucune donnée absente de l'image.`,
     let lastFrameWindowAt = Date.now();
     let framesInWindow = 0;
 
+    const pairingDeadline = setTimeout(() => { if (!paired) ws.close(4001, "Appairage expiré"); }, 15_000);
+    const heartbeat = setInterval(() => {
+      if (ws._phone && (!sessionIsValid(deps.sessions.get(ws._token)) || deps.getEffectivePlan(ws._phone) !== "premium")) ws.close(4001, "Session expirée");
+      if (sid && !getSession(sid)) ws.close(4001, "Session expirée");
+    }, 15_000);
+    ws.on("error", () => {});
     ws.on("message", async (raw: Buffer) => {
       try {
         const m = JSON.parse(raw.toString());
@@ -707,7 +724,8 @@ Ne fabrique aucune donnée absente de l'image.`,
               return ws.send(JSON.stringify({ type: "error", message: "Code d’appairage expiré. Créez une nouvelle session." }));
             }
             if (!deviceId || deviceId.length > 200) return ws.send(JSON.stringify({ type: "error", message: "Identifiant tablette invalide." }));
-            const key = s.id + ":" + (ws._phone || deviceId);
+            const key = s.id + ":" + (ws._phone || ws._address);
+            if ((attempts.get(key) || 0) >= 3) return ws.send(JSON.stringify({ type: "error", message: "Trop de tentatives." }));
             if (m.pairingCode !== s.pairingCode) {
               const n = (attempts.get(key) || 0) + 1;
               attempts.set(key, n);
@@ -729,6 +747,7 @@ Ne fabrique aucune donnée absente de l'image.`,
           role = requestedRole;
           sid = s.id;
           paired = true;
+          clearTimeout(pairingDeadline);
           s.status = "active";
           try {
             await persistSession(s);
@@ -805,6 +824,7 @@ Ne fabrique aucune donnée absente de l'image.`,
     });
 
     ws.on("close", () => {
+      clearTimeout(pairingDeadline); clearInterval(heartbeat);
       if (sid) clients.get(sid)?.delete(ws);
     });
   });

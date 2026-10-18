@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import type { Express } from "express";
 
+type Query = (sql: string, params?: any[]) => Promise<any>;
+
 const JEKO_API_BASE = "https://api.jeko.africa";
 
 // Correspondance entre les forfaits vendus sur la page tarifs et les clés de plan internes
@@ -61,6 +63,8 @@ export async function fetchJekoPaymentStatus(jekoId: string): Promise<string> {
 type PendingPayment = {
   phone: string;
   plan: string;
+  kind: "plan" | "shop";
+  orderRef?: string;
   amountCents: number;
   status: "pending" | "success" | "error";
   createdAt: number;
@@ -72,9 +76,16 @@ export function registerJekoPayments(
   deps: {
     requireAuth: any;
     requireAdminAuth: any;
-    setUserPlan: (phone: string, plan: string, customDurationMs?: number) => void;
-    onPlanActivated: (phone: string, plan: string) => void;
-    dbQuery?: (sql: string, params?: any[]) => Promise<any>;
+    setUserPlan: (phone: string, plan: string, customDurationMs?: number) => void | Promise<void>;
+    onPlanActivated: (phone: string, plan: string, activatedAt?: number) => void;
+    dbQuery?: Query;
+    dbTransaction?: <T>(work: (query: Query) => Promise<T>) => Promise<T>;
+    // Paiements de la boutique (clients sans compte) : le serveur calcule le montant dû.
+    shop?: {
+      limiter: any;
+      quote: (orderRef: string, phone: string, mode: "deposit" | "full") => Promise<{ amountXof: number } | { error: string }>;
+      onPaid: (orderRef: string, query?: Query) => Promise<void>;
+    };
     // Paiements d'autres modules (références "dgas-…") : le webhook, une fois sa signature vérifiée,
     // leur délègue le traitement. Renvoie true si la référence leur appartient.
     onExternalWebhook?: (reference: string, status: string, body: any) => Promise<boolean>;
@@ -94,7 +105,7 @@ export function registerJekoPayments(
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const isConfigured = () => Boolean(apiKey && apiKeyId && storeId && webhookSecrets.length > 0);
+  const isConfigured = () => Boolean(apiKey && apiKeyId && storeId && webhookSecrets.length > 0 && (process.env.NODE_ENV !== "production" || (deps.dbQuery && deps.dbTransaction)));
   if (!isConfigured()) {
     console.warn("[JEKO] Variables JEKO_API_KEY / JEKO_API_KEY_ID / JEKO_STORE_ID / JEKO_WEBHOOK_SECRET(S) manquantes — paiements en ligne désactivés.");
   }
@@ -103,23 +114,23 @@ export function registerJekoPayments(
     if (!deps.dbQuery) return;
     try {
       await deps.dbQuery(
-        `INSERT INTO jeko_payments (reference, phone, plan, amount_cents, status, created_at, jeko_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT (reference) DO UPDATE SET status = $5, jeko_id = COALESCE($7, jeko_payments.jeko_id)`,
-        [reference, p.phone, p.plan, p.amountCents, p.status, p.createdAt, p.jekoId || null]
+        `INSERT INTO jeko_payments (reference, phone, plan, amount_cents, status, created_at, jeko_id, kind, order_ref)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (reference) DO UPDATE SET jeko_id = COALESCE($7, jeko_payments.jeko_id)`,
+        [reference, p.phone, p.plan, p.amountCents, p.status, p.createdAt, p.jekoId || null, p.kind, p.orderRef || null]
       );
     } catch (err: any) {
       console.error("[JEKO][DB] Sauvegarde échouée:", err.message);
+      throw err;
     }
   };
 
   const findPayment = async (reference: string): Promise<PendingPayment | null> => {
     const cached = pending.get(reference);
-    if (cached) return cached;
-    if (!deps.dbQuery) return null;
+    if (!deps.dbQuery) return cached || null;
     try {
       const result = await deps.dbQuery(
-        `SELECT phone, plan, amount_cents, status, created_at, jeko_id FROM jeko_payments WHERE reference = $1`,
+        `SELECT phone, plan, amount_cents, status, created_at, jeko_id, kind, order_ref FROM jeko_payments WHERE reference = $1`,
         [reference]
       );
       const row = result.rows?.[0];
@@ -127,6 +138,8 @@ export function registerJekoPayments(
       const record: PendingPayment = {
         phone: row.phone,
         plan: row.plan,
+        kind: row.kind === "shop" ? "shop" : "plan",
+        orderRef: row.order_ref || undefined,
         amountCents: Number(row.amount_cents),
         status: row.status,
         createdAt: Number(row.created_at),
@@ -136,19 +149,65 @@ export function registerJekoPayments(
       return record;
     } catch (err: any) {
       console.error("[JEKO][DB] Lecture échouée:", err.message);
-      return null;
+      throw err;
     }
   };
 
   // Marque un paiement confirmé et active le forfait — chemin commun au webhook et au filet de
   // sécurité par sondage ci-dessous, pour ne jamais dupliquer la logique d'activation.
+  const markFailed = async (reference: string, record: PendingPayment) => {
+    if (deps.dbQuery) {
+      await deps.dbQuery("UPDATE jeko_payments SET status='error' WHERE reference=$1 AND status='pending'", [reference]);
+      const saved = await findPayment(reference);
+      if (saved) Object.assign(record, saved);
+    } else if (record.status !== "success") {
+      record.status = "error";
+      await persistPayment(reference, record);
+    }
+  };
+
+  const confirmations = new Map<string, Promise<void>>();
   const confirmPayment = async (reference: string, record: PendingPayment) => {
-    record.status = "success";
-    pending.set(reference, record);
-    await persistPayment(reference, record);
-    deps.setUserPlan(record.phone, record.plan);
-    deps.onPlanActivated(record.phone, record.plan);
-    console.log(`[JEKO] Paiement confirmé : forfait "${record.plan}" activé pour ${record.phone} (réf. ${reference}).`);
+    const running = confirmations.get(reference);
+    if (running) return running;
+    const work = (async () => {
+      let activatedAt = Date.now();
+      let changed = true;
+      if (deps.dbTransaction) {
+        activatedAt = await deps.dbTransaction(async query => {
+          const locked = await query("SELECT * FROM jeko_payments WHERE reference=$1 FOR UPDATE", [reference]);
+          const saved = locked.rows[0];
+          if (!saved) throw new Error("Paiement non enregistré.");
+          if (saved.status === "success") { changed = false; return Number(saved.confirmed_at || saved.created_at); }
+          await query("UPDATE jeko_payments SET status='success',confirmed_at=$2 WHERE reference=$1", [reference, activatedAt]);
+          if (record.kind === "shop") {
+            if (!record.orderRef || !deps.shop) throw new Error("Commande non disponible.");
+            // Serialize payments for the same order before recomputing totals.
+            await query("SELECT id FROM shop_orders WHERE order_ref=$1 ORDER BY id FOR UPDATE", [record.orderRef]);
+            await deps.shop.onPaid(record.orderRef, query);
+          } else {
+            await query(`INSERT INTO plans (phone,plan,activated_at,custom_duration_ms) VALUES ($1,$2,$3,NULL)
+              ON CONFLICT (phone) DO UPDATE SET plan=$2,activated_at=$3,custom_duration_ms=NULL`,
+              [record.phone, record.plan, activatedAt]);
+          }
+          return activatedAt;
+        });
+      } else {
+        if (record.status === "success") return;
+        if (record.kind === "shop") {
+          if (!record.orderRef || !deps.shop) throw new Error("Commande non disponible.");
+          await deps.shop.onPaid(record.orderRef);
+        } else await deps.setUserPlan(record.phone, record.plan);
+        await persistPayment(reference, { ...record, status: "success" });
+      }
+      // Publish cache only after the durable transaction commits.
+      record.status = "success";
+      pending.set(reference, record);
+      if (record.kind === "plan" && changed) deps.onPlanActivated(record.phone, record.plan, activatedAt);
+      console.log("[JEKO] Confirmation durable du paiement.");
+    })();
+    confirmations.set(reference, work);
+    try { await work; } finally { confirmations.delete(reference); }
   };
 
   // Filet de sécurité : si le webhook n'est jamais arrivé (ex: redémarrage du serveur pile au
@@ -158,6 +217,7 @@ export function registerJekoPayments(
     if (record.status !== "pending" || !record.jekoId || !isConfigured()) return record;
     try {
       const response = await fetch(`${JEKO_API_BASE}/partner_api/payment_requests/${record.jekoId}`, {
+        signal: AbortSignal.timeout(15000),
         headers: { "X-API-KEY": apiKey!, "X-API-KEY-ID": apiKeyId! },
       });
       if (!response.ok) return record;
@@ -166,14 +226,50 @@ export function registerJekoPayments(
       if (status === "success" || status === "completed") {
         await confirmPayment(reference, record);
       } else if (status === "error" || status === "failed") {
-        record.status = "error";
-        pending.set(reference, record);
-        await persistPayment(reference, record);
+        await markFailed(reference, record);
       }
     } catch (err: any) {
       console.error("[JEKO] Réconciliation impossible:", err.message);
+      throw err;
     }
     return record;
+  };
+
+  // Crée la demande de paiement chez Jèko (Orange/Wave/MTN/Moov) et renvoie l'URL de redirection.
+  const createJekoRequest = async (o: {
+    reference: string; amountXof: number; paymentMethod: string; rawPhone: string; successUrl: string; errorUrl: string;
+  }): Promise<{ ok: boolean; redirectUrl?: string; jekoId?: string; message?: string }> => {
+    const paymentData: Record<string, any> = { paymentMethod: o.paymentMethod, successUrl: o.successUrl, errorUrl: o.errorUrl };
+    // Mode direct : évite le clic supplémentaire de sélection du numéro côté opérateur.
+    // Nécessaire pour le push USSD MTN/Moov ; optionnel mais utile pour Orange/Wave.
+    if (o.rawPhone) {
+      const withCountryCode = o.rawPhone.startsWith("225") ? o.rawPhone : `225${o.rawPhone}`;
+      paymentData.forceProviderDirect = true;
+      paymentData.payerPhone = `+${withCountryCode}`;
+    }
+    try {
+      const response = await fetch(`${JEKO_API_BASE}/partner_api/payment_requests`, {
+        signal: AbortSignal.timeout(15000),
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-KEY": apiKey!, "X-API-KEY-ID": apiKeyId! },
+        body: JSON.stringify({
+          storeId,
+          amountCents: o.amountXof * 100,
+          currency: "XOF",
+          reference: o.reference,
+          paymentDetails: { type: "redirect", data: paymentData },
+        }),
+      });
+      const data: any = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        console.error("[JEKO] Création du paiement refusée:", response.status, data);
+        return { ok: false, message: data?.message || "Le paiement n'a pas pu être initié." };
+      }
+      return { ok: true, redirectUrl: data.redirectUrl, jekoId: data?.id };
+    } catch (err: any) {
+      console.error("[JEKO] Erreur réseau lors de la création du paiement:", err.message);
+      return { ok: false, message: "Impossible de contacter le service de paiement." };
+    }
   };
 
   // Crée une demande de paiement Jèko (Orange/Wave/MTN/Moov) pour un forfait donné et renvoie
@@ -195,57 +291,65 @@ export function registerJekoPayments(
     }
 
     const amountXof = PLAN_PRICES_XOF[plan];
-    const amountCents = amountXof * 100;
-    const reference = `dgst-${req.session.phone.replace(/\D/g, "")}-${plan}-${Date.now()}`;
-    const origin = process.env.APP_URL || `https://${req.headers.host}`;
-
-    const paymentData: Record<string, any> = {
-      paymentMethod,
+    const reference = `dgst-${crypto.randomBytes(16).toString("hex")}`;
+    const origin = process.env.APP_URL || "https://www.diagassist.app";
+    const result = await createJekoRequest({
+      reference, amountXof, paymentMethod, rawPhone,
       successUrl: `${origin}/?payment=success&reference=${encodeURIComponent(reference)}`,
       errorUrl: `${origin}/?payment=error&reference=${encodeURIComponent(reference)}`,
-    };
+    });
+    if (!result.ok) return res.status(502).json({ success: false, message: result.message });
 
-    // Mode direct : évite le clic supplémentaire de sélection du numéro côté opérateur.
-    // Nécessaire pour le push USSD MTN/Moov ; optionnel mais utile pour Orange/Wave.
-    if (rawPhone) {
-      const withCountryCode = rawPhone.startsWith("225") ? rawPhone : `225${rawPhone}`;
-      paymentData.forceProviderDirect = true;
-      paymentData.payerPhone = `+${withCountryCode}`;
-    }
+    const record: PendingPayment = { phone: req.session.phone, plan, kind: "plan", amountCents: amountXof * 100, status: "pending", createdAt: Date.now(), jekoId: result.jekoId };
+    pending.set(reference, record);
+    await persistPayment(reference, record);
+    res.json({ success: true, reference, redirectUrl: result.redirectUrl });
+  });
 
-    try {
-      const response = await fetch(`${JEKO_API_BASE}/partner_api/payment_requests`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-KEY": apiKey!,
-          "X-API-KEY-ID": apiKeyId!,
-        },
-        body: JSON.stringify({
-          storeId,
-          amountCents,
-          currency: "XOF",
-          reference,
-          paymentDetails: { type: "redirect", data: paymentData },
-        }),
-      });
-
-      const data: any = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        console.error("[JEKO] Création du paiement refusée:", response.status, data);
-        return res.status(502).json({ success: false, message: data?.message || "Le paiement n'a pas pu être initié." });
+  // Paiement d'une commande de la boutique (client sans compte, identifié par référence + téléphone).
+  // Le montant ne vient jamais du client : le serveur le recalcule depuis la commande.
+  if (deps.shop) {
+    const shop = deps.shop;
+    app.post("/api/shop/pay", shop.limiter, async (req: any, res) => {
+      if (!isConfigured()) {
+        return res.status(503).json({ success: false, message: "Le paiement en ligne est momentanément indisponible. Contactez-nous sur WhatsApp." });
       }
+      const orderRef = String(req.body?.order_ref || "").trim();
+      const phone = String(req.body?.phone || "").trim();
+      const paymentMethod = String(req.body?.paymentMethod || "");
+      const mode = req.body?.mode === "deposit" ? "deposit" : "full";
+      const rawPhone = req.body?.payerPhone ? String(req.body.payerPhone).replace(/\D/g, "") : "";
+      if (!orderRef || !phone) return res.status(400).json({ success: false, message: "Référence et téléphone requis." });
+      if (!ALLOWED_METHODS.has(paymentMethod)) return res.status(400).json({ success: false, message: "Moyen de paiement invalide." });
 
-      const record: PendingPayment = { phone: req.session.phone, plan, amountCents, status: "pending", createdAt: Date.now(), jekoId: data?.id };
+      const quote = await shop.quote(orderRef, phone, mode);
+      if ("error" in quote) return res.status(400).json({ success: false, message: quote.error });
+
+      const reference = `dgsh-${orderRef}-${crypto.randomBytes(6).toString("hex")}`;
+      const origin = process.env.APP_URL || "https://www.diagassist.app";
+      const result = await createJekoRequest({
+        reference, amountXof: quote.amountXof, paymentMethod, rawPhone,
+        successUrl: `${origin}/boutique?payment=success&reference=${encodeURIComponent(reference)}`,
+        errorUrl: `${origin}/boutique?payment=error&reference=${encodeURIComponent(reference)}`,
+      });
+      if (!result.ok) return res.status(502).json({ success: false, message: result.message });
+
+      const record: PendingPayment = { phone, plan: "boutique", kind: "shop", orderRef, amountCents: quote.amountXof * 100, status: "pending", createdAt: Date.now(), jekoId: result.jekoId };
       pending.set(reference, record);
       await persistPayment(reference, record);
+      res.json({ success: true, reference, amount_fcfa: quote.amountXof, redirectUrl: result.redirectUrl });
+    });
 
-      res.json({ success: true, reference, redirectUrl: data.redirectUrl });
-    } catch (err: any) {
-      console.error("[JEKO] Erreur réseau lors de la création du paiement:", err.message);
-      res.status(502).json({ success: false, message: "Impossible de contacter le service de paiement." });
-    }
-  });
+    // Statut d'un paiement boutique après retour de l'opérateur. La référence est aléatoire et
+    // ne révèle que le statut, la commande et le montant.
+    app.get("/api/shop/pay/status/:reference", shop.limiter, async (req: any, res) => {
+      const reference = String(req.params.reference || "");
+      let record = await findPayment(reference);
+      if (!record || record.kind !== "shop") return res.status(404).json({ success: false, message: "Paiement introuvable." });
+      record = await reconcileWithJeko(reference, record);
+      res.json({ success: true, status: record.status, order_ref: record.orderRef, amount_fcfa: Math.round(record.amountCents / 100) });
+    });
+  }
 
   // Tableau de bord admin : liste des paiements Jèko (toutes formules confondues), pour vérifier
   // en ligne sans dépendre des logs serveur ou d'une commande manuelle.
@@ -253,7 +357,7 @@ export function registerJekoPayments(
     if (deps.dbQuery) {
       try {
         const result = await deps.dbQuery(
-          `SELECT reference, phone, plan, amount_cents, status, created_at, jeko_id
+          `SELECT reference, phone, plan, amount_cents, status, created_at, jeko_id, kind, order_ref
            FROM jeko_payments ORDER BY created_at DESC LIMIT 200`
         );
         return res.json({ success: true, payments: result.rows });
@@ -262,7 +366,7 @@ export function registerJekoPayments(
       }
     }
     const payments = Array.from(pending.entries())
-      .map(([reference, p]) => ({ reference, phone: p.phone, plan: p.plan, amount_cents: p.amountCents, status: p.status, created_at: p.createdAt, jeko_id: p.jekoId || null }))
+      .map(([reference, p]) => ({ reference, phone: p.phone, plan: p.plan, amount_cents: p.amountCents, status: p.status, created_at: p.createdAt, jeko_id: p.jekoId || null, kind: p.kind, order_ref: p.orderRef || null }))
       .sort((a, b) => b.created_at - a.created_at);
     res.json({ success: true, payments });
   });
@@ -338,7 +442,7 @@ export function registerJekoPayments(
       return res.status(200).end();
     }
 
-    if (record.status !== "pending") {
+    if (record.status === "success") {
       // Déjà traité (webhook potentiellement renvoyé jusqu'à 3 fois par Jèko) : ne pas
       // ré-activer/compter deux fois.
       return res.status(200).end();
@@ -363,10 +467,8 @@ export function registerJekoPayments(
     const succeeded = status === "success" || status === "completed";
     if (succeeded) {
       await confirmPayment(reference, record);
-    } else {
-      record.status = "error";
-      pending.set(reference, record);
-      await persistPayment(reference, record);
+    } else if (["error", "failed", "cancelled", "canceled"].includes(status)) {
+      await markFailed(reference, record);
       console.warn(`[JEKO] Paiement en échec pour ${record.phone} (réf. ${reference}, statut "${status}").`);
     }
 

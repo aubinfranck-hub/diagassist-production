@@ -204,6 +204,19 @@ export default function App() {
     return localStorage.getItem("auth_user_phone");
   });
 
+  const logout = async () => {
+    try {
+      const token = localStorage.getItem("auth_session_token");
+      if (token) {
+        const response = await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok && response.status !== 401) throw new Error("Déconnexion impossible");
+      }
+      localStorage.removeItem("auth_user_phone");
+      localStorage.removeItem("auth_session_token");
+      setLoggedInUser(null);
+    } catch { alert("Déconnexion impossible pour le moment. Vérifiez votre connexion et réessayez."); }
+  };
+
   // Nom de l'assistant personnalisé (DiagAssist par défaut)
   const [assistantName, setAssistantName] = useState<string>(() => {
     return localStorage.getItem("assistant_name") || "DiagAssist";
@@ -1036,11 +1049,9 @@ export default function App() {
                 {modeSwitch}
 
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (confirm("Voulez-vous vraiment vous déconnecter de votre compte DiagAssist ?")) {
-                      setLoggedInUser(null);
-                      localStorage.removeItem("auth_user_phone");
-                      localStorage.removeItem("auth_session_token");
+                      await logout();
                     }
                   }}
                   className="w-full text-center py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-500 hover:text-red-400 border border-red-500/20 rounded-lg text-[10px] font-black uppercase tracking-wider transition"
@@ -1153,12 +1164,10 @@ export default function App() {
                     {modeSwitch}
 
                     <button 
-                      onClick={() => {
+                      onClick={async () => {
                         setShowMobileUserMenu(false);
                         if (confirm("Voulez-vous vraiment vous déconnecter de votre compte DiagAssist ?")) {
-                          setLoggedInUser(null);
-                          localStorage.removeItem("auth_user_phone");
-                          localStorage.removeItem("auth_session_token");
+                          await logout();
                         }
                       }}
                       className="w-full text-center py-2 bg-red-600/10 hover:bg-red-600/20 text-red-500 hover:text-red-400 border border-red-500/20 rounded-xl text-xs font-black uppercase tracking-wider transition"

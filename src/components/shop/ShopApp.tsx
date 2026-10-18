@@ -744,6 +744,92 @@ function CartDrawer({
   );
 }
 
+// ─── PAIEMENT (Jèko : Wave, Orange Money, MTN MoMo, Moov) ─────────────────────
+const PAY_METHODS: [string, string][] = [["wave", "Wave"], ["orange", "Orange Money"], ["mtn", "MTN MoMo"], ["moov", "Moov Money"]];
+
+function PayPanel({ orderRef, phone, depositFcfa, remainingFcfa, defaultMethod = "wave" }: {
+  orderRef: string; phone: string; depositFcfa: number; remainingFcfa: number; defaultMethod?: string;
+}) {
+  const [method, setMethod] = useState(PAY_METHODS.some(([v]) => v === defaultMethod) ? defaultMethod : "wave");
+  const [payerPhone, setPayerPhone] = useState(phone);
+  const [busy, setBusy] = useState<"" | "deposit" | "full">("");
+  const [err, setErr] = useState("");
+
+  const pay = async (mode: "deposit" | "full") => {
+    setBusy(mode); setErr("");
+    try {
+      const r = await fetch(`${BASE}/api/shop/pay`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_ref: orderRef, phone, paymentMethod: method, payerPhone, mode }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.success && d.redirectUrl) { window.location.href = d.redirectUrl; return; }
+      setErr(d.message || "Le paiement n'a pas pu être lancé.");
+    } catch { setErr("Erreur réseau. Réessayez ou contactez-nous sur WhatsApp."); }
+    setBusy("");
+  };
+
+  if (remainingFcfa <= 0) return null;
+  return (
+    <div className="rounded-xl border p-4 space-y-3 text-left" style={{ background: C.black, borderColor: C.border }}>
+      <p className="text-sm font-black text-white">Payer en ligne</p>
+      <div className="grid grid-cols-2 gap-2">
+        {PAY_METHODS.map(([val, label]) => (
+          <label key={val} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border text-xs font-semibold text-white"
+            style={{ borderColor: method === val ? C.red : C.border }}>
+            <input type="radio" name={`pay-${orderRef}`} checked={method === val} onChange={() => setMethod(val)} className="accent-red-600" />
+            {label}
+          </label>
+        ))}
+      </div>
+      <input value={payerPhone} onChange={e => setPayerPhone(e.target.value)} type="tel" placeholder="Numéro qui paie"
+        className="w-full px-3 py-2 rounded-lg text-sm text-white outline-none" style={{ background: C.dark, border: `1px solid ${C.border}` }} />
+      {depositFcfa > 0 && depositFcfa < remainingFcfa && (
+        <button onClick={() => pay("deposit")} disabled={!!busy}
+          className="w-full py-2.5 rounded-xl text-sm font-extrabold text-white disabled:opacity-60" style={{ background: C.red }}>
+          {busy === "deposit" ? "Redirection..." : `Payer l'acompte · ${fcfa(depositFcfa)}`}
+        </button>
+      )}
+      <button onClick={() => pay("full")} disabled={!!busy}
+        className="w-full py-2.5 rounded-xl text-sm font-extrabold text-white disabled:opacity-60"
+        style={{ background: depositFcfa > 0 && depositFcfa < remainingFcfa ? "#374151" : C.red }}>
+        {busy === "full" ? "Redirection..." : `Payer ${depositFcfa > 0 && depositFcfa >= remainingFcfa ? "l'acompte" : "la totalité"} · ${fcfa(remainingFcfa)}`}
+      </button>
+      {err && <p className="text-xs text-red-400">{err}</p>}
+    </div>
+  );
+}
+
+// Bandeau affiché au retour de l'opérateur (?payment=success&reference=...).
+function PaymentReturnBanner() {
+  const [state, setState] = useState<{ status: string; order_ref?: string; amount_fcfa?: number } | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const reference = q.get("reference");
+    if (!q.get("payment") || !reference) return;
+    let tries = 0, stop = false;
+    const poll = async () => {
+      try {
+        const d = await fetch(`${BASE}/api/shop/pay/status/${encodeURIComponent(reference)}`).then(r => r.json());
+        if (stop) return;
+        if (d.success) setState({ status: d.status, order_ref: d.order_ref, amount_fcfa: d.amount_fcfa });
+        if ((!d.success || d.status === "pending") && ++tries < 10) setTimeout(poll, 3000);
+      } catch { if (++tries < 10) setTimeout(poll, 3000); }
+    };
+    poll();
+    return () => { stop = true; };
+  }, []);
+  if (!state) return null;
+  const ok = state.status === "success", ko = state.status === "error";
+  return (
+    <div className="px-4 py-3 text-center text-sm font-bold text-white" style={{ background: ok ? "#15803d" : ko ? C.redDark : "#b45309" }}>
+      {ok ? `Paiement reçu${state.amount_fcfa ? ` (${fcfa(state.amount_fcfa)})` : ""} pour la commande ${state.order_ref}. Merci !`
+        : ko ? `Le paiement de la commande ${state.order_ref} a échoué. Vous pouvez réessayer depuis « Suivi commande ».`
+        : `Paiement de la commande ${state.order_ref} en cours de confirmation...`}
+    </div>
+  );
+}
+
 // ─── CHECKOUT ─────────────────────────────────────────────────────────────────
 function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDone: () => void }) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -754,9 +840,16 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
   const [loading, setLoading] = useState(false);
   const [orderRef, setOrderRef] = useState("");
   const [depositInfo, setDepositInfo] = useState<{ amount: number; days: number | null } | null>(null);
+  const [placed, setPlaced] = useState<{ phone: string; total: number; deposit: number } | null>(null);
+  const [fees, setFees] = useState<Record<string, number>>({ showroom: 0, abidjan: 3000, interieur: 5000, afrique: 15000 });
   const [err, setErr] = useState("");
 
-  const shipping = form.shipping_method === "showroom" ? 0 : form.shipping_method === "abidjan" ? 3000 : form.shipping_method === "interieur" ? 5000 : 15000;
+  // Tarifs de livraison définis par le serveur (le serveur recalcule de toute façon le total).
+  useEffect(() => {
+    fetch(`${BASE}/api/shop/shipping-options`).then(r => r.json()).then(d => { if (d.fees) setFees(d.fees); }).catch(() => {});
+  }, []);
+
+  const shipping = fees[form.shipping_method] ?? 0;
   const total = cart.total + shipping;
 
   const ch = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
@@ -783,6 +876,7 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
       const data = await r.json();
       if (data.success) {
         setOrderRef(data.order_ref || data.id || "");
+        setPlaced({ phone: form.phone, total: Number(data.total_fcfa) || 0, deposit: Number(data.deposit_total) || 0 });
         setDepositInfo(Number(data.deposit_total) > 0 ? { amount: Number(data.deposit_total), days: data.lead_time_days ? Number(data.lead_time_days) : null } : null);
         cart.clear();
         setStep(3);
@@ -806,11 +900,14 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
         </div>
         {depositInfo ? (
           <p className="text-sm text-yellow-300">
-            Acompte à verser dans nos locaux : <span className="font-black">{depositInfo.amount.toLocaleString("fr-FR")} FCFA</span>.
+            Acompte à régler : <span className="font-black">{depositInfo.amount.toLocaleString("fr-FR")} FCFA</span>.
             {depositInfo.days ? ` Livraison en général sous ${depositInfo.days} jours ouvrables après l'acompte.` : ""}
           </p>
         ) : (
-          <p className="text-sm text-neutral-300">Notre équipe vous contacte dans les plus brefs délais pour confirmer la commande et le paiement.</p>
+          <p className="text-sm text-neutral-300">Réglez votre commande en ligne ci-dessous. Notre équipe vous contacte ensuite pour confirmer la livraison.</p>
+        )}
+        {placed && placed.total > 0 && (
+          <PayPanel orderRef={orderRef} phone={placed.phone} depositFcfa={placed.deposit} remainingFcfa={placed.total} defaultMethod={form.payment_method} />
         )}
         <div className="flex flex-col gap-3">
           <a href={waLink(`Bonjour DiagAssist, j'ai passé commande (réf. ${orderRef}). Pouvez-vous confirmer ?`)} target="_blank" rel="noreferrer"
@@ -868,11 +965,11 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
             <div className="rounded-2xl border p-5 space-y-3" style={{ background: C.dark, borderColor: C.border }}>
               <h3 className="text-sm font-black text-white">Livraison</h3>
               {[
-                ["showroom", "Retrait au showroom Abidjan", "Gratuit"],
-                ["abidjan", "Livraison Abidjan", "3 000 FCFA"],
-                ["interieur", "Livraison intérieur CI", "5 000 FCFA"],
-                ["afrique", "Livraison Afrique de l'Ouest", "15 000 FCFA"],
-              ].map(([val, label, price]) => (
+                ["showroom", "Retrait au showroom Abidjan"],
+                ["abidjan", "Livraison Abidjan"],
+                ["interieur", "Livraison intérieur CI"],
+                ["afrique", "Livraison Afrique de l'Ouest"],
+              ].map(([val, label]) => ({ val, label, price: fees[val] ? fcfa(fees[val]) : "Gratuit" })).map(({ val, label, price }) => (
                 <label key={val} className="flex items-center justify-between cursor-pointer p-2.5 rounded-lg border transition-colors"
                   style={{ borderColor: form.shipping_method === val ? C.red : C.border }}>
                   <div className="flex items-center gap-2">
@@ -885,13 +982,13 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
             </div>
 
             <div className="rounded-2xl border p-5 space-y-3" style={{ background: C.dark, borderColor: C.border }}>
-              <h3 className="text-sm font-black text-white">Paiement</h3>
+              <h3 className="text-sm font-black text-white">Paiement en ligne (Jèko)</h3>
               {[
                 ["wave", "Wave", Smartphone],
                 ["orange", "Orange Money", Smartphone],
                 ["mtn", "MTN MoMo", Smartphone],
-                ["cash", "Espèces au showroom", CreditCard],
-              ].map(([val, label, Icon]) => (
+                ["moov", "Moov Money", Smartphone],
+              ].map(([val, label, Icon]: any) => (
                 <label key={val} className="flex items-center gap-2 cursor-pointer p-2.5 rounded-lg border transition-colors"
                   style={{ borderColor: form.payment_method === val ? C.red : C.border }}>
                   <input type="radio" name="payment_method" value={val} checked={form.payment_method === val} onChange={ch} className="accent-red-600" />
@@ -939,7 +1036,7 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
             <div className="rounded-2xl border p-4 text-sm text-neutral-300 space-y-1" style={{ background: C.dark, borderColor: C.border }}>
               <p><span className="font-bold text-white">Client :</span> {form.first_name} {form.last_name} · {form.phone}</p>
               <p><span className="font-bold text-white">Livraison :</span> {form.shipping_method} · {form.address || "—"}</p>
-              <p><span className="font-bold text-white">Paiement :</span> {form.payment_method}</p>
+              <p><span className="font-bold text-white">Paiement :</span> {PAY_METHODS.find(([v]) => v === form.payment_method)?.[1]} · après validation de la commande</p>
             </div>
 
             <div className="flex gap-3">
@@ -967,22 +1064,27 @@ function ShopTracking() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
+  const [phone, setPhone] = useState("");
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ref.trim()) return;
+    if (!phone.trim() || !ref.trim()) { setErr("Entrez la référence et le numéro utilisés pour la commande."); return; }
     setLoading(true); setErr(""); setOrder(null);
     try {
-      const data = await fetchJSON(`/api/shop/track?ref=${encodeURIComponent(ref.trim())}`);
+      const qs = new URLSearchParams({ phone: phone.trim() });
+      if (ref.trim()) qs.set("ref", ref.trim());
+      const data = await fetchJSON(`/api/shop/track?${qs}`);
       if (data.order) setOrder(data.order);
-      else setErr("Aucune commande trouvée pour cette référence.");
-    } catch { setErr("Erreur réseau. Réessayez."); }
+      else if (data.orders?.length) setOrder(data.orders[0]);
+      else setErr("Aucune commande trouvée pour ces informations.");
+    } catch { setErr("Aucune commande trouvée pour ces informations."); }
     finally { setLoading(false); }
   };
 
   const STATUS_LABELS: Record<string, string> = {
-    pending: "En attente", confirmed: "Confirmée", processing: "En préparation",
-    shipped: "Expédiée", delivered: "Livrée", cancelled: "Annulée",
+    nouvelle: "Reçue", a_contacter: "À contacter", contactee: "Client contacté", confirmee: "Confirmée",
+    en_traitement: "En préparation", prete: "Prête", livree: "Livrée", annulee: "Annulée", client_injoignable: "Client injoignable",
   };
+  const PAYMENT_LABELS: Record<string, string> = { non_paye: "Non payée", acompte_paye: "Acompte payé", paye: "Payée" };
 
   return (
     <div style={{ background: C.black }} className="min-h-screen">
@@ -990,17 +1092,22 @@ function ShopTracking() {
         <div className="text-center space-y-2">
           <span className="text-xs font-black uppercase tracking-widest" style={{ color: C.red }}>Logistique DiagAssist</span>
           <h1 className="text-2xl sm:text-3xl font-black text-white">Suivi de commande</h1>
-          <p className="text-sm text-neutral-400">Entrez votre référence de commande (ex : DA-2026-000001) ou votre numéro de téléphone.</p>
+          <p className="text-sm text-neutral-400">Entrez la référence complète de votre commande et le téléphone utilisé lors de l’achat.</p>
         </div>
-        <form onSubmit={handleSearch} className="flex rounded-xl overflow-hidden border" style={{ borderColor: C.border }}>
-          <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Référence ou numéro de téléphone"
-            className="flex-1 px-4 py-3 text-sm text-white outline-none placeholder-neutral-500"
-            style={{ background: C.dark }} />
-          <button type="submit" disabled={loading}
-            className="px-5 py-3 text-white font-bold text-sm flex items-center gap-2 disabled:opacity-60"
-            style={{ background: C.red }}>
-            <Search className="w-4 h-4" /> {loading ? "..." : "Chercher"}
-          </button>
+        <form onSubmit={handleSearch} className="space-y-2">
+          <input value={phone} onChange={e => setPhone(e.target.value)} type="tel" placeholder="Téléphone de la commande *"
+            className="w-full px-4 py-3 text-sm text-white outline-none placeholder-neutral-500 rounded-xl border"
+            style={{ background: C.dark, borderColor: C.border }} />
+          <div className="flex rounded-xl overflow-hidden border" style={{ borderColor: C.border }}>
+            <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Référence de commande *" required
+              className="flex-1 px-4 py-3 text-sm text-white outline-none placeholder-neutral-500"
+              style={{ background: C.dark }} />
+            <button type="submit" disabled={loading}
+              className="px-5 py-3 text-white font-bold text-sm flex items-center gap-2 disabled:opacity-60"
+              style={{ background: C.red }}>
+              <Search className="w-4 h-4" /> {loading ? "..." : "Chercher"}
+            </button>
+          </div>
         </form>
 
         {err && <p className="text-sm text-red-400 text-center">{err}</p>}
@@ -1010,18 +1117,28 @@ function ShopTracking() {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs text-neutral-400">Référence</p>
-                <p className="text-base font-black text-white">{order.order_ref || order.id}</p>
+                <p className="text-base font-black text-white">{order.order_ref}</p>
               </div>
-              <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: order.status === "delivered" ? "#16a34a" : order.status === "cancelled" ? C.red : "#2563eb" }}>
+              <span className="px-3 py-1 rounded-full text-xs font-bold text-white" style={{ background: order.status === "livree" ? "#16a34a" : order.status === "annulee" ? C.red : "#2563eb" }}>
                 {STATUS_LABELS[order.status] || order.status}
               </span>
             </div>
             <div className="text-sm text-neutral-300 space-y-1">
-              <p><span className="font-bold text-white">Client :</span> {order.customer_name}</p>
-              <p><span className="font-bold text-white">Livraison :</span> {order.shipping_address}</p>
-              {order.items && <p><span className="font-bold text-white">Articles :</span> {order.items.length}</p>}
+              {order.items?.map((it: any, i: number) => (
+                <div key={i} className="flex justify-between"><span>{it.product_name} × {it.quantity}</span>{it.unit_price ? <span className="font-bold text-white">{fcfa(it.unit_price * it.quantity)}</span> : null}</div>
+              ))}
+              {order.shipping_address && <p className="pt-2"><span className="font-bold text-white">Livraison :</span> {order.shipping_address}</p>}
             </div>
-            <a href={waLink(`Bonjour DiagAssist, suivi commande ${order.order_ref || order.id}. Quel est le statut de ma livraison ?`)}
+            <div className="border-t pt-3 space-y-1 text-sm" style={{ borderColor: C.border }}>
+              {order.shipping_fee_fcfa > 0 && <div className="flex justify-between text-neutral-400"><span>Frais de livraison</span><span>{fcfa(order.shipping_fee_fcfa)}</span></div>}
+              <div className="flex justify-between font-black text-white"><span>Total</span><span>{fcfa(order.total_fcfa)}</span></div>
+              <div className="flex justify-between text-neutral-400"><span>Payé</span><span>{fcfa(order.paid_fcfa)}</span></div>
+              <div className="flex justify-between"><span className="text-neutral-400">Paiement</span><span className="font-bold text-white">{PAYMENT_LABELS[order.payment_status] || order.payment_status}</span></div>
+            </div>
+            {order.remaining_fcfa > 0 && (
+              <PayPanel orderRef={order.order_ref} phone={phone} depositFcfa={Math.max(0, order.deposit_total_fcfa - order.paid_fcfa)} remainingFcfa={order.remaining_fcfa} />
+            )}
+            <a href={waLink(`Bonjour DiagAssist, suivi commande ${order.order_ref}. Quel est le statut de ma livraison ?`)}
               target="_blank" rel="noreferrer"
               className="flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white" style={{ background: "#16a34a" }}>
               <MessageCircle className="w-4 h-4" /> Contacter le suivi
@@ -1144,7 +1261,7 @@ export default function ShopApp({ adminAuth }: { adminAuth?: { phone: string; na
       .finally(() => setLoading(false));
   }, []);
 
-  if (adminAuth) return <ShopAdmin auth={adminAuth} />;
+  if (adminAuth) return <ShopAdmin />;
 
   const handleAdd = (p: ShopProduct) => {
     cart.add(p);
@@ -1157,6 +1274,7 @@ export default function ShopApp({ adminAuth }: { adminAuth?: { phone: string; na
 
   return (
     <div style={{ background: C.black }} className="min-h-screen">
+      <PaymentReturnBanner />
       <ShopHeader page={page} setPage={setPage} cartCount={cart.count}
         onCartOpen={() => setCartOpen(true)} onSearch={handleSearch} categories={categories} />
 
