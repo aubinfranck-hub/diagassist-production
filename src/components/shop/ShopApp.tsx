@@ -1067,7 +1067,7 @@ function ShopTracking() {
   const [phone, setPhone] = useState("");
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phone.trim()) { setErr("Entrez le numéro de téléphone utilisé pour la commande."); return; }
+    if (!phone.trim() || !ref.trim()) { setErr("Entrez la référence et le numéro utilisés pour la commande."); return; }
     setLoading(true); setErr(""); setOrder(null);
     try {
       const qs = new URLSearchParams({ phone: phone.trim() });
@@ -1092,14 +1092,14 @@ function ShopTracking() {
         <div className="text-center space-y-2">
           <span className="text-xs font-black uppercase tracking-widest" style={{ color: C.red }}>Logistique DiagAssist</span>
           <h1 className="text-2xl sm:text-3xl font-black text-white">Suivi de commande</h1>
-          <p className="text-sm text-neutral-400">Entrez le téléphone utilisé pour la commande. La référence (ex : DA-2026-000001) est facultative.</p>
+          <p className="text-sm text-neutral-400">Entrez la référence complète de votre commande et le téléphone utilisé lors de l’achat.</p>
         </div>
         <form onSubmit={handleSearch} className="space-y-2">
           <input value={phone} onChange={e => setPhone(e.target.value)} type="tel" placeholder="Téléphone de la commande *"
             className="w-full px-4 py-3 text-sm text-white outline-none placeholder-neutral-500 rounded-xl border"
             style={{ background: C.dark, borderColor: C.border }} />
           <div className="flex rounded-xl overflow-hidden border" style={{ borderColor: C.border }}>
-            <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Référence (facultatif)"
+            <input value={ref} onChange={e => setRef(e.target.value)} placeholder="Référence de commande *" required
               className="flex-1 px-4 py-3 text-sm text-white outline-none placeholder-neutral-500"
               style={{ background: C.dark }} />
             <button type="submit" disabled={loading}
@@ -1261,7 +1261,7 @@ export default function ShopApp({ adminAuth }: { adminAuth?: { phone: string; na
       .finally(() => setLoading(false));
   }, []);
 
-  if (adminAuth) return <ShopAdmin auth={adminAuth} />;
+  if (adminAuth) return <ShopAdmin />;
 
   const handleAdd = (p: ShopProduct) => {
     cart.add(p);

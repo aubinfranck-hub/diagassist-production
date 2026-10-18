@@ -147,12 +147,12 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-5">
-          {[
+          {([
             ["Photo & son","Voyant, moteur, écran de valise : envoyez une preuve, DiagAssist l'analyse.",Camera,"https://mobilemechanicdurban.co.za/images/gallery-3.webp"],
             ["Assistant vocal live","Parlez mains libres pendant que vous travaillez sur le véhicule.",Mic,"https://www.automallgh.com/attachments/blog_images/IMG_E9705.JPG"],
             ["Jamais à l'aveugle","Chaque hypothèse est vérifiée par un test avant conclusion.",ShieldCheck,"https://www.diagnostic-auto-toulouse.fr/ChatGPT_image.png"],
             ["Partout, même en 3G","Sur téléphone, en atelier, même en connexion dégradée.",Smartphone,"https://www.trustamai.com/images/tools/mechanic-repair-price-calculator.webp"]
-          ].map(([title,desc,Icon,img],i)=><article key={i} className="bg-slate-900/60 border border-white/[0.06] rounded-2xl overflow-hidden shadow-xl">
+          ] as [string, string, typeof Camera, string][]).map(([title,desc,Icon,img],i)=><article key={i} className="bg-slate-900/60 border border-white/[0.06] rounded-2xl overflow-hidden shadow-xl">
             <div className="relative h-44 sm:h-52 md:h-56 overflow-hidden">
               <img src={img as string} alt={`${title} — DiagAssist`} className="w-full h-full object-cover" loading="lazy" />
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent" />
