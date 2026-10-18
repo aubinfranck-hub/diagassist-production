@@ -11,6 +11,8 @@ import { WebSocketServer } from "ws";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { XMLParser } from "fast-xml-parser";
+import { catchAsyncRoutes, normalizePhone, sessionIsValid, SESSION_MAX_AGE_MS } from "./src/modules/security/runtime";
+import { UsageStore } from "./src/modules/security/usageStore";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
@@ -148,7 +150,7 @@ function getEffectivePlan(phone: string): string {
   }
   let record = userPlans.get(phone);
   if (!record) {
-    record = { plan: "free_trial", activatedAt: Date.now() };
+    record = { plan: "free_trial", activatedAt: userAccounts.get(phone)?.createdAt ?? Date.now() };
     userPlans.set(phone, record);
     return record.plan;
   }
@@ -160,17 +162,29 @@ function getEffectivePlan(phone: string): string {
   return record.plan;
 }
 
-function setUserPlan(phone: string, plan: string, customDurationMs?: number): void {
-  userPlans.set(phone, { plan, activatedAt: Date.now(), customDurationMs });
-  persistPlan(phone).catch(() => {});
+async function setUserPlan(phone: string, plan: string, customDurationMs?: number): Promise<void> {
+  const record = { plan, activatedAt: Date.now(), customDurationMs };
+  if (dbPool) await dbPool.query(
+    `INSERT INTO plans (phone,plan,activated_at,custom_duration_ms) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (phone) DO UPDATE SET plan=$2,activated_at=$3,custom_duration_ms=$4`,
+    [phone, plan, record.activatedAt, customDurationMs ?? null]);
+  userPlans.set(phone, record);
 }
 
-
-function createSession(phone: string): string {
+async function createSession(phone: string): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
-  const plan = getEffectivePlan(phone);
-  sessions.set(token, { phone, plan, createdAt: Date.now() });
-  persistSession(token).catch(() => {});
+  getEffectivePlan(phone);
+  if (dbPool) {
+    const record = userPlans.get(phone)!;
+    await dbPool.query("INSERT INTO plans (phone,plan,activated_at,custom_duration_ms) VALUES ($1,$2,$3,$4) ON CONFLICT (phone) DO NOTHING",
+      [phone, record.plan, record.activatedAt, record.customDurationMs ?? null]);
+    const saved = await dbPool.query("SELECT * FROM plans WHERE phone=$1", [phone]);
+    const row = saved.rows[0];
+    if (row) userPlans.set(phone, { plan: row.plan, activatedAt: Number(row.activated_at), customDurationMs: row.custom_duration_ms ? Number(row.custom_duration_ms) : undefined });
+  }
+  const session = { phone, plan: getEffectivePlan(phone), createdAt: Date.now() };
+  if (dbPool) await dbPool.query("INSERT INTO sessions (token,phone,plan,created_at) VALUES ($1,$2,$3,$4)", [token, phone, session.plan, session.createdAt]);
+  sessions.set(token, session);
   return token;
 }
 
@@ -185,15 +199,22 @@ function createSession(phone: string): string {
 // ailleurs dans le code (aucun autre changement nécessaire), mais chaque écriture est aussi
 // répercutée dans la base pour survivre aux redémarrages.
 const dbPool = process.env.DATABASE_URL
-  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === "test" ? false : { rejectUnauthorized: false }, connectionTimeoutMillis: 2000, query_timeout: 15000 })
   : null;
 
+const usageStore = new UsageStore(dbPool ? (sql, params) => dbPool.query(sql, params) : undefined);
+
 async function initDatabase(): Promise<void> {
+  if (process.env.NODE_ENV === "production" && !dbPool) throw new Error("DATABASE_URL est obligatoire en production.");
   if (!dbPool) {
     console.warn("[DB] DATABASE_URL non configuré — les données ne survivront PAS aux redémarrages du serveur.");
     return;
   }
   await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS usage_counters (
+      phone TEXT NOT NULL, bucket TEXT NOT NULL, period_start BIGINT NOT NULL, used BIGINT NOT NULL DEFAULT 0,
+      PRIMARY KEY (phone,bucket)
+    );
     CREATE TABLE IF NOT EXISTS accounts (
       phone TEXT PRIMARY KEY,
       password_hash TEXT NOT NULL,
@@ -435,6 +456,7 @@ async function initDatabase(): Promise<void> {
       created_at BIGINT NOT NULL
     );
     ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS jeko_id TEXT;
+    ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS confirmed_at BIGINT;
     -- kind : plan (abonnement) | shop (commande boutique, order_ref = référence DA-AAAA-NNNNNN)
     ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'plan';
     ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS order_ref TEXT;
@@ -502,7 +524,7 @@ async function loadPersistedData(): Promise<void> {
   }
   // Sessions : on ne recharge que celles de moins de 30 jours (au-delà, on considère l'utilisateur
   // parti de toute façon — pas la peine de garder des tokens abandonnés indéfiniment en mémoire).
-  const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
   const mechanicsRes = await dbPool.query("SELECT * FROM mechanics");
   for (const row of mechanicsRes.rows) {
     mechanics.set(row.id, {
@@ -615,61 +637,11 @@ async function deleteMechanicFromDb(id: string): Promise<void> {
   }
 }
 
-async function persistSession(token: string): Promise<void> {
-  if (!dbPool) return;
-  const s = sessions.get(token);
-  if (!s) return;
-  try {
-    await dbPool.query(
-      `INSERT INTO sessions (token, phone, plan, created_at)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (token) DO UPDATE SET plan = $3`,
-      [token, s.phone, s.plan, s.createdAt]
-    );
-  } catch (err: any) {
-    console.error("[DB] Échec de la sauvegarde de la session:", err.message);
-  }
-}
-
-async function deleteSessionFromDb(token: string): Promise<void> {
-  if (!dbPool) return;
-  try {
-    await dbPool.query("DELETE FROM sessions WHERE token = $1", [token]);
-  } catch (err: any) {
-    console.error("[DB] Échec de la suppression de la session:", err.message);
-  }
-}
-
-async function persistAccount(phone: string): Promise<void> {
-  if (!dbPool) return;
-  const acc = userAccounts.get(phone);
-  if (!acc) return;
-  try {
-    await dbPool.query(
-      `INSERT INTO accounts (phone, password_hash, salt, created_at, is_admin, email, name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (phone) DO UPDATE SET password_hash = $2, salt = $3, is_admin = $5, email = $6, name = $7`,
-      [phone, acc.passwordHash, acc.salt, acc.createdAt, acc.isAdmin, acc.email || null, acc.name || null]
-    );
-  } catch (err: any) {
-    console.error("[DB] Échec de la sauvegarde du compte:", err.message);
-  }
-}
-
-async function persistPlan(phone: string): Promise<void> {
-  if (!dbPool) return;
-  const record = userPlans.get(phone);
-  if (!record) return;
-  try {
-    await dbPool.query(
-      `INSERT INTO plans (phone, plan, activated_at, custom_duration_ms)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (phone) DO UPDATE SET plan = $2, activated_at = $3, custom_duration_ms = $4`,
-      [phone, record.plan, record.activatedAt, record.customDurationMs || null]
-    );
-  } catch (err: any) {
-    console.error("[DB] Échec de la sauvegarde du forfait:", err.message);
-  }
+async function revokeUserSessions(phone: string): Promise<number> {
+  if (dbPool) await dbPool.query("DELETE FROM sessions WHERE phone=$1", [phone]);
+  let count = 0;
+  for (const [token, session] of sessions) if (session.phone === phone) { sessions.delete(token); count++; }
+  return count;
 }
 
 async function persistBanner(banner: Banner): Promise<void> {
@@ -701,19 +673,29 @@ function hashPassword(password: string, salt: string): string {
   return crypto.scryptSync(password, salt, 64).toString("hex");
 }
 
-function createAccount(phone: string, password: string, isAdmin: boolean = false, email?: string, name?: string): void {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const passwordHash = hashPassword(password, salt);
+async function createAccount(phone: string, password: string, isAdmin = false, email?: string, name?: string, createOnly = false): Promise<void> {
   const existing = userAccounts.get(phone);
-  userAccounts.set(phone, {
-    passwordHash,
-    salt,
-    createdAt: existing?.createdAt ?? Date.now(),
-    isAdmin,
-    email: email ?? existing?.email,
-    name: name ?? existing?.name,
-  });
-  persistAccount(phone).catch(() => {});
+  if (createOnly && existing) throw Object.assign(new Error("Ce numéro possède déjà un compte. Connectez-vous ou utilisez la récupération."), { status: 409 });
+  const salt = crypto.randomBytes(16).toString("hex");
+  const account = { passwordHash: hashPassword(password, salt), salt, createdAt: existing?.createdAt ?? Date.now(), isAdmin,
+    email: email ?? existing?.email, name: name ?? existing?.name };
+  if (dbPool) {
+    const client = await dbPool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `INSERT INTO accounts (phone,password_hash,salt,created_at,is_admin,email,name) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (phone) ${createOnly ? "DO NOTHING" : "DO UPDATE SET password_hash=$2,salt=$3,is_admin=$5,email=$6,name=$7"} RETURNING phone`,
+        [phone, account.passwordHash, salt, account.createdAt, isAdmin, account.email ?? null, account.name ?? null]);
+      if (!result.rows.length) throw Object.assign(new Error("Ce numéro possède déjà un compte. Connectez-vous ou utilisez la récupération."), { status: 409 });
+      await client.query("INSERT INTO plans (phone,plan,activated_at) VALUES ($1,'free_trial',$2) ON CONFLICT (phone) DO NOTHING", [phone, account.createdAt]);
+      if (!createOnly) await client.query("DELETE FROM sessions WHERE phone=$1", [phone]);
+      await client.query("COMMIT");
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  userAccounts.set(phone, account);
+  if (!createOnly) for (const [token, session] of sessions) if (session.phone === phone) sessions.delete(token);
 }
 
 function getNameInstruction(phone?: string): string {
@@ -725,11 +707,11 @@ function getNameInstruction(phone?: string): string {
 
 // Change uniquement le rôle admin d'un compte existant, sans toucher au mot de passe déjà en
 // place (on ne connaît que son hash, pas sa valeur en clair, donc createAccount ne convient pas ici).
-function setAccountAdmin(phone: string, isAdmin: boolean): boolean {
+async function setAccountAdmin(phone: string, isAdmin: boolean): Promise<boolean> {
   const existing = userAccounts.get(phone);
   if (!existing) return false;
+  if (dbPool) await dbPool.query("UPDATE accounts SET is_admin=$2 WHERE phone=$1", [phone, isAdmin]);
   userAccounts.set(phone, { ...existing, isAdmin });
-  persistAccount(phone).catch(() => {});
   return true;
 }
 
@@ -755,17 +737,17 @@ const loginAttempts = new Map<string, { count: number; windowStart: number }>();
 // via le changement de mot de passe self-service. Désormais, on ne crée le compte "graine" que
 // s'il n'existe pas encore (vérifié APRÈS le rechargement depuis la base — voir startServer()),
 // pour ne jamais écraser un mot de passe déjà personnalisé ni un compte déjà persisté.
-function seedAdminAccountIfNeeded(): void {
+async function seedAdminAccountIfNeeded(): Promise<void> {
   if (process.env.ADMIN_SEED_PHONE && process.env.ADMIN_SEED_PASSWORD && !userAccounts.has(process.env.ADMIN_SEED_PHONE)) {
-    createAccount(process.env.ADMIN_SEED_PHONE, process.env.ADMIN_SEED_PASSWORD, true, process.env.ADMIN_SEED_EMAIL);
-    setUserPlan(process.env.ADMIN_SEED_PHONE, "premium");
+    await createAccount(process.env.ADMIN_SEED_PHONE, process.env.ADMIN_SEED_PASSWORD, true, process.env.ADMIN_SEED_EMAIL);
+    await setUserPlan(process.env.ADMIN_SEED_PHONE, "premium");
     console.log(`[Démarrage] Compte administrateur "graine" créé pour ${process.env.ADMIN_SEED_PHONE} (première fois).`);
   }
 }
 
 // --- Récupération de mot de passe par email (SMTP Gmail) ---
 // Codes de réinitialisation : email -> { code, phone, expiresAt }
-const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number }>();
+const passwordResetCodes = new Map<string, { code: string; phone: string; expiresAt: number; attempts?: number }>();
 
 function getEmailTransporter() {
   if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return null;
@@ -793,7 +775,8 @@ function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
   const session = sessions.get(token);
-  if (!token || !session) {
+  if (!token || !sessionIsValid(session)) {
+    if (token) sessions.delete(token);
     return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
   }
   // Toujours resynchroniser le plan de la session avec le forfait persistant à jour
@@ -821,7 +804,7 @@ function requireAdminAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
   const session = token ? sessions.get(token) : undefined;
-  if (session && userAccounts.get(session.phone)?.isAdmin) {
+  if (sessionIsValid(session) && userAccounts.get(session!.phone)?.isAdmin) {
     return next();
   }
 
@@ -851,23 +834,17 @@ const DEFAULT_RESET_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 // phone -> { diagnosisCount, periodStart }
 const usageTracking = new Map<string, { diagnosisCount: number; periodStart: number }>();
 
-function checkAndIncrementUsage(phone: string, plan: string): { allowed: boolean; message?: string } {
-  const limit = PLAN_LIMITS[plan] ?? 0;
-  const usage = usageTracking.get(phone) || { diagnosisCount: 0, periodStart: Date.now() };
+function usagePeriod(phone: string, plan: string): number {
+  const anchor = userPlans.get(phone)?.activatedAt ?? userAccounts.get(phone)?.createdAt ?? 0;
+  const duration = PLAN_RESET_PERIOD_MS[plan] ?? DEFAULT_RESET_PERIOD_MS;
+  return anchor + Math.floor(Math.max(0, Date.now() - anchor) / duration) * duration;
+}
 
-  const resetPeriod = PLAN_RESET_PERIOD_MS[plan] ?? DEFAULT_RESET_PERIOD_MS;
-  if (Date.now() - usage.periodStart > resetPeriod) {
-    usage.diagnosisCount = 0;
-    usage.periodStart = Date.now();
-  }
-
-  if (usage.diagnosisCount >= limit) {
-    return { allowed: false, message: "Quota atteint pour votre forfait actuel. Veuillez passer à un forfait supérieur." };
-  }
-
-  usage.diagnosisCount += 1;
-  usageTracking.set(phone, usage);
-  return { allowed: true };
+async function checkAndIncrementUsage(phone: string, plan: string): Promise<{ allowed: boolean; message?: string }> {
+  const period = usagePeriod(phone, plan);
+  const allowed = await usageStore.consume(phone, "diagnosis", period, 1, PLAN_LIMITS[plan] ?? 0);
+  if (allowed) usageTracking.set(phone, { diagnosisCount: await usageStore.used(phone, "diagnosis", period), periodStart: period });
+  return allowed ? { allowed: true } : { allowed: false, message: "Quota atteint pour votre forfait actuel. Veuillez passer à un forfait supérieur." };
 }
 
 // Support de plusieurs clés Gemini (rotation automatique en cas de quota dépassé sur l'une
@@ -887,6 +864,7 @@ function getAIClient(): GoogleGenAI {
     instance = new GoogleGenAI({
       apiKey,
       httpOptions: {
+        timeout: 60000,
         headers: {
           "User-Agent": "aistudio-build",
         },
@@ -1389,7 +1367,7 @@ const OBD_CODES: Record<string, { cause: string; action: string }> = {
   P1455: { cause: "[Toyota] Grande fuite système EVAP", action: "Vérifier bouchon réservoir, canister, joints durites EVAP" },
   P1500: { cause: "[Toyota] Circuit signal démarreur — défaillance", action: "Vérifier contacteur de démarrage, câblage signal STA" },
   P1520: { cause: "[Toyota] Circuit interrupteur stop — défaillance", action: "Vérifier contacteur pédale de frein" },
-  P1600: { cause: "[Toyota] Défaillance mémoire ECU / communication série", action: "Réinitialiser ECU, vérifier alimentation ECU (masse propre)" },
+  P1600: { cause: "Code constructeur : définition à confirmer selon marque, modèle et motorisation", action: "Consulter la documentation du véhicule avant toute conclusion ou réinitialisation" },
   P1780: { cause: "[Toyota] Circuit interrupteur position boîte (P/N) — défaillance", action: "Vérifier contacteur neutre BVA, câblage" },
   // Peugeot / Citroën codes spécifiques
   P1315: { cause: "[Peugeot] Pré-allumage détecté", action: "Vérifier bougies, qualité carburant, capteur cliquetis" },
@@ -1398,7 +1376,6 @@ const OBD_CODES: Record<string, { cause: string; action: string }> = {
   P1351: { cause: "[Peugeot] Bobine allumage groupe A — défaillance", action: "Vérifier bobine allumage, câblage HT" },
   P1352: { cause: "[Peugeot] Bobine allumage groupe B — défaillance", action: "Vérifier bobine allumage groupe B" },
   P1380: { cause: "[Peugeot] Défaillance gestion bougies de préchauffage", action: "Vérifier bougies de préchauffage, relais préchauffage" },
-  P1600: { cause: "[Peugeot/Citroën] Défaillance communication ECU injection", action: "Vérifier alimentation ECU, masse carrosserie, connecteur ECU" },
   P1618: { cause: "[Peugeot] Tension alimentation capteurs ECU — trop basse", action: "Vérifier batterie, alternateur, connexion masse ECU" },
   P1629: { cause: "[Peugeot] Coupure alimentation 5V capteurs", action: "Vérifier court-circuit sur circuit 5V ECU" },
   // Renault / Dacia codes spécifiques
@@ -1682,40 +1659,10 @@ const liveAgentStates = new Map<string, LiveAgentState>();
 
 // Planificateur local déterministe : zéro appel IA, zéro réseau, zéro DB.
 // Objectif : choisir UNE seule prochaine action sans ajouter de latence au Live vocal.
-function planLiveDiagnosticLocal(input: {
-  vehicle: string;
-  symptom: string;
-  dtcs: string[];
-  evidence: string[];
-  hypotheses: string[];
-  contradictions: string[];
-  currentTest: string | null;
-  repaired: boolean;
-  concluded: boolean;
-  phase: LiveAgentPhase;
-}): { priorite: "securite" | "critique" | "prioritaire" | "confirmation"; action: string; raison: string; attendu: string } {
-  const has = (needle: string) => input.evidence.some(e => e.toLowerCase().includes(needle));
-  if (input.concluded) return { priorite:"confirmation", action:"Diagnostic clôturé", raison:"La session est déjà clôturée.", attendu:"Aucune nouvelle action." };
-  if (input.currentTest) return { priorite:"prioritaire", action:"Attendre le résultat du test en cours", raison:"Un seul test doit être exécuté à la fois.", attendu:"Résultat objectif, mesure ou observation." };
-  if (!input.vehicle) return { priorite:"critique", action:"Identifier précisément le véhicule", raison:"Une procédure dépend du modèle, de l'année et de la motorisation.", attendu:"Marque, modèle, année et motorisation." };
-  if (/hybride|électrique|ev|phev|bev/i.test(input.vehicle) && !has("sécurité haute tension") && !has("consignation")) {
-    return { priorite:"securite", action:"Confirmer la procédure de sécurité haute tension", raison:"Les procédures HT varient selon le véhicule.", attendu:"Modèle/motorisation confirmés et circuit HT sécurisé avant intervention." };
-  }
-  if (!input.symptom) return { priorite:"critique", action:"Caractériser le symptôme", raison:"Sans symptôme reproductible, les hypothèses restent trop larges.", attendu:"Conditions d'apparition et comportement précis." };
-  if (input.phase === "historique") return { priorite:"prioritaire", action:"Vérifier l'historique d'intervention récent", raison:"Une intervention récente peut être directement liée à la panne.", attendu:"Ce qui a été remplacé, débranché, nettoyé ou réparé et quand." };
-  if (input.phase === "symptome") return { priorite:"prioritaire", action:"Reproduire et caractériser le symptôme", raison:"Il faut établir les conditions exactes avant le test.", attendu:"Froid/chaud, démarrage/roulage, charge, régime ou fréquence." };
-  if (input.phase === "inspection") return { priorite:"prioritaire", action:"Faire une inspection visuelle rapide", raison:"Connecteurs, fusibles, faisceaux, fuites et niveaux sont des prérequis simples.", attendu:"Observation visuelle positive ou anomalie trouvée." };
-  if (input.phase === "outils" && input.dtcs.length === 0) return { priorite:"prioritaire", action:"Lire les codes défauts et données figées", raison:"Sans DTC ni données objectives, la piste reste trop large.", attendu:"DTC, freeze frame et seulement les données utiles." };
-  if (input.contradictions.length > 0) return { priorite:"critique", action:"Résoudre la contradiction avec un test discriminant", raison:"Une preuve contredit la piste actuelle.", attendu:"Résultat permettant d'écarter ou de renforcer une hypothèse." };
-  if (input.hypotheses.length === 0) return { priorite:"prioritaire", action:"Construire les hypothèses à partir des preuves", raison:"Il faut relier le symptôme et les observations avant de choisir une pièce.", attendu:"Une ou plusieurs causes candidates à vérifier." };
-  if (input.evidence.length < 2 && input.dtcs.length > 0) return { priorite:"prioritaire", action:"Obtenir une preuve technique supplémentaire", raison:"Un DTC seul ne condamne pas une pièce.", attendu:"Mesure, donnée scanner, inspection ou test physique." };
-  if (input.repaired) return { priorite:"confirmation", action:"Effectuer la validation post-réparation et rescanner", raison:"Une réparation n'est pas confirmée tant que le symptôme et les DTC ne sont pas vérifiés.", attendu:"Symptôme absent et aucun nouveau DTC pertinent." };
-  return { priorite:"confirmation", action:"Choisir un seul test discriminant", raison:"Le test doit séparer les hypothèses restantes avant toute condamnation de pièce.", attendu:"Résultat mesurable ou observation permettant la prochaine décision." };
-}
 
 function createLiveAgentState(sessionId: string, context = ""): LiveAgentState {
   const text = String(context || "");
-  const dtcs = Array.from(text.matchAll(/\\b[PBCU][0-9]{4}\\b/gi)).map(m => m[0].toUpperCase()).filter((v,i,a)=>a.indexOf(v)===i);
+  const dtcs = Array.from(text.matchAll(/\b[PBCU][0-9]{4}\b/gi)).map(m => m[0].toUpperCase()).filter((v,i,a)=>a.indexOf(v)===i);
   const state: LiveAgentState = {
     sessionId, phase: "historique", tour: 0, vehicle: "", symptom: text.slice(0, 500),
     dtcs, evidence: [], hypotheses: [], testsDone: [], currentTest: null,
@@ -2115,6 +2062,7 @@ async function callDeepSeekFallback(userContent: string | any[], config: any): P
   messages.push({ role: "user", content: finalContent });
 
   const res = await fetch("https://api.deepseek.com/chat/completions", {
+          signal: AbortSignal.timeout(45000),
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -2251,10 +2199,11 @@ async function startServer() {
   // doivent être en mémoire avant qu'une seule requête ne puisse arriver.
   await initDatabase();
   await loadPersistedData();
-  seedAdminAccountIfNeeded();
+  await seedAdminAccountIfNeeded();
 
   const app = express();
-  const PORT = 3000;
+  catchAsyncRoutes(app);
+  const PORT = Number(process.env.PORT) || 3000;
 
   // BUG CORRIGÉ (détecté en déploiement réel sur Render) : sans ce réglage, Express ne fait pas
   // confiance à l'en-tête X-Forwarded-For envoyé par le proxy de l'hébergeur (Render, ou tout
@@ -2291,14 +2240,16 @@ async function startServer() {
     }
     next();
   });
-  app.use(express.json({
-    limit: "50mb",
-    // Conserve le corps brut (avant parsing) pour la vérification de signature HMAC des
-    // webhooks (ex: Jèko), qui doit porter sur les octets exacts reçus, pas sur du JSON
-    // re-sérialisé qui pourrait différer (ordre des clés, espacement).
-    verify: (req: any, _res, buf) => { req.rawBody = buf; },
-  }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  const smallJson = express.json({ limit: "2mb", verify: (req: any, _res, buf) => { req.rawBody = buf; } });
+  const mediaJson = express.json({ limit: "12mb", verify: (req: any, _res, buf) => { req.rawBody = buf; } });
+  app.use((req, res, next) => {
+    if (!LARGE_PAYLOAD_PATHS.has(req.path)) return smallJson(req, res, next);
+    if (req.path === "/api/shop/part-requests") return mediaJson(req, res, next);
+    // Reject untrusted large uploads before buffering their body.
+    if (req.path === "/api/admin/banners") return requireAdminAuth(req, res, () => mediaJson(req, res, next));
+    return requireAuth(req, res, () => mediaJson(req, res, next));
+  });
+  app.use(express.urlencoded({ limit: "2mb", extended: false }));
 
   // Anti-abus : limite le nombre de requêtes sur les routes sensibles (SMS/OTP coûtent de l'argent, auth = cible de brute-force)
   const otpSendLimiter = rateLimit({
@@ -2351,11 +2302,43 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.get("/api/ready", async (_req, res) => {
+    if (!dbPool) return res.status(503).json({ status: "unavailable" });
+    const client = await dbPool.connect();
+    try {
+      await client.query({ text: "SELECT 1", query_timeout: 2000 } as any);
+      res.json({ status: "ready" });
+    } finally { client.release(); }
+  });
+
+  const aiLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false });
+  const aiInFlight = new Map<string, number>();
+  const aiBudget = async (req: any, res: any, next: any) => {
+    const phone = req.session.phone;
+    const plan = getEffectivePlan(phone);
+    if ((PLAN_LIMITS[plan] ?? 0) <= 0) return res.status(403).json({ success: false, message: "Forfait expiré. Veuillez vous réabonner." });
+    if ((aiInFlight.get(phone) || 0) >= 2) return res.status(429).json({ success: false, message: "Deux requêtes sont déjà en cours. Patientez." });
+    aiInFlight.set(phone, (aiInFlight.get(phone) || 0) + 1);
+    let released = false;
+    const release = () => { if (!released) { released = true; aiInFlight.set(phone, Math.max(0, (aiInFlight.get(phone) || 1) - 1)); } };
+    res.once("close", release);
+    try {
+      const period = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+      const caps: Record<string, number> = { free_trial: 40, owner_week: 150, lite: 300, payg_active: 1500, premium: 2000 };
+      if (!await usageStore.consume(phone, "ai_requests", period, 1, caps[plan] ?? 0)) {
+        release(); return res.status(429).json({ success: false, message: "Limite quotidienne de requêtes atteinte." });
+      }
+      next();
+    } catch (error) { release(); throw error; }
+  };
+  app.use(["/api/diagnose", "/api/chat", "/api/tts", "/api/diagnostic/loop", "/api/vehicle/hp-web/search"],
+    aiLimiter, requireAuth, (req: any, res: any, next: any) => { Promise.resolve(aiBudget(req, res, next)).catch(next); });
+
   // API Route: Diagnose vehicle issue
   app.post("/api/diagnose", diagnoseLimiter, requireAuth, async (req: any, res) => {
     try {
       const { phone, plan } = req.session;
-      const check = checkAndIncrementUsage(phone, plan);
+      const check = await checkAndIncrementUsage(phone, plan);
       if (!check.allowed) {
         return res.status(403).json({ success: false, message: check.message });
       }
@@ -2796,7 +2779,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
     try {
       const { message, history, diagnosticContext } = req.body;
 
-      if (!message) {
+      if (typeof message !== "string" || !message.trim() || message.length > 12000 || (history && (!Array.isArray(history) || history.length > 30))) {
         return res.status(400).json({ success: false, message: "Le message est requis." });
       }
 
@@ -3004,7 +2987,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const { text: rawText, voiceName } = req.body;
       // Prononciation : "DiagAssist" collé est lu "diagnostic" par la synthèse vocale.
       const text = typeof rawText === "string" ? rawText.replace(/diag\s*assist(?!\w)/gi, "Diag Assist") : rawText;
-      if (!text) {
+      if (typeof text !== "string" || !text.trim() || text.length > 5000) {
         return res.status(400).json({ success: false, message: "Le texte est requis." });
       }
       if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
@@ -3035,6 +3018,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
         const elevenLabsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
         const response = await fetch(elevenLabsUrl, {
+          signal: AbortSignal.timeout(45000),
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -3081,6 +3065,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       let lastError = "";
       if (cloudKey) {
         const response = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${cloudKey}`, {
+          signal: AbortSignal.timeout(45000),
           method: "POST",
           headers: { "Content-Type": "application/json", "User-Agent": "aistudio-build-tts" },
           body: JSON.stringify({
@@ -3103,6 +3088,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const geminiVoice = process.env.GEMINI_TTS_VOICE || "Kore";
       for (const apiKey of geminiKeys) {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiTtsModel}:generateContent`, {
+          signal: AbortSignal.timeout(45000),
           method: "POST",
           headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey, "User-Agent": "aistudio-build-tts" },
           body: JSON.stringify({
@@ -3168,8 +3154,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const activeChannel = "whatsapp" as const;
 
       // Clean the number
-      const cleanPhone = phoneNumber.replace(/\s+/g, "");
-      const fullPhone = `${countryCode || "+225"}${cleanPhone}`;
+      const cleanPhone = typeof phoneNumber === "string" ? phoneNumber.trim() : "";
+      const fullPhone = normalizePhone(cleanPhone, countryCode || "+225");
 
       // En production, Twilio DOIT être configuré : sinon le code ne serait ni envoyé ni révélé,
       // ce qui bloquerait silencieusement toute connexion. On préfère un message d'erreur clair.
@@ -3179,7 +3165,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
 
       // Generate random 6-digit OTP code
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const otpCode = crypto.randomInt(100000, 1000000).toString();
 
       // Store in memory with a 10 minutes expiry limit
       otpStorage.set(fullPhone, {
@@ -3207,7 +3193,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
             to: toNumber,
           });
           sentRealMessage = true;
-          console.log(`[Twilio WhatsApp] Code OTP réel ${otpCode} envoyé à ${toNumber} avec succès depuis ${fromNumber} !`);
+          console.log("[Twilio WhatsApp] Code de validation envoyé.");
         } catch (twilioErr: any) {
           console.error(`Erreur d'envoi Twilio (${activeChannel}) :`, twilioErr);
           errorDetails = twilioErr.message;
@@ -3249,12 +3235,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       if (!phoneNumber || !code) {
         return res.status(400).json({ success: false, message: "Données manquantes pour la validation." });
       }
-      if (password !== undefined && (typeof password !== "string" || password.length < 6)) {
+      if (password !== undefined && (typeof password !== "string" || password.length < 6 || password.length > 256)) {
         return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
       }
 
-      const cleanPhone = phoneNumber.replace(/\s+/g, "");
-      const fullPhone = `${countryCode || "+225"}${cleanPhone}`;
+      const cleanPhone = typeof phoneNumber === "string" ? phoneNumber.trim() : "";
+      const fullPhone = normalizePhone(cleanPhone, countryCode || "+225");
 
       // Anti brute-force par numéro : max 8 tentatives / 15 min, indépendamment du rate-limit global par IP
       const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
@@ -3272,9 +3258,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       const DEV_MASTER_OTP = process.env.DEV_MASTER_OTP;
       if (process.env.NODE_ENV !== "production" && DEV_MASTER_OTP && code === DEV_MASTER_OTP) {
         if (password) {
-          createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
+          await createAccount(fullPhone, password, userAccounts.get(fullPhone)?.isAdmin ?? false, undefined, typeof name === "string" ? name.trim() : undefined);
         }
-        const token = createSession(fullPhone);
+        const token = await createSession(fullPhone);
         return res.json({
           success: true,
           message: "Connexion test (dev uniquement).",
@@ -3305,11 +3291,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       otpAttempts.delete(fullPhone);
 
       if (password) {
-        createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
+        await createAccount(fullPhone, password, userAccounts.get(fullPhone)?.isAdmin ?? false, undefined, typeof name === "string" ? name.trim() : undefined);
         console.log(`[Auth] Compte créé/mis à jour par auto-inscription pour ${fullPhone}.`);
       }
 
-      const token = createSession(fullPhone);
+      const token = await createSession(fullPhone);
       res.json({
         success: true,
         message: password
@@ -3324,14 +3310,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route: Get real user status (quota and subscription plan)
-  app.get("/api/user/status", requireAuth, (req: any, res) => {
+  app.get("/api/user/status", requireAuth, async (req: any, res) => {
     const { phone, plan } = req.session;
-    const usage = usageTracking.get(phone) || { diagnosisCount: 0 };
+    const usage = { diagnosisCount: await usageStore.used(phone, "diagnosis", usagePeriod(phone, plan)) };
     const limit = PLAN_LIMITS[plan] ?? 0;
     const account = userAccounts.get(phone);
     const isAdmin = account?.isAdmin ?? false;
     const planRecord = userPlans.get(phone);
-    const duration = planRecord ? PLAN_DURATIONS_MS[planRecord.plan] : undefined;
+    const duration = planRecord ? (planRecord.customDurationMs ?? PLAN_DURATIONS_MS[planRecord.plan]) : undefined;
     // expiresAt calculé côté serveur (source de vérité) — le client ne doit plus deviner
     // une échéance à partir d'une horloge locale non fiable (bug corrigé). Un admin n'a jamais
     // d'échéance, quel que soit le forfait resté enregistré en base (ex: pass 24h d'un ancien test).
@@ -3443,7 +3429,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route (ADMIN UNIQUEMENT) : active réellement un forfait pour un numéro, après vérification manuelle du paiement Wave
-  app.post("/api/admin/activate-plan", adminLimiter, requireAdminAuth, (req, res) => {
+  app.post("/api/admin/activate-plan", adminLimiter, requireAdminAuth, async (req, res) => {
     const { phone, plan, requestId, durationValue, durationUnit } = req.body;
     if (!phone || !plan) {
       return res.status(400).json({ success: false, message: "phone et plan sont requis." });
@@ -3456,7 +3442,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const customDurationMs = durationValue ? computeDurationMs(Number(durationValue), durationUnit) : undefined;
     // Persisté par numéro : reste actif même si l'utilisateur se déconnecte/reconnecte,
     // et expirera automatiquement selon PLAN_DURATIONS_MS ou la durée personnalisée (voir getEffectivePlan).
-    setUserPlan(phone, plan, customDurationMs);
+    await setUserPlan(phone, plan, customDurationMs);
     // BUG CORRIGÉ : le compteur d'usage n'était jamais remis à zéro lors d'une nouvelle activation —
     // un client qui se réabonnait après expiration héritait de son ancien quota déjà consommé.
     usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });
@@ -3477,21 +3463,22 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // API Route (ADMIN UNIQUEMENT) : crée ou met à jour le compte d'un client (numéro + mot de passe).
   // Vous communiquez ensuite ces identifiants directement au client (téléphone, en personne, etc.).
-  app.post("/api/admin/create-account", adminLimiter, requireAdminAuth, (req, res) => {
+  app.post("/api/admin/create-account", adminLimiter, requireAdminAuth, async (req, res) => {
     const { phone, password, plan, isAdmin, email, name, durationValue, durationUnit } = req.body;
     if (!phone || !password) {
       return res.status(400).json({ success: false, message: "phone et password sont requis." });
     }
-    if (typeof password !== "string" || password.length < 6) {
+    if (typeof password !== "string" || password.length < 6 || password.length > 256) {
       return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
     }
-    createAccount(phone, password, Boolean(isAdmin), email, typeof name === "string" ? name.trim() : undefined);
+    if (plan && !(plan in PLAN_LIMITS)) return res.status(400).json({ success: false, message: "Forfait inconnu." });
+    await createAccount(phone, password, Boolean(isAdmin), email, typeof name === "string" ? name.trim() : undefined);
     if (plan) {
       if (!(plan in PLAN_LIMITS)) {
         return res.status(400).json({ success: false, message: `Plan inconnu : "${plan}".` });
       }
       const customDurationMs = computeDurationMs(Number(durationValue), durationUnit);
-      setUserPlan(phone, plan, customDurationMs);
+      await setUserPlan(phone, plan, customDurationMs);
       usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });
     }
     console.log(`[Admin] Compte créé/mis à jour pour ${phone}${plan ? ` avec le forfait "${plan}"` : ""}${isAdmin ? " (admin)" : ""}.`);
@@ -3501,17 +3488,17 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route (ADMIN UNIQUEMENT) : réinitialise directement le mot de passe d'un client existant,
   // sans passer par le formulaire de création (qui redemande aussi forfait/durée, inutile ici) et
   // sans connaître l'ancien mot de passe. Préserve le rôle admin et l'email existants du compte.
-  app.post("/api/admin/accounts/:phone/set-password", adminLimiter, requireAdminAuth, (req, res) => {
+  app.post("/api/admin/accounts/:phone/set-password", adminLimiter, requireAdminAuth, async (req, res) => {
     const phone = req.params.phone;
     const { password } = req.body;
-    if (typeof password !== "string" || password.length < 6) {
+    if (typeof password !== "string" || password.length < 6 || password.length > 256) {
       return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
     }
     const existing = userAccounts.get(phone);
     if (!existing) {
       return res.status(404).json({ success: false, message: "Compte introuvable." });
     }
-    createAccount(phone, password, existing.isAdmin, existing.email, existing.name);
+    await createAccount(phone, password, existing.isAdmin, existing.email, existing.name);
     console.log(`[Admin] Mot de passe réinitialisé pour ${phone}.`);
     res.json({ success: true, message: `Mot de passe mis à jour pour ${phone}.` });
   });
@@ -3519,13 +3506,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route (ADMIN UNIQUEMENT) : promeut ou rétrograde un compte client EXISTANT en/depuis
   // administrateur, sans passer par le formulaire de création (qui redemande un nouveau mot de
   // passe, inutile ici puisque le compte existe déjà avec son propre mot de passe).
-  app.post("/api/admin/accounts/:phone/set-admin", adminLimiter, requireAdminAuth, (req, res) => {
+  app.post("/api/admin/accounts/:phone/set-admin", adminLimiter, requireAdminAuth, async (req, res) => {
     const phone = req.params.phone;
     const { isAdmin } = req.body;
     if (typeof isAdmin !== "boolean") {
       return res.status(400).json({ success: false, message: "isAdmin (booléen) est requis." });
     }
-    const ok = setAccountAdmin(phone, isAdmin);
+    const ok = await setAccountAdmin(phone, isAdmin);
     if (!ok) {
       return res.status(404).json({ success: false, message: "Compte introuvable." });
     }
@@ -3534,20 +3521,20 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route: l'utilisateur connecté change lui-même son mot de passe
-  app.post("/api/user/change-password", authLimiter, requireAuth, (req: any, res) => {
+  app.post("/api/user/change-password", authLimiter, requireAuth, async (req: any, res) => {
     const { currentPassword, newPassword } = req.body;
     const { phone } = req.session;
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ success: false, message: "Mot de passe actuel et nouveau mot de passe requis." });
     }
-    if (typeof newPassword !== "string" || newPassword.length < 6) {
+    if (typeof newPassword !== "string" || newPassword.length < 6 || newPassword.length > 256) {
       return res.status(400).json({ success: false, message: "Le nouveau mot de passe doit faire au moins 6 caractères." });
     }
     if (!verifyAccountPassword(phone, currentPassword)) {
       return res.status(401).json({ success: false, message: "Mot de passe actuel incorrect." });
     }
     const existing = userAccounts.get(phone);
-    createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
+    await createAccount(phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
     res.json({ success: true, message: "Mot de passe mis à jour." });
   });
 
@@ -3567,7 +3554,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.json(genericResponse);
     }
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = crypto.randomInt(100000, 1000000).toString();
     passwordResetCodes.set(email.trim().toLowerCase(), { code, phone, expiresAt: Date.now() + 15 * 60 * 1000 });
 
     try {
@@ -3585,16 +3572,20 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route: réinitialisation effective du mot de passe avec le code reçu par email
-  app.post("/api/auth/reset-password", authLimiter, (req, res) => {
+  app.post("/api/auth/reset-password", authLimiter, async (req, res) => {
     const { email, code, newPassword } = req.body;
-    if (!email || !code || !newPassword) {
+    if (typeof email !== "string" || typeof code !== "string" || !email || !code || !newPassword) {
       return res.status(400).json({ success: false, message: "Email, code et nouveau mot de passe requis." });
     }
-    if (typeof newPassword !== "string" || newPassword.length < 6) {
+    if (typeof newPassword !== "string" || newPassword.length < 6 || newPassword.length > 256) {
       return res.status(400).json({ success: false, message: "Le nouveau mot de passe doit faire au moins 6 caractères." });
     }
     const normalized = email.trim().toLowerCase();
     const record = passwordResetCodes.get(normalized);
+    if (record && record.code !== code.trim()) {
+      record.attempts = (record.attempts || 0) + 1;
+      if (record.attempts >= 5) passwordResetCodes.delete(normalized);
+    }
     if (!record || record.code !== code.trim()) {
       return res.status(401).json({ success: false, message: "Code de réinitialisation incorrect." });
     }
@@ -3603,7 +3594,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.status(400).json({ success: false, message: "Ce code a expiré. Veuillez en demander un nouveau." });
     }
     const existing = userAccounts.get(record.phone);
-    createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
+    await createAccount(record.phone, newPassword, existing?.isAdmin ?? false, existing?.email, existing?.name);
     passwordResetCodes.delete(normalized);
     res.json({ success: true, message: "Mot de passe réinitialisé avec succès. Vous pouvez maintenant vous connecter." });
   });
@@ -3646,19 +3637,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Route (ADMIN UNIQUEMENT) : déconnecte de force toutes les sessions actives d'un numéro
-  app.post("/api/admin/force-logout", adminLimiter, requireAdminAuth, (req, res) => {
+  app.post("/api/admin/force-logout", adminLimiter, requireAdminAuth, async (req, res) => {
     const { phone } = req.body;
     if (!phone) {
       return res.status(400).json({ success: false, message: "Le numéro de téléphone est requis." });
     }
-    let removed = 0;
-    for (const [token, s] of sessions) {
-      if (s.phone === phone) {
-        sessions.delete(token);
-        deleteSessionFromDb(token).catch(() => {});
-        removed += 1;
-      }
-    }
+    const removed = await revokeUserSessions(String(phone));
     console.log(`[Admin] ${removed} session(s) déconnectée(s) de force pour ${phone}.`);
     res.json({ success: true, message: `${removed} session(s) déconnectée(s) pour ${phone}.`, removed });
   });
@@ -3854,6 +3838,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (deepseekKey) {
       try {
         const dsRes = await fetch("https://api.deepseek.com/chat/completions", {
+          signal: AbortSignal.timeout(45000),
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${deepseekKey}` },
           body: JSON.stringify({ model: "deepseek-flash", messages: [{ role: "user", content: "Réponds juste \"ok\"." }], max_tokens: 10 }),
@@ -4231,7 +4216,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       [year]
     );
     const n = result.rows[0].last_value;
-    return `DA-${year}-${String(n).padStart(6, "0")}`;
+    return `DA-${year}-${String(n).padStart(6, "0")}-${crypto.randomBytes(6).toString("hex")}`;
   }
 
   // --- Public : panier multi-produits -> commande groupée (checkout) ---
@@ -4318,22 +4303,22 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   }
 
   // Après un paiement Jèko confirmé : met à jour l'état de paiement et l'acompte de la commande.
-  async function syncShopPaymentState(orderRef: string) {
+  async function syncShopPaymentState(orderRef: string, query = (sql: string, params?: any[]) => dbPool!.query(sql, params)) {
     if (!dbPool) return;
-    const paid = await dbPool.query(
+    const paid = await query(
       "SELECT COALESCE(SUM(amount_cents), 0) / 100 AS paid FROM jeko_payments WHERE kind = 'shop' AND order_ref = $1 AND status = 'success'",
       [orderRef]
     );
     const paidFcfa = Number(paid.rows[0]?.paid || 0);
-    const { rows } = await dbPool.query(
+    const { rows } = await query(
       `SELECT COALESCE(SUM(COALESCE(unit_price_snapshot,0) * COALESCE(quantity,1) + COALESCE(shipping_fee_fcfa,0)), 0) AS total,
               COALESCE(SUM(deposit_fcfa), 0) AS deposit
          FROM shop_orders WHERE order_ref = $1`, [orderRef]);
     const total = Number(rows[0]?.total || 0), deposit = Number(rows[0]?.deposit || 0);
     const state = total > 0 && paidFcfa >= total ? "paye" : paidFcfa > 0 ? "acompte_paye" : "non_paye";
-    await dbPool.query("UPDATE shop_orders SET payment_status = $2, updated_at = CURRENT_TIMESTAMP WHERE order_ref = $1", [orderRef, state]);
+    await query("UPDATE shop_orders SET payment_status = $2, updated_at = CURRENT_TIMESTAMP WHERE order_ref = $1", [orderRef, state]);
     if (deposit > 0 && paidFcfa >= deposit) {
-      await dbPool.query(
+      await query(
         "UPDATE shop_orders SET deposit_status = 'recu', deposit_received_at = COALESCE(deposit_received_at, CURRENT_TIMESTAMP) WHERE order_ref = $1 AND deposit_status = 'en_attente'",
         [orderRef]
       );
@@ -4347,6 +4332,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const phone = cleanShopPhone(req.query.phone);
     if (!phone || !isValidShopPhone(phone)) return res.status(400).json({ success: false, message: "Téléphone requis." });
 
+    if (!ref) return res.status(400).json({ success: false, message: "Référence de commande et téléphone requis." });
     let refs: string[];
     if (ref) {
       refs = [ref];
@@ -4858,12 +4844,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route : création de compte directe (numéro + mot de passe), protégée par le captcha
   // ci-dessus. Ne dépend d'aucun envoi SMS/WhatsApp — évite les pannes liées à un fournisseur
   // OTP mal configuré, tout en gardant une protection anti-bot minimale.
-  app.post("/api/auth/register", authLimiter, (req, res) => {
+  app.post("/api/auth/register", authLimiter, async (req, res) => {
     const { phoneNumber, countryCode, password, captchaId, captchaAnswer, name } = req.body;
     if (!phoneNumber || !password || !captchaId || captchaAnswer === undefined) {
       return res.status(400).json({ success: false, message: "Données manquantes pour créer le compte." });
     }
-    if (typeof password !== "string" || password.length < 6) {
+    if (typeof password !== "string" || password.length < 6 || password.length > 256) {
       return res.status(400).json({ success: false, message: "Le mot de passe doit faire au moins 6 caractères." });
     }
 
@@ -4880,26 +4866,26 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     captchaStorage.delete(captchaId); // usage unique
 
-    const cleanNumber = String(phoneNumber).replace(/\s+/g, "");
+    const cleanNumber = String(phoneNumber).replace(/[\s().-]/g, "");
     if (cleanNumber.length < 8) {
       return res.status(400).json({ success: false, message: "Veuillez saisir un numéro de téléphone valide." });
     }
-    const fullPhone = `${countryCode || "+225"}${cleanNumber}`;
+    const fullPhone = normalizePhone(cleanNumber, countryCode || "+225");
 
-    createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined);
+    await createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined, true);
     console.log(`[Auth] Compte créé par auto-inscription (captcha) pour ${fullPhone}.`);
-    const token = createSession(fullPhone);
+    const token = await createSession(fullPhone);
     res.json({ success: true, message: "Compte créé avec succès.", sessionToken: token });
   });
 
   // API Route : connexion par numéro de téléphone + mot de passe (compte créé par l'admin)
-  app.post("/api/auth/login", authLimiter, (req, res) => {
+  app.post("/api/auth/login", authLimiter, async (req, res) => {
     const { phoneNumber, countryCode, password } = req.body;
     if (!phoneNumber || !password) {
       return res.status(400).json({ success: false, message: "Numéro de téléphone et mot de passe requis." });
     }
-    const cleanPhone = phoneNumber.replace(/\s+/g, "");
-    const fullPhone = `${countryCode || "+225"}${cleanPhone}`;
+    const cleanPhone = typeof phoneNumber === "string" ? phoneNumber.trim() : "";
+    const fullPhone = normalizePhone(cleanPhone, countryCode || "+225");
 
     // Anti brute-force par numéro (indépendant du rate-limit global par IP)
     const ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
@@ -4925,21 +4911,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     // Pour un client normal, toute nouvelle connexion déconnecte de force les sessions
     // précédentes — cela empêche le partage d'un même abonnement entre plusieurs personnes.
     const isAdminAccount = userAccounts.get(fullPhone)?.isAdmin === true;
-    if (!isAdminAccount) {
-      let revoked = 0;
-      for (const [oldToken, s] of sessions) {
-        if (s.phone === fullPhone) {
-          sessions.delete(oldToken);
-          deleteSessionFromDb(oldToken).catch(() => {});
-          revoked += 1;
-        }
-      }
-      if (revoked > 0) {
-        console.log(`[Session unique] ${revoked} session(s) precedente(s) deconnectee(s) pour ${fullPhone}.`);
-      }
-    }
+    if (!isAdminAccount) await revokeUserSessions(fullPhone);
 
-    const token = createSession(fullPhone);
+    const token = await createSession(fullPhone);
     logConnectionEvent(fullPhone);
     res.json({ success: true, message: "Connexion réussie.", sessionToken: token });
   });
@@ -5152,7 +5126,7 @@ diagnostic, ni formation technique. Tu DOIS adapter chaque "next_question" à ce
   app.post("/api/diagnostic/loop/start", requireAuth, async (req: any, res) => {
     try {
       const { phone, plan } = req.session;
-      const check = checkAndIncrementUsage(phone, plan);
+      const check = await checkAndIncrementUsage(phone, plan);
       if (!check.allowed) {
         return res.status(403).json({ success: false, message: check.message });
       }
@@ -5455,24 +5429,47 @@ Directives pour ce tour :
     requireAuth,
     requireAdminAuth,
     setUserPlan,
-    onPlanActivated: (phone: string, plan: string) => {
+    onPlanActivated: (phone: string, plan: string, activatedAt?: number) => {
+      if (activatedAt) userPlans.set(phone, { plan, activatedAt });
       usageTracking.set(phone, { diagnosisCount: 0, periodStart: Date.now() });
       for (const [, session] of sessions) {
         if (session.phone === phone) session.plan = plan;
       }
     },
     dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
+    dbTransaction: dbPool ? async work => {
+      const client = await dbPool.connect();
+      try {
+        await client.query("BEGIN");
+        const result = await work((sql, params) => client.query(sql, params));
+        await client.query("COMMIT");
+        return result;
+      } catch (error) { await client.query("ROLLBACK"); throw error; }
+      finally { client.release(); }
+    } : undefined,
     shop: dbPool ? { limiter: shopPublicLimiter, quote: quoteShopPayment, onPaid: syncShopPaymentState } : undefined,
   });
 
   // HP-Web : recherche métier côté serveur, jamais depuis le navigateur.
   registerHpWebRoutes(app, requireAuth);
 
+  app.post("/api/auth/logout", requireAuth, async (req: any, res) => {
+    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [req.sessionToken]);
+    sessions.delete(req.sessionToken);
+    res.json({ success: true });
+  });
+  app.use("/api", (_req, res) => res.status(404).json({ success: false, message: "Route API introuvable." }));
+  app.use((error: any, _req: any, res: any, _next: any) => {
+    console.error("[API] Requête échouée:", error?.code || error?.name || "Error");
+    const status = Number(error?.status) || 503;
+    res.status(status).json({ success: false, message: status < 500 ? error.message : "Service momentanément indisponible. Réessayez." });
+  });
+
   // Vite integration — DOIT être enregistré en dernier : app.get("*", ...) intercepte sinon
   // toute requête GET (y compris les routes API ci-dessus enregistrées après lui), qui reçoit
   // alors la page HTML de l'app au lieu du JSON attendu (bug réel trouvé en testant
   // /api/payments/jeko/status/:reference, qui renvoyait index.html).
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -5502,14 +5499,8 @@ Directives pour ce tour :
   const liveUsage = new Map<string, { day: string; usedMs: number }>();
   const liveConnections = new Map<string, Set<any>>();
   const todayKey = () => new Date().toISOString().slice(0, 10);
-  const getLiveUsedMs = (phone: string) => {
-    const u = liveUsage.get(phone);
-    return u && u.day === todayKey() ? u.usedMs : 0;
-  };
-  const addLiveUsage = (phone: string, ms: number) => {
-    if (!phone || ms <= 0) return;
-    liveUsage.set(phone, { day: todayKey(), usedMs: getLiveUsedMs(phone) + ms });
-  };
+  const livePeriod = () => Math.floor(Date.now() / 86_400_000) * 86_400_000;
+  const getLiveUsedMs = (phone: string) => usageStore.used(phone, "live_ms", livePeriod());
 
   // Ouvre la session Gemini Live ; si la clé échoue (quota, clé invalide) et qu'une autre clé existe,
   // on tourne sur la clé suivante avant de renoncer.
@@ -5544,41 +5535,39 @@ Directives pour ce tour :
   });
 
   server.on("upgrade", (request, socket, head) => {
-    const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
-    if (pathname === "/api/live-ws") {
-      // FAILLE CORRIGÉE : ce endpoint WebSocket (assistant vocal live via Gemini) n'exigeait
-      // aucune authentification — n'importe qui pouvait s'y connecter directement et consommer
-      // l'API Gemini à volonté, sans compte, sans forfait, sans limite, aux frais de l'opérateur.
+    void (async () => {
+      const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
+      if (pathname !== "/api/live-ws") return;
+      const reject = (status: string) => { socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); };
       const protoToken = String(request.headers["sec-websocket-protocol"] || "")
-        .split(",").map((x) => x.trim()).find((x) => x.startsWith("auth."))?.slice(5);
+        .split(",").map(x => x.trim()).find(x => x.startsWith("auth."))?.slice(5);
       const token = protoToken || searchParams.get("token") || "";
       const session = sessions.get(token);
-      if (!token || !session) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-      const effectivePlan = getEffectivePlan(session.phone);
-      if ((PLAN_LIMITS[effectivePlan] ?? 0) <= 0) {
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-      const dailyCap = LIVE_DAILY_MS[effectivePlan] ?? 0;
-      if (getLiveUsedMs(session.phone) >= dailyCap) {
-        socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        (ws as any)._authPhone = session.phone;
-        (ws as any)._plan = effectivePlan;
-        wss.emit("connection", ws, request);
-      });
-    } else {
-      // Allow other upgrades like Vite HMR to pass unimpeded
-    }
+      if (!sessionIsValid(session)) return reject("401 Unauthorized");
+      const plan = getEffectivePlan(session!.phone);
+      const dailyCap = LIVE_DAILY_MS[plan] ?? 0;
+      const period = livePeriod();
+      const used = await usageStore.used(session!.phone, "live_ms", period);
+      const budget = Math.min(LIVE_MAX_SESSION_MS, Math.max(0, dailyCap - used));
+      if (budget <= 0 || !await usageStore.consume(session!.phone, "live_ms", period, budget, dailyCap)) return reject("429 Too Many Requests");
+      if (socket.destroyed) { await usageStore.refund(session!.phone, "live_ms", period, budget); return; }
+      liveUsage.set(session!.phone, { day: todayKey(), usedMs: used + budget });
+      try {
+        wss.handleUpgrade(request, socket, head, ws => {
+          Object.assign(ws, { _authPhone: session!.phone, _plan: plan, _token: token, _budgetMs: budget, _budgetPeriod: period });
+          wss.emit("connection", ws, request);
+        });
+      } catch (error) { await usageStore.refund(session!.phone, "live_ms", period, budget); throw error; }
+    })().catch(() => { if (!socket.destroyed) socket.end("HTTP/1.1 503 Service Unavailable\r\n\r\n"); });
   });
+
+  const shutdown = () => {
+    const deadline = setTimeout(() => process.exit(1), 10_000); deadline.unref();
+    server.emit("shutdown");
+    for (const ws of wss.clients) ws.close(1001, "Redémarrage du service");
+    server.close(() => { wss.close(() => { void dbPool?.end().finally(() => process.exit(0)); if (!dbPool) process.exit(0); }); });
+  };
+  process.once("SIGTERM", shutdown); process.once("SIGINT", shutdown);
 
   wss.on("connection", (clientWs) => {
     console.log("[WebSocket] Client connected to real-time voice bridge.");
@@ -5604,7 +5593,7 @@ Directives pour ce tour :
     }
 
     // Durée max = min(durée d'une session, budget quotidien restant).
-    const remainingBudget = Math.max(0, (LIVE_DAILY_MS[connPlan] ?? 0) - getLiveUsedMs(connPhone));
+    const remainingBudget = (clientWs as any)._budgetMs;
     const limitTimer = setTimeout(() => {
       try { clientWs.send(JSON.stringify({ type: "limit", message: "Durée maximale de l'appel atteinte pour aujourd'hui ou pour cette session." })); clientWs.close(4008, "limit"); } catch {}
     }, Math.min(LIVE_MAX_SESSION_MS, remainingBudget));
@@ -5615,6 +5604,7 @@ Directives pour ce tour :
     // Sans listener, une erreur WebSocket (ex : message trop gros avec maxPayload) ferait planter le process.
     clientWs.on("error", (err) => console.warn("[WebSocket] Erreur client:", err.message));
     const heartbeat = setInterval(() => {
+      if (!sessionIsValid(sessions.get((clientWs as any)._token)) || (PLAN_LIMITS[getEffectivePlan(connPhone)] ?? 0) <= 0) { clientWs.close(4001, "Session expirée"); return; }
       if (!isAlive) { try { clientWs.terminate(); } catch {} return; }
       isAlive = false;
       try { clientWs.ping(); } catch {}
@@ -6197,7 +6187,10 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
       if (mySet.size === 0) liveConnections.delete(connPhone);
       if (!usageCounted) {
         usageCounted = true;
-        addLiveUsage(connPhone, Date.now() - connStartedAt);
+        const unused = Math.max(0, remainingBudget - (Date.now() - connStartedAt));
+        usageStore.refund(connPhone, "live_ms", (clientWs as any)._budgetPeriod, unused)
+          .then(async () => liveUsage.set(connPhone, { day: todayKey(), usedMs: await getLiveUsedMs(connPhone) }))
+          .catch(() => console.error("[Live] Budget conservé après échec de restitution."));
       }
       if (geminiSession) {
         try {
@@ -6208,4 +6201,4 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
   });
 }
 
-startServer();
+startServer().catch(error => { console.error("[Démarrage]", error.message); process.exit(1); });

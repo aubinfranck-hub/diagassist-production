@@ -1253,7 +1253,7 @@ Codes DTC: ${dtcCodes}`;
           <span style={{ color: diagnosis ? T.text : T.muted, flex: 1, fontWeight: diagnosis ? 600 : 400 }} className="truncate">
             {diagnosis ? diagnosis.brandModelInfo : "Aucun véhicule chargé pour cette session"}
           </span>
-          <span style={{ color: T.accent, fontSize: 11, display: "flex", alignItems: "center", gap: 2, shrink: 0 }}>
+          <span style={{ color: T.accent, fontSize: 11, display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
             {diagnosis ? "Changer" : "Charger démo"} <ChevronRight size={12} />
           </span>
         </button>
@@ -1388,7 +1388,7 @@ Codes DTC: ${dtcCodes}`;
           {/* Hypothèses & Niveaux de confiance */}
           {activeLoopState?.hypotheses && activeLoopState.hypotheses.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, uppercase: true }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: "uppercase" }}>
                 Hypothèses courantes & Confiance :
               </div>
               {activeLoopState.hypotheses.map((h, i) => (
