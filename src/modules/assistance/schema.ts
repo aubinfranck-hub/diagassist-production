@@ -91,8 +91,8 @@ CREATE TABLE IF NOT EXISTS assistance_requests (
   assigned_phone TEXT REFERENCES assistance_pros(phone),
   assigned_at BIGINT,
   quote_status TEXT NOT NULL DEFAULT 'aucun' CHECK (quote_status IN ('aucun','propose','accepte','refuse')),
-  payment_status TEXT NOT NULL DEFAULT 'aucun' CHECK (payment_status IN ('aucun','en_attente','especes_a_confirmer','paye','echoue')),
-  amount_due INTEGER NOT NULL DEFAULT 0,
+  ai_analysis TEXT,
+  amount_due INTEGER NOT NULL DEFAULT 0, -- montant convenu = somme des devis acceptés (règlement direct avec le mécanicien, hors plateforme)
   manual_requested BOOLEAN NOT NULL DEFAULT false,
   search_started_at BIGINT,
   cancel_reason TEXT,
@@ -113,8 +113,9 @@ CREATE TABLE IF NOT EXISTS assistance_offers (
   expires_at BIGINT NOT NULL,
   responded_at BIGINT
 );
--- Une seule proposition ouverte à la fois par demande (affectation séquentielle).
-CREATE UNIQUE INDEX IF NOT EXISTS idx_assistance_offers_open ON assistance_offers (request_id) WHERE status = 'envoyee';
+-- Envoi simultané à plusieurs mécaniciens : plusieurs propositions ouvertes par demande ; le premier à accepter l'emporte.
+DROP INDEX IF EXISTS idx_assistance_offers_open;
+CREATE INDEX IF NOT EXISTS idx_assistance_offers_req ON assistance_offers (request_id, status);
 CREATE INDEX IF NOT EXISTS idx_assistance_offers_pro ON assistance_offers (pro_phone, status);
 CREATE TABLE IF NOT EXISTS assistance_assignments (
   id SERIAL PRIMARY KEY,
@@ -178,22 +179,6 @@ CREATE TABLE IF NOT EXISTS assistance_quotes (
 );
 -- Un seul devis en attente d'accord par demande.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_assistance_quotes_pending ON assistance_quotes (request_id) WHERE status = 'propose';
-CREATE TABLE IF NOT EXISTS assistance_payments (
-  reference TEXT PRIMARY KEY,
-  request_id TEXT NOT NULL REFERENCES assistance_requests(id) ON DELETE CASCADE,
-  payer_phone TEXT NOT NULL,
-  method TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  amount INTEGER NOT NULL CHECK (amount > 0),
-  commission_amount INTEGER,
-  status TEXT NOT NULL DEFAULT 'en_attente' CHECK (status IN ('en_attente','especes_a_confirmer','paye','echoue','annule')),
-  provider_ref TEXT,
-  redirect_url TEXT,
-  confirmed_by TEXT,
-  created_at BIGINT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_assistance_payments_req ON assistance_payments (request_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS assistance_reviews (
   request_id TEXT PRIMARY KEY REFERENCES assistance_requests(id) ON DELETE CASCADE,
   author_phone TEXT NOT NULL,
@@ -224,4 +209,9 @@ CREATE TABLE IF NOT EXISTS assistance_notifications (
   read_at BIGINT
 );
 CREATE INDEX IF NOT EXISTS idx_assistance_notifications_phone ON assistance_notifications (phone, id DESC);
+
+-- Migration sûre si une version précédente du schéma existait.
+ALTER TABLE assistance_requests ADD COLUMN IF NOT EXISTS ai_analysis TEXT;
+ALTER TABLE assistance_requests DROP COLUMN IF EXISTS payment_status;
+DROP TABLE IF EXISTS assistance_payments;
 `;

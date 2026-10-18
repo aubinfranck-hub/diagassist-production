@@ -1,11 +1,11 @@
 import { useCallback, useState } from "react";
 import {
   ArrowLeft, Phone, MessageCircle, MapPin, Clock, Wrench, CheckCircle2, XCircle, RefreshCw,
-  Wallet, Banknote, Loader2, Flag, ShieldCheck, WifiOff, AlertTriangle, Star,
+  Loader2, Flag, ShieldCheck, WifiOff, AlertTriangle, Star,
 } from "lucide-react";
 import {
   api, AssistanceError, AssistanceStatus, faultCodesList, formatDate, formatXOF, isFinalStatus, LINE_LABEL, LINE_ORDER,
-  knownPhone, mediaUrl, PAY_LABEL, PAYMENT_LABEL, PayMethod, Quote, quoteTotal, RequestDetail, STATUS_LABEL,
+  MSG_AI_TITLE, mediaUrl, Quote, quoteTotal, RequestDetail, STATUS_LABEL,
   telHref, useOnline, usePolling, vehicleLabel, whatsappHref,
 } from "./api";
 import { TrackMap } from "./AssistanceMaps";
@@ -32,11 +32,6 @@ export default function ClientTracking({
       setDetail(d);
       setFatal(null);
       setLastError("");
-      // Paiement en attente : on demande au serveur de relire l'état auprès de Jèko.
-      const ps = d.payment?.status ?? d.request.paymentStatus;
-      if (ps === "en_attente" && d.payment?.reference) {
-        api(`/requests/${requestId}/payment`).catch(() => {});
-      }
     } catch (e) {
       if (e instanceof AssistanceError && (e.unavailable || e.status === 404 || e.status === 401)) setFatal(e);
       else setLastError(errText(e));
@@ -77,16 +72,14 @@ export default function ClientTracking({
     return <div className="space-y-3"><BackBtn onBack={onBack} />{!online && <Notice tone="warn">Vous êtes hors ligne.</Notice>}<Spinner text="Chargement de votre demande…" /></div>;
   }
 
-  const { request: r, pro, quotes, payment, timeline, media, review, allowed } = detail;
+  const { request: r, pro, quotes, timeline, media, review, allowed } = detail;
   const st = r.status;
   const assigned = ["affectee", "en_route", "sur_place", "en_intervention", "terminee"].includes(st) && !!pro;
-  const payStatus = payment?.status ?? r.paymentStatus ?? "aucun";
   const pendingQuote = quotes.find((q) => (q.status ?? r.quoteStatus) === "propose" && q.status !== "accepte" && q.status !== "refuse");
   const stepIdx = STEPS.indexOf(st as (typeof STEPS)[number]);
   const clientPos = r.position ? { lat: r.position.lat, lng: r.position.lng } : null;
   const proPos = pro?.location && ["affectee", "en_route", "sur_place"].includes(st) ? { lat: pro.location.lat, lng: pro.location.lng } : null;
-  const accepted = quotes.filter((q) => q.status === "accepte");
-  const amountDue = accepted.length ? accepted.reduce((s, q) => s + quoteTotal(q), 0) : payment?.amount ?? null;
+  const amountAgreed = Number(r.amountAgreed) || 0;
   const proDiag = (r.diagnosisText ?? (r as any).proDiagnosis ?? (r as any).diagnosis) as string | undefined;
 
   return (
@@ -118,6 +111,9 @@ export default function ClientTracking({
           </ol>
         )}
 
+        {st === "terminee" && amountAgreed > 0 && (
+          <Notice tone="ok">Intervention terminée — montant convenu : {formatXOF(amountAgreed)}, à régler directement avec le mécanicien.</Notice>
+        )}
         {st === "recherche" && <p className="text-sm text-slate-400">Cela peut prendre quelques minutes. Vous pouvez quitter cet écran, nous gardons votre demande.</p>}
 
         {st === "sans_disponibilite" && (
@@ -221,6 +217,13 @@ export default function ClientTracking({
         </Card>
       )}
 
+      {r.aiAnalysis && (
+        <Card className="space-y-1">
+          <h3 className="text-base font-black text-white">{MSG_AI_TITLE}</h3>
+          <p className="text-sm text-slate-300 whitespace-pre-line">{r.aiAnalysis}</p>
+        </Card>
+      )}
+
       {/* ---- Devis ---- */}
       {quotes.length > 0 && (
         <div className="space-y-3">
@@ -238,14 +241,6 @@ export default function ClientTracking({
         </div>
       )}
 
-      {/* ---- Paiement ---- */}
-      {(allowed.pay || payStatus !== "aucun") && (
-        <PaymentSection
-          requestId={requestId} status={status} payStatus={payStatus} payment={payment} amount={amountDue}
-          canPay={!!allowed.pay} busy={busy} onAct={act} onRefresh={load}
-        />
-      )}
-
       {/* ---- Note + réclamation ---- */}
       {review ? (
         <Card className="space-y-1">
@@ -259,7 +254,7 @@ export default function ClientTracking({
       {allowed.claim && <ClaimForm onSend={(kind, message) => act("claim", () => api(`/requests/${requestId}/claims`, { body: { kind, message } }), "Réclamation envoyée. L'équipe DiagAssist revient vers vous.")} busy={busy === "claim"} />}
 
       {/* ---- Messagerie ---- */}
-      {assigned && <ChatPanel requestId={requestId} me="client" disabled={st === "terminee" && payStatus === "paye"} />}
+      {assigned && <ChatPanel requestId={requestId} me="client" disabled={st === "terminee"} />}
 
       {/* ---- Détails & historique ---- */}
       <Card className="space-y-3 text-sm">
@@ -270,7 +265,6 @@ export default function ClientTracking({
         {faultCodesList(r.faultCodes).length > 0 && <KV k="Codes défaut" v={faultCodesList(r.faultCodes).join(", ")} />}
         {r.position?.address && <KV k="Adresse" v={r.position.address} />}
         {r.position?.landmark && <KV k="Repère" v={r.position.landmark} />}
-        <KV k="Paiement" v={PAYMENT_LABEL[payStatus] || payStatus} />
         {media.length > 0 && (
           <div className="flex flex-wrap gap-2 pt-1">
             {media.map((m) => m.mime?.startsWith("image/") ? (
@@ -355,92 +349,6 @@ function QuoteCard({
   );
 }
 
-function PaymentSection({
-  requestId, status, payStatus, payment, amount, canPay, busy, onAct, onRefresh,
-}: {
-  requestId: string; status: AssistanceStatus | null; payStatus: string; payment: RequestDetail["payment"];
-  amount: number | null; canPay: boolean; busy: string;
-  onAct: (key: string, fn: () => Promise<unknown>, ok?: string) => Promise<void>; onRefresh: () => Promise<void>;
-}) {
-  const configured = status?.paymentConfigured ?? true;
-  const all: PayMethod[] = status?.paymentMethods?.length ? status.paymentMethods : ["wave", "orange", "mtn", "moov", "especes"];
-  // Wave d'abord, puis les autres, espèces en dernier.
-  const order: PayMethod[] = ["wave", "orange", "mtn", "moov", "especes"];
-  const methods = order.filter((m) => all.includes(m));
-  const [method, setMethod] = useState<PayMethod>(methods[0] || "especes");
-  const [payerPhone, setPayerPhone] = useState(knownPhone());
-  const isMobile = method !== "especes";
-
-  const pay = () => onAct("pay", async () => {
-    const r = await api<{ reference: string; redirectUrl?: string; paymentStatus: string }>(
-      `/requests/${requestId}/pay`, { body: { method, payerPhone: isMobile ? payerPhone.trim() || undefined : undefined } }
-    );
-    if (r.redirectUrl) {
-      // Au retour, on ne présume de rien : l'écran relit l'état auprès du serveur.
-      try { localStorage.setItem("assistance_resume", "1"); } catch { /* ignore */ }
-      window.location.assign(r.redirectUrl);
-    }
-  });
-
-  return (
-    <Card className="space-y-4">
-      <h3 className="text-base font-black text-white flex items-center gap-2"><Wallet className="w-5 h-5 text-red-500" /> Paiement</h3>
-      {amount != null && <div className="flex justify-between items-baseline"><span className="text-sm text-slate-400">Montant à régler</span><span className="text-xl font-black text-white">{formatXOF(amount)}</span></div>}
-
-      {payStatus === "paye" && <Notice tone="ok">Payé. Merci !</Notice>}
-      {payStatus === "en_attente" && (
-        <Notice tone="warn" action={<button className={btnSecondary} disabled={busy === "refresh"} onClick={() => onAct("refresh", () => onRefresh())}>Vérifier le paiement</button>}>
-          <strong>Paiement en attente.</strong> Nous attendons la confirmation de l'opérateur. Ne payez pas une deuxième fois : cet écran se met à jour tout seul.
-        </Notice>
-      )}
-      {payStatus === "echoue" && <Notice tone="error"><strong>Paiement échoué.</strong> Aucun montant n'a été validé. Vous pouvez réessayer ou choisir un autre moyen.</Notice>}
-      {payStatus === "especes_a_confirmer" && (
-        <Notice tone="info" action={payment?.reference ? (
-          <button className={btnGreen} disabled={busy === "cash"} onClick={() => onAct("cash", () => api(`/requests/${requestId}/payments/${payment.reference}/confirm-cash`, { body: {} }), "Merci, nous avons noté votre confirmation.")}>
-            <Banknote className="w-5 h-5" /> J'ai remis les espèces
-          </button>
-        ) : undefined}>
-          Paiement en espèces : remettez le montant au mécanicien, puis confirmez ici. Le paiement sera validé quand le mécanicien aura aussi confirmé.
-        </Notice>
-      )}
-
-      {canPay && payStatus !== "paye" && payStatus !== "especes_a_confirmer" && payStatus !== "en_attente" && (
-        <>
-          {!configured && <Notice tone="warn">Le paiement par mobile n'est pas encore ouvert. Vous pouvez payer en espèces.</Notice>}
-          <div className="grid grid-cols-1 gap-2" role="radiogroup" aria-label="Moyen de paiement">
-            {methods.map((m) => {
-              const disabled = m !== "especes" && !configured;
-              return (
-                <button
-                  key={m} type="button" disabled={disabled} onClick={() => setMethod(m)} role="radio" aria-checked={method === m}
-                  className={`flex items-center justify-between min-h-[56px] px-4 rounded-2xl border-2 text-left font-bold transition cursor-pointer disabled:opacity-40 ${
-                    method === m ? "border-red-500 bg-red-600/15 text-white" : "border-white/[0.08] bg-slate-900/60 text-slate-300"
-                  }`}
-                >
-                  <span>{PAY_LABEL[m]}</span>
-                  {m === "wave" && <span className="text-[11px] font-black bg-sky-500/20 text-sky-300 px-2 py-0.5 rounded-full">Conseillé</span>}
-                  {method === m && m !== "wave" && <CheckCircle2 className="w-5 h-5 text-red-500" />}
-                </button>
-              );
-            })}
-          </div>
-          {isMobile && (
-            <div>
-              <Label>Numéro {PAY_LABEL[method]} qui paie</Label>
-              <input type="tel" inputMode="tel" value={payerPhone} onChange={(e) => setPayerPhone(e.target.value)} className={inputCls} />
-            </div>
-          )}
-          <button className={btnPrimary} disabled={busy === "pay" || (isMobile && !configured)} onClick={pay}>
-            {busy === "pay" ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
-            {isMobile ? `Payer avec ${PAY_LABEL[method]}` : "Payer en espèces"}
-          </button>
-          {isMobile && <p className="text-xs text-slate-500">Vous serez redirigé pour valider le paiement, puis ramené ici. Le paiement n'est confirmé que lorsque l'opérateur nous le confirme.</p>}
-        </>
-      )}
-    </Card>
-  );
-}
-
 function ReviewForm({ onSend, busy }: { onSend: (rating: number, comment: string) => void; busy: boolean }) {
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
@@ -473,7 +381,7 @@ function ClaimForm({ onSend, busy }: { onSend: (kind: string, message: string) =
         <option value="travail">La qualité du travail</option>
         <option value="retard">Un retard ou une absence</option>
         <option value="comportement">Le comportement du professionnel</option>
-        <option value="paiement">Un souci de paiement</option>
+        <option value="paiement">Un désaccord sur le montant convenu</option>
         <option value="autre">Autre chose</option>
       </select>
       <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} maxLength={1000} placeholder="Expliquez ce qui s'est passé" className={inputCls} />

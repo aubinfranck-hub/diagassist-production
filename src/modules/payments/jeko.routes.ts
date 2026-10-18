@@ -16,48 +16,6 @@ const PLAN_PRICES_XOF: Record<string, number> = {
 
 const ALLOWED_METHODS = new Set(["orange", "wave", "mtn", "moov"]);
 
-// Client Jèko réutilisable par d'autres modules (ex: Assistance automobile) : mêmes variables
-// d'environnement, mêmes en-têtes que les paiements d'abonnement.
-export function jekoIsConfigured(): boolean {
-  const hasSecret = Boolean((process.env.JEKO_WEBHOOK_SECRETS || process.env.JEKO_WEBHOOK_SECRET || "").trim());
-  return Boolean(process.env.JEKO_API_KEY && process.env.JEKO_API_KEY_ID && process.env.JEKO_STORE_ID && hasSecret);
-}
-
-export async function createJekoRedirectPayment(p: {
-  reference: string; amountXof: number; paymentMethod: string; payerPhone?: string; successUrl: string; errorUrl: string;
-}): Promise<{ id?: string; redirectUrl?: string }> {
-  if (!ALLOWED_METHODS.has(p.paymentMethod)) throw new Error("Moyen de paiement invalide.");
-  const paymentData: Record<string, any> = { paymentMethod: p.paymentMethod, successUrl: p.successUrl, errorUrl: p.errorUrl };
-  const raw = (p.payerPhone || "").replace(/\D/g, "");
-  if (raw) {
-    paymentData.forceProviderDirect = true;
-    paymentData.payerPhone = `+${raw.startsWith("225") ? raw : `225${raw}`}`;
-  }
-  const response = await fetch(`${JEKO_API_BASE}/partner_api/payment_requests`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-API-KEY": process.env.JEKO_API_KEY!, "X-API-KEY-ID": process.env.JEKO_API_KEY_ID! },
-    body: JSON.stringify({
-      storeId: process.env.JEKO_STORE_ID, amountCents: p.amountXof * 100, currency: "XOF", reference: p.reference,
-      paymentDetails: { type: "redirect", data: paymentData },
-    }),
-  });
-  const data: any = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    console.error("[JEKO] Création du paiement refusée:", response.status, data);
-    throw Object.assign(new Error(data?.message || "Le paiement n'a pas pu être initié."), { status: 502 });
-  }
-  return { id: data?.id, redirectUrl: data?.redirectUrl };
-}
-
-export async function fetchJekoPaymentStatus(jekoId: string): Promise<string> {
-  const response = await fetch(`${JEKO_API_BASE}/partner_api/payment_requests/${jekoId}`, {
-    headers: { "X-API-KEY": process.env.JEKO_API_KEY!, "X-API-KEY-ID": process.env.JEKO_API_KEY_ID! },
-  });
-  if (!response.ok) return "";
-  const data: any = await response.json().catch(() => ({}));
-  return String(data?.status || data?.transaction?.status || "").toLowerCase();
-}
-
 type PendingPayment = {
   phone: string;
   plan: string;
@@ -75,9 +33,6 @@ export function registerJekoPayments(
     setUserPlan: (phone: string, plan: string, customDurationMs?: number) => void;
     onPlanActivated: (phone: string, plan: string) => void;
     dbQuery?: (sql: string, params?: any[]) => Promise<any>;
-    // Paiements d'autres modules (références "dgas-…") : le webhook, une fois sa signature vérifiée,
-    // leur délègue le traitement. Renvoie true si la référence leur appartient.
-    onExternalWebhook?: (reference: string, status: string, body: any) => Promise<boolean>;
   }
 ) {
   const pending = new Map<string, PendingPayment>();
@@ -321,16 +276,6 @@ export function registerJekoPayments(
     const reference = String(body?.transactionDetails?.reference || body?.reference || "");
     const status = String(body.status || "").toLowerCase();
     if (!reference) return res.status(200).end();
-
-    if (deps.onExternalWebhook && reference.startsWith("dgas-")) {
-      try {
-        await deps.onExternalWebhook(reference, status, body);
-        return res.status(200).end();
-      } catch (err: any) {
-        console.error("[JEKO][Webhook] Traitement externe en échec:", err.message);
-        return res.status(500).end(); // Jèko renverra le webhook
-      }
-    }
 
     const record = await findPayment(reference);
     if (!record) {

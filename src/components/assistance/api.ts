@@ -12,8 +12,6 @@ export type RequestStatus =
   | "en_intervention" | "terminee" | "sans_disponibilite" | "annulee";
 
 export type QuoteStatus = "aucun" | "propose" | "accepte" | "refuse";
-export type PaymentStatus = "aucun" | "en_attente" | "especes_a_confirmer" | "paye" | "echoue";
-export type PayMethod = "wave" | "orange" | "mtn" | "moov" | "especes";
 
 export interface ServiceInfo {
   code: ServiceCode | string;
@@ -22,16 +20,15 @@ export interface ServiceInfo {
   available: boolean;
   proCount?: number;
   availableNow?: number | boolean;
+  indicativeAmount?: number | null;
 }
 
 export interface AssistanceStatus {
   enabled: boolean;
   dbConfigured: boolean;
-  paymentConfigured: boolean;
   whatsappConfigured: boolean;
   services: ServiceInfo[];
   zones: { id: number; name: string }[];
-  paymentMethods: PayMethod[];
 }
 
 export interface VehicleInfo {
@@ -68,7 +65,6 @@ export interface RequestSummary {
   serviceLabel?: string;
   status: RequestStatus;
   quoteStatus?: QuoteStatus;
-  paymentStatus?: PaymentStatus;
   vehicle?: VehicleInfo | string | null;
   symptoms?: string;
   proName?: string | null;
@@ -77,6 +73,8 @@ export interface RequestSummary {
   works?: string | null;
   total?: number | null;
   amount?: number | null;
+  amountAgreed?: number | null;
+  aiAnalysis?: string | null;
   createdAt?: number;
   [k: string]: unknown;
 }
@@ -92,14 +90,6 @@ export interface ProPublic {
   eta?: { minutes: number; distanceKm: number; approximate: true } | null;
 }
 
-export interface Payment {
-  reference?: string;
-  method?: PayMethod;
-  status?: PaymentStatus;
-  amount?: number;
-  [k: string]: unknown;
-}
-
 export interface RequestDetail {
   request: RequestSummary & {
     faultCodes?: string[] | string;
@@ -109,12 +99,11 @@ export interface RequestDetail {
   };
   pro: ProPublic | null;
   quotes: Quote[];
-  payment: Payment | null;
   timeline: { at: number; label: string; status: string }[];
   media: MediaItem[];
   review: { rating: number; comment?: string } | null;
   allowed: {
-    cancel?: boolean; retry?: boolean; manual?: boolean; pay?: boolean;
+    cancel?: boolean; retry?: boolean; manual?: boolean;
     review?: boolean; claim?: boolean; decideQuote?: boolean;
   };
 }
@@ -247,7 +236,7 @@ export function usePolling(fn: () => Promise<void> | void, ms: number, enabled =
 
 export const STATUS_LABEL: Record<string, string> = {
   brouillon: "Demande non envoyée",
-  recherche: "Nous cherchons un mécanicien près de vous",
+  recherche: "Nous contactons les mécaniciens près de vous",
   affectee: "Mécanicien trouvé",
   en_route: "En route",
   sur_place: "Arrivé",
@@ -263,14 +252,6 @@ export const STATUS_SHORT: Record<string, string> = {
   terminee: "Terminée", sans_disponibilite: "Sans mécanicien", annulee: "Annulée",
 };
 
-export const PAYMENT_LABEL: Record<string, string> = {
-  aucun: "Pas encore de paiement",
-  en_attente: "Paiement en attente",
-  especes_a_confirmer: "Espèces à confirmer",
-  paye: "Payé",
-  echoue: "Paiement échoué",
-};
-
 export const SERVICE_FALLBACK_LABEL: Record<string, string> = {
   mecanique: "Mécanique", electricite: "Électricité", diagnostic: "Diagnostic", batterie: "Batterie",
   pneumatiques: "Pneus", remorquage: "Remorquage", vidange: "Vidange",
@@ -281,9 +262,17 @@ export const LINE_LABEL: Record<string, string> = {
 };
 export const LINE_ORDER: QuoteLine["kind"][] = ["deplacement", "diagnostic", "main_oeuvre", "pieces"];
 
-export const PAY_LABEL: Record<PayMethod, string> = {
-  wave: "Wave", orange: "Orange Money", mtn: "MTN Money", moov: "Moov Money", especes: "Espèces",
-};
+export const MSG_SUBSCRIPTION =
+  "Votre abonnement DiagAssist n'est plus à jour : renouvelez-le pour recevoir des assistances.";
+export const MSG_ALREADY_TAKEN = "Un autre mécanicien a déjà pris cette mission.";
+export const MSG_AI_TITLE = "Analyse DiagAssist — pistes à vérifier";
+
+/** Texte du montant indicatif (jamais un prix inventé : null = à convenir). */
+export function indicativeText(n?: number | null): string {
+  return typeof n === "number" && n > 0
+    ? `Montant indicatif : ${formatXOF(n)} (à confirmer avec le mécanicien)`
+    : "Montant à convenir avec le mécanicien";
+}
 
 export const isFinalStatus = (s?: string) => s === "terminee" || s === "annulee";
 

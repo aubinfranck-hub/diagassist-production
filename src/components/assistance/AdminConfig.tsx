@@ -106,34 +106,35 @@ function ServicesBlock() {
 const NUM_FIELDS: { key: string; label: string; hint?: string }[] = [
   { key: "offer_timeout_s", label: "Délai de réponse (secondes)" },
   { key: "search_radius_km", label: "Rayon de recherche (km)" },
-  { key: "max_candidates", label: "Nombre max de candidats" },
+  { key: "broadcast_size", label: "Nombre de mécaniciens contactés en même temps (défaut serveur : 5)" },
+  { key: "max_candidates", label: "Nombre max de candidats au total (défaut serveur : 10)" },
   { key: "location_max_age_min", label: "Âge max de la position (min)" },
   { key: "avg_speed_kmh", label: "Vitesse moyenne ETA (km/h)" },
-  { key: "commission_pct", label: "Taux de commission (%)" },
 ];
 
 function SettingsBlock() {
   const { data, loading, error, reload } = useAdminLoad("/settings");
   const { busy, fb, run } = useAction();
   const [vals, setVals] = useState<Record<string, string>>({});
-  const [tariffs, setTariffs] = useState<Record<string, { deplacement: string; diagnostic: string }>>({});
+  const [tariffs, setTariffs] = useState<Record<string, { deplacement: string; diagnostic: string; indicatif: string }>>({});
 
   useEffect(() => {
     if (!data) return;
     const s = data.settings || data;
     setVals(Object.fromEntries(NUM_FIELDS.map((f) => [f.key, s[f.key] == null ? "" : String(s[f.key])])));
     const t: Record<string, any> = s.tariffs || {};
-    setTariffs(Object.fromEntries(Object.keys(SERVICE_LABELS).map((c) => [c, { deplacement: t[c]?.deplacement == null ? "" : String(t[c].deplacement), diagnostic: t[c]?.diagnostic == null ? "" : String(t[c].diagnostic) }])));
+    setTariffs(Object.fromEntries(Object.keys(SERVICE_LABELS).map((c) => [c, { deplacement: t[c]?.deplacement == null ? "" : String(t[c].deplacement), diagnostic: t[c]?.diagnostic == null ? "" : String(t[c].diagnostic), indicatif: t[c]?.indicatif == null ? "" : String(t[c].indicatif) }])));
   }, [data]);
 
   const save = async () => {
     const body: Record<string, any> = {};
     for (const f of NUM_FIELDS) if (vals[f.key] !== "" && !isNaN(Number(vals[f.key]))) body[f.key] = Number(vals[f.key]);
     const t: Record<string, Record<string, number>> = {};
-    for (const [c, v] of Object.entries(tariffs) as [string, { deplacement: string; diagnostic: string }][]) {
+    for (const [c, v] of Object.entries(tariffs) as [string, { deplacement: string; diagnostic: string; indicatif: string }][]) {
       const o: Record<string, number> = {};
       if (v.deplacement !== "" && !isNaN(Number(v.deplacement))) o.deplacement = Number(v.deplacement);
       if (v.diagnostic !== "" && !isNaN(Number(v.diagnostic))) o.diagnostic = Number(v.diagnostic);
+      if (v.indicatif !== "" && !isNaN(Number(v.indicatif))) o.indicatif = Number(v.indicatif);
       if (Object.keys(o).length) t[c] = o;
     }
     body.tariffs = t;
@@ -156,10 +157,11 @@ function SettingsBlock() {
           <p className="text-[10px] text-slate-500">Aucun tarif par défaut : un champ vide signifie « non configuré ».</p>
           <div className="space-y-1.5">
             {Object.entries(SERVICE_LABELS).map(([c, l]) => (
-              <div key={c} className="grid grid-cols-[7rem_1fr_1fr] items-center gap-2">
+              <div key={c} className="grid grid-cols-[7rem_1fr_1fr_1fr] items-center gap-2">
                 <span className="text-xs text-slate-400">{l}</span>
-                <input className={inputCls} inputMode="numeric" placeholder="Déplacement : non configuré" value={tariffs[c]?.deplacement ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "" }), deplacement: e.target.value } }))} />
-                <input className={inputCls} inputMode="numeric" placeholder="Diagnostic : non configuré" value={tariffs[c]?.diagnostic ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "" }), diagnostic: e.target.value } }))} />
+                <input className={inputCls} inputMode="numeric" placeholder="Déplacement : non configuré" value={tariffs[c]?.deplacement ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), deplacement: e.target.value } }))} />
+                <input className={inputCls} inputMode="numeric" placeholder="Diagnostic : non configuré" value={tariffs[c]?.diagnostic ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), diagnostic: e.target.value } }))} />
+                <input className={inputCls} inputMode="numeric" placeholder="Montant indicatif (F CFA) : non configuré" title="Montant indicatif (F CFA)" value={tariffs[c]?.indicatif ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), indicatif: e.target.value } }))} />
               </div>
             ))}
           </div>

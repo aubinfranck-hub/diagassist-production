@@ -60,7 +60,7 @@ export const STATUS_LABELS: Record<string, string> = {
   brouillon: "Brouillon", recherche: "Recherche", affectee: "Affectée", en_route: "En route", sur_place: "Sur place",
   en_intervention: "En intervention", terminee: "Terminée", sans_disponibilite: "Sans disponibilité", annulee: "Annulée",
   aucun: "Aucun", propose: "Proposé", accepte: "Accepté", refuse: "Refusé",
-  en_attente: "En attente", especes_a_confirmer: "Espèces à confirmer", paye: "Payé", echoue: "Échoué",
+  en_attente: "En attente",
   valide: "Validé", suspendu: "Suspendu", verifiee: "Vérifiée", verifie: "Vérifié", non_verifie: "Non vérifié", non_verifiee: "Non vérifiée",
 };
 export const SERVICE_LABELS: Record<string, string> = {

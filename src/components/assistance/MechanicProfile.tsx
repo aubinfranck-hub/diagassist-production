@@ -21,6 +21,7 @@ export interface ProProfile {
   missionsDone?: number;
   activeMissionId?: string | null;
   canReceiveMissions?: boolean;
+  subscribed?: boolean;
   blockers?: string[];
 }
 

@@ -50,6 +50,8 @@ export default function AdminPros() {
                   <span className="text-xs font-bold text-white">{p.displayName || p.garageName || p.phone}</span>
                   <span className="font-mono text-[11px] text-slate-400">{p.phone}</span>
                   <Badge status={p.validationStatus} />
+                  {p.subscribed === true && <Badge status="valide" label="Abonnement à jour" />}
+                  {p.subscribed === false && <Badge status="refuse" label="Abonnement expiré" />}
                   <span className="text-[10px] text-slate-400 border border-white/[0.08] rounded-full px-2 py-0.5">{p.source === "annuaire" || p.fromDirectory ? "Annuaire" : p.source === "inscription" ? "Inscription" : (p.source || "—")}</span>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">

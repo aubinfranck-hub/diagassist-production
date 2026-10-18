@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronRight, LifeBuoy, WifiOff, Wrench } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, PAYMENT_LABEL, RequestSummary,
+  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, RequestSummary,
   STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
 import ClientWizard, { AssistancePrefill } from "./ClientWizard";
@@ -12,11 +12,9 @@ export type { AssistancePrefill } from "./ClientWizard";
 
 type View = { name: "home" } | { name: "wizard" } | { name: "track"; id: string };
 
-/** Une demande est « active » tant qu'elle n'est pas terminée/annulée, ou si le paiement reste à régler. */
+/** Une demande est « active » tant qu'elle n'est ni terminée ni annulée. */
 function isActive(r: RequestSummary): boolean {
-  if (r.status === "annulee") return false;
-  if (!isFinalStatus(r.status)) return true;
-  return r.paymentStatus === "en_attente" || r.paymentStatus === "echoue" || r.paymentStatus === "especes_a_confirmer";
+  return !isFinalStatus(r.status);
 }
 
 export default function ClientAssistance({
@@ -146,7 +144,7 @@ export default function ClientAssistance({
         )}
         {past.map((r) => {
           const proName = (r.proName ?? r.proDisplayName) as string | undefined;
-          const amount = r.total ?? r.amount;
+          const amount = r.amountAgreed || null;
           return (
             <button key={r.id} onClick={() => setView({ name: "track", id: r.id })} className="w-full text-left cursor-pointer">
               <Card className="!p-4 space-y-1.5">
@@ -160,7 +158,6 @@ export default function ClientAssistance({
                   {proName && <span>Pro : {proName}</span>}
                   {r.works && <span className="truncate">Travaux : {String(r.works)}</span>}
                   {amount != null && <span>{formatXOF(amount)}</span>}
-                  {r.paymentStatus && r.paymentStatus !== "aucun" && <span>{PAYMENT_LABEL[r.paymentStatus]}</span>}
                 </div>
                 {r.diagnosisText && <div className="text-xs text-slate-500 truncate">Diagnostic : {String(r.diagnosisText)}</div>}
               </Card>

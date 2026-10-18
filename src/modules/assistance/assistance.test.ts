@@ -13,6 +13,8 @@ if (!url) { console.log("ASSISTANCE_TEST_DATABASE_URL absent : test ignoré."); 
 const pool = new Pool({ connectionString: url });
 const sessions = new Map<string, { phone: string; plan: string; createdAt: number }>();
 const admins = new Set<string>(["+2250100000000"]);
+const sent: { to: string; msg: string }[] = [];
+const subscribed = new Set<string>(); // mécaniciens à jour de leur abonnement
 const tokenFor = (phone: string) => { const t = crypto.randomBytes(8).toString("hex"); sessions.set(t, { phone, plan: "premium", createdAt: Date.now() }); return t; };
 const requireAuth = (req: any, res: any, next: any) => {
   const s = sessions.get(String(req.headers.authorization || "").replace("Bearer ", ""));
@@ -39,7 +41,9 @@ async function main() {
   const handle = registerAssistance({
     app, pool, requireAuth, requireAdminAuth, sessions, isAdminPhone: (p) => admins.has(p),
     getDirectory: () => directory as any, getOrigin: () => "http://x",
-    jeko: { isConfigured: () => true, create: async (p) => ({ id: "jk-" + p.reference, redirectUrl: "http://pay/" + p.reference }), fetchStatus: async () => "pending" },
+    isProSubscribed: (phone) => subscribed.has(phone),
+    sendWhatsApp: async (to, msg) => { sent.push({ to, msg }); },
+    analyze: async () => "Piste : démarreur ou batterie (à vérifier)",
   });
   await initAssistance(handle);
   handle.core!.stopWorker(); // le test pilote le dispatch à la main
@@ -75,10 +79,17 @@ async function main() {
   assert.equal((await api(T.pro1, "POST", "/api/admin/assistance/pros/+2250700000011/validate", {})).status, 401);
   for (const p of [PRO1, PRO2]) assert.equal((await api(T.admin, "POST", `/api/admin/assistance/pros/${encodeURIComponent(p)}/validate`, { note: "ok" })).status, 200);
   st = (await api(T.client, "GET", "/api/assistance/status")).body;
-  assert.ok(st.services.find((s: any) => s.code === "mecanique").available);
-  assert.ok(st.services.find((s: any) => s.code === "batterie").available);
-  assert.ok(!st.services.find((s: any) => s.code === "remorquage").available);
-  ok("Validation réservée à l'admin ; les services s'activent selon les compétences réelles");
+  ok("Validation réservée à l'admin");
+
+  // 4b. Abonnement : un pro validé mais non abonné ne peut pas passer disponible
+  r = await api(T.pro1, "POST", "/api/assistance/pro/availability", { available: true, lat: 5.34, lng: -4.03 });
+  assert.equal(r.status, 409);
+  assert.match(r.body.message, /abonnement/i);
+  st = (await api(T.client, "GET", "/api/assistance/status")).body;
+  assert.ok(st.services.every((s: any) => s.available === false));
+  subscribed.add(PRO1); subscribed.add(PRO2);
+  await pool.query("UPDATE assistance_pros SET specialties=array_append(specialties,'mecanique') WHERE phone=$1", [PRO2]);
+  ok("Sans abonnement à jour, un mécanicien validé ne reçoit rien et ne compte pas dans les services actifs");
 
   // 5. Disponibilité avec position
   assert.equal((await api(T.pro1, "POST", "/api/assistance/pro/availability", { available: true })).status, 400);
@@ -94,17 +105,19 @@ async function main() {
   assert.equal(r.status, 422);
   ok("Position non confirmée ou hors zone : refus avec message clair");
 
-  // 7. Demande valide, envoyée => proposition au pro le plus proche (pro1)
+  // 7. Demande valide, envoyée => analyse IA puis envoi SIMULTANÉ aux deux mécaniciens de la zone
   r = await api(T.client, "POST", "/api/assistance/requests", { ...base_req, position: { lat: 5.35, lng: -4.01, source: "gps", confirmed: true, landmark: "Portail bleu" }, shareDiagnostic: true, diagnostic: { summary: "Piste : démarreur" }, submit: true });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const reqId = r.body.id;
   let offers = (await api(T.pro1, "GET", "/api/assistance/pro/offers")).body.offers;
+  const offers2 = (await api(T.pro2, "GET", "/api/assistance/pro/offers")).body.offers;
   assert.equal(offers.length, 1);
+  assert.equal(offers2.length, 1);
   assert.equal(offers[0].requestId, reqId);
+  assert.match(offers[0].aiAnalysis, /démarreur/);
   assert.equal(JSON.stringify(offers[0]).includes("Portail bleu"), false);
   assert.equal(JSON.stringify(offers[0]).includes("0700000001"), false);
-  assert.equal((await api(T.pro2, "GET", "/api/assistance/pro/offers")).body.offers.length, 0);
-  ok("La proposition va au professionnel le plus proche, sans repère ni téléphone du client");
+  ok("La demande part à plusieurs mécaniciens en même temps, avec l'analyse IA, sans repère ni téléphone du client");
 
   // 8. Accès : tiers ne voit pas la demande ; pro non affecté non plus
   assert.equal((await api(T.out, "GET", `/api/assistance/requests/${reqId}`)).status, 404);
@@ -118,150 +131,123 @@ async function main() {
   assert.equal(r.status, 409);
   ok("Une seule demande ouverte par client");
 
-  // 10. Acceptations simultanées : une seule affectation
-  const offerId = offers[0].id;
-  const results = await Promise.all([1, 2, 3, 4, 5].map(() => api(T.pro1, "POST", `/api/assistance/pro/offers/${offerId}/accept`)));
+  // 10. Acceptations simultanées de DEUX mécaniciens différents : un seul gagne
+  const results = await Promise.all([
+    ...[1, 2, 3].map(() => api(T.pro1, "POST", `/api/assistance/pro/offers/${offers[0].id}/accept`)),
+    ...[1, 2, 3].map(() => api(T.pro2, "POST", `/api/assistance/pro/offers/${offers2[0].id}/accept`)),
+  ]);
   assert.equal(results.filter((x) => x.status === 200).length, 1, JSON.stringify(results.map((x) => x.status)));
+  assert.ok(results.filter((x) => x.status !== 200).every((x) => x.status === 409));
   const assignments = await pool.query("SELECT * FROM assistance_assignments WHERE request_id=$1 AND ended_at IS NULL", [reqId]);
   assert.equal(assignments.rowCount, 1);
-  ok("5 acceptations simultanées => une seule affectation");
+  const winner = assignments.rows[0].pro_phone;
+  const winTok = winner === PRO1 ? T.pro1 : T.pro2;
+  const loseTok = winner === PRO1 ? T.pro2 : T.pro1;
+  assert.equal((await api(loseTok, "GET", "/api/assistance/pro/offers")).body.offers.length, 0);
+  ok("6 acceptations simultanées de 2 mécaniciens => une seule affectation, l'autre reçoit « déjà pris »");
 
-  // 11. Course pro1 expiré / pro2 : offre d'une 2e demande, admin affecte en même temps
-  // (voir plus bas) ; d'abord le déroulé
+  // 11. Déroulé
   let d = (await api(T.client, "GET", `/api/assistance/requests/${reqId}`)).body;
   assert.equal(d.request.status, "affectee");
-  assert.equal(d.pro.displayName, "Koffi Garage");
-  assert.equal(d.pro.phone, PRO1);
+  assert.equal(d.pro.phone, winner);
+  assert.match(d.request.aiAnalysis, /démarreur/);
   assert.equal(d.request.diagnostic.summary, "Piste : démarreur");
-  const m = (await api(T.pro1, "GET", `/api/assistance/pro/missions/${reqId}`)).body;
+  const m = (await api(winTok, "GET", `/api/assistance/pro/missions/${reqId}`)).body;
   assert.equal(m.mission.position.landmark, "Portail bleu");
   assert.equal(m.mission.diagnostic.summary, "Piste : démarreur");
   ok("Le client voit le pro ; le pro affecté voit position exacte et dossier IA (consentement)");
 
   // 12. Étapes dans l'ordre, devis requis avant intervention
-  assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "sur_place" })).status, 409);
-  assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "en_route" })).status, 200);
-  assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "sur_place" })).status, 200);
-  assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "en_intervention" })).body.code, "QUOTE_NOT_ACCEPTED");
-  const q1 = await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/quotes`, { kind: "initial", lines: [{ kind: "deplacement", amount: 2000 }, { kind: "diagnostic", amount: 3000 }, { kind: "main_oeuvre", amount: 5000 }] });
+  assert.equal((await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "sur_place" })).status, 409);
+  assert.equal((await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "en_route" })).status, 200);
+  assert.equal((await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "sur_place" })).status, 200);
+  assert.equal((await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "en_intervention" })).body.code, "QUOTE_NOT_ACCEPTED");
+  const q1 = await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/quotes`, { kind: "initial", lines: [{ kind: "deplacement", amount: 2000 }, { kind: "diagnostic", amount: 3000 }, { kind: "main_oeuvre", amount: 5000 }] });
   assert.equal(q1.status, 200, JSON.stringify(q1.body));
   d = (await api(T.client, "GET", `/api/assistance/requests/${reqId}`)).body;
   assert.equal(d.request.quoteStatus, "propose");
-  assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "en_intervention" })).status, 409);
+  assert.equal((await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "en_intervention" })).status, 409);
   assert.equal((await api(T.client2, "POST", `/api/assistance/requests/${reqId}/quotes/${d.quotes[0].id}/decision`, { accept: true })).status, 404);
   assert.equal((await api(T.client, "POST", `/api/assistance/requests/${reqId}/quotes/${d.quotes[0].id}/decision`, { accept: true })).status, 200);
-  assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "en_intervention" })).status, 200);
+  assert.equal((await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "en_intervention" })).status, 200);
   ok("Étapes ordonnées ; l'intervention ne démarre qu'avec un devis accepté par le client");
 
   // 13. Travaux supplémentaires : accord requis avant de terminer
-  const q2 = await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/quotes`, { kind: "supplementaire", lines: [{ kind: "pieces", label: "Démarreur", amount: 40000 }] });
+  const q2 = await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/quotes`, { kind: "supplementaire", lines: [{ kind: "pieces", label: "Démarreur", amount: 40000 }] });
   assert.equal(q2.status, 200);
-  assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "terminee" })).body.code, "QUOTE_PENDING");
+  assert.equal((await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "terminee" })).body.code, "QUOTE_PENDING");
   d = (await api(T.client, "GET", `/api/assistance/requests/${reqId}`)).body;
   const sup = d.quotes.find((q: any) => q.kind === "supplementaire");
   assert.equal((await api(T.client, "POST", `/api/assistance/requests/${reqId}/quotes/${sup.id}/decision`, { accept: true })).status, 200);
-  assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "terminee" })).status, 200);
+  assert.equal((await api(winTok, "POST", `/api/assistance/pro/missions/${reqId}/status`, { to: "terminee" })).status, 200);
   d = (await api(T.client, "GET", `/api/assistance/requests/${reqId}`)).body;
-  assert.equal(d.request.amountDue, 50000);
-  assert.equal(d.request.paymentStatus, "aucun");
-  ok("Les travaux supplémentaires exigent l'accord enregistré ; terminée ≠ payée (montant 50000 XOF)");
+  assert.equal(d.request.amountAgreed, 50000);
+  assert.equal(d.request.paymentStatus, undefined);
+  assert.equal(d.payment, undefined);
+  ok("Les travaux supplémentaires exigent l'accord enregistré ; montant convenu 50000 XOF, aucun paiement plateforme");
 
-  // 14. Paiement : en attente ≠ payé ; échec jamais présenté comme réussi ; webhook idempotent ; montant vérifié
-  const pay = await api(T.client, "POST", `/api/assistance/requests/${reqId}/pay`, { method: "wave" });
-  assert.equal(pay.status, 200, JSON.stringify(pay.body));
-  d = (await api(T.client, "GET", `/api/assistance/requests/${reqId}`)).body;
-  assert.equal(d.request.paymentStatus, "en_attente");
-  const ref = pay.body.reference;
-  assert.equal(await core.handleJekoWebhook(ref, "success", { amount: { amount: 123 } }), true);
-  assert.equal((await api(T.client, "GET", `/api/assistance/requests/${reqId}`)).body.request.paymentStatus, "en_attente");
-  await core.handleJekoWebhook(ref, "failed", {});
-  assert.equal((await api(T.client, "GET", `/api/assistance/requests/${reqId}`)).body.request.paymentStatus, "echoue");
-  const pay2 = await api(T.client, "POST", `/api/assistance/requests/${reqId}/pay`, { method: "orange" });
-  await core.handleJekoWebhook(pay2.body.reference, "success", { amount: { amount: 5000000 } });
-  await core.handleJekoWebhook(pay2.body.reference, "success", { amount: { amount: 5000000 } });
-  d = (await api(T.client, "GET", `/api/assistance/requests/${reqId}`)).body;
-  assert.equal(d.request.paymentStatus, "paye");
-  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM assistance_events WHERE request_id=$1 AND type='paiement_confirme'", [reqId])).rows[0].n, 1);
-  ok("Paiement : montant inconnu ignoré, échec affiché échoué, succès traité une seule fois");
+  // 14. Plus aucun paiement client via la plateforme
+  assert.equal((await api(T.client, "POST", `/api/assistance/requests/${reqId}/pay`, { method: "wave" })).status, 404);
+  assert.equal((await api(T.client, "GET", "/api/assistance/status")).body.paymentMethods, undefined);
+  ok("Aucune route de paiement client : le règlement se fait directement avec le mécanicien");
 
-  // 15. Avis une fois ; pro ne peut pas noter ; position pro n'est plus partagée après mission
+  // 15. Avis une fois ; le partage de position s'arrête quand il n'est plus nécessaire
   assert.equal((await api(T.client, "POST", `/api/assistance/requests/${reqId}/review`, { rating: 5 })).status, 200);
   assert.equal((await api(T.client, "POST", `/api/assistance/requests/${reqId}/review`, { rating: 1 })).status, 409);
-  assert.equal((await api(T.pro1, "POST", "/api/assistance/pro/location", { lat: 5.3, lng: -4.0 })).status, 200); // encore disponible
-  await api(T.pro1, "POST", "/api/assistance/pro/availability", { available: false });
-  assert.equal((await api(T.pro1, "POST", "/api/assistance/pro/location", { lat: 5.3, lng: -4.0 })).status, 409);
-  ok("Avis unique ; le partage de position est refusé dès qu'il n'est plus nécessaire");
+  await api(winTok, "POST", "/api/assistance/pro/availability", { available: false });
+  assert.equal((await api(winTok, "POST", "/api/assistance/pro/location", { lat: 5.3, lng: -4.0 })).status, 409); // mission finie, indisponible
+  ok("Avis unique ; position refusée dès qu'elle n'est plus nécessaire");
 
-  // 16. Annulation : clôt les propositions, arrête le partage
+  // 16. Annulation : clôt toutes les propositions ouvertes
   await api(T.pro1, "POST", "/api/assistance/pro/availability", { available: true, lat: 5.34, lng: -4.03 });
+  await api(T.pro2, "POST", "/api/assistance/pro/availability", { available: true, lat: 5.45, lng: -3.9 });
   r = await api(T.client2, "POST", "/api/assistance/requests", { ...base_req, position: { lat: 5.35, lng: -4.01, source: "carte", confirmed: true }, submit: true });
   const id2 = r.body.id;
   assert.equal((await api(T.pro1, "GET", "/api/assistance/pro/offers")).body.offers.length, 1);
+  assert.equal((await api(T.pro2, "GET", "/api/assistance/pro/offers")).body.offers.length, 1);
   assert.equal((await api(T.client2, "POST", `/api/assistance/requests/${id2}/cancel`, { reason: "réparé" })).status, 200);
   assert.equal((await api(T.pro1, "GET", "/api/assistance/pro/offers")).body.offers.length, 0);
-  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM assistance_offers WHERE request_id=$1 AND status='envoyee'", [id2])).rows[0].n, 0);
-  ok("L'annulation clôt les propositions ouvertes");
+  assert.equal((await api(T.pro2, "GET", "/api/assistance/pro/offers")).body.offers.length, 0);
+  ok("L'annulation clôt les propositions ouvertes de tous les mécaniciens contactés");
 
-  // 17. Expiration => candidat suivant ; épuisement => sans_disponibilite ; réessayer
+  // 17. Expiration => sans_disponibilite (tous déjà contactés) ; réessai ; prise en charge manuelle
   r = await api(T.client2, "POST", "/api/assistance/requests", { ...base_req, position: { lat: 5.35, lng: -4.01, source: "carte", confirmed: true }, submit: true });
   const id3 = r.body.id;
-  await pool.query("UPDATE assistance_pros SET specialties=array_append(specialties,'mecanique') WHERE phone=$1", [PRO2]);
-  await pool.query("UPDATE assistance_offers SET expires_at=1 WHERE request_id=$1 AND status='envoyee'", [id3]);
-  await core.dispatchTick();
-  assert.equal((await api(T.pro1, "GET", "/api/assistance/pro/offers")).body.offers.length, 0);
-  // pro2 a "mecanique" ? oui (défaut) : il reçoit l'offre suivante
-  assert.equal((await api(T.pro2, "GET", "/api/assistance/pro/offers")).body.offers.length, 1);
   await pool.query("UPDATE assistance_offers SET expires_at=1 WHERE request_id=$1 AND status='envoyee'", [id3]);
   await core.dispatchTick();
   d = (await api(T.client2, "GET", `/api/assistance/requests/${id3}`)).body;
   assert.equal(d.request.status, "sans_disponibilite");
   assert.equal(d.allowed.retry, true);
   assert.equal((await api(T.client2, "POST", `/api/assistance/requests/${id3}/manual`)).status, 200);
-  ok("Expiration => candidat suivant ; plus personne => sans_disponibilite + réessai / prise en charge manuelle");
+  ok("Expiration => plus personne => sans_disponibilite + réessai / prise en charge manuelle");
 
-  // 18. Une proposition expirée ne peut plus être acceptée (course expiration/acceptation)
+  // 18. Une proposition expirée ne peut plus être acceptée
   await api(T.client2, "POST", `/api/assistance/requests/${id3}/retry`);
   const o = (await api(T.pro1, "GET", "/api/assistance/pro/offers")).body.offers[0];
   await pool.query("UPDATE assistance_offers SET expires_at=1 WHERE id=$1", [o.id]);
   assert.equal((await api(T.pro1, "POST", `/api/assistance/pro/offers/${o.id}/accept`)).status, 409);
   ok("Une proposition expirée est refusée");
 
-  // 19. Réaffectation admin vs acceptation simultanée : jamais deux affectations
-  await core.dispatchTick();
-  const open = await pool.query("SELECT id, pro_phone FROM assistance_offers WHERE request_id=$1 AND status='envoyee'", [id3]);
-  if (open.rowCount) {
-    const target = open.rows[0].pro_phone === PRO1 ? T.pro1 : T.pro2;
-    const other = open.rows[0].pro_phone === PRO1 ? PRO2 : PRO1;
-    await Promise.all([
-      api(target, "POST", `/api/assistance/pro/offers/${open.rows[0].id}/accept`),
-      api(T.admin, "POST", `/api/admin/assistance/requests/${id3}/assign`, { proPhone: other }),
-    ]);
-  } else {
-    await api(T.admin, "POST", `/api/admin/assistance/requests/${id3}/assign`, { proPhone: PRO2 });
-  }
+  // 19. Abonnement expiré entre la proposition et l'acceptation => refus
+  await pool.query("UPDATE assistance_offers SET expires_at=$2 WHERE request_id=$1 AND status='envoyee'", [id3, Date.now() + 60000]);
+  const o2 = (await api(T.pro2, "GET", "/api/assistance/pro/offers")).body.offers[0];
+  subscribed.delete(PRO2);
+  const rej = await api(T.pro2, "POST", `/api/assistance/pro/offers/${o2.id}/accept`);
+  assert.equal(rej.status, 403);
+  assert.equal(rej.body.code, "SUBSCRIPTION_REQUIRED");
+  subscribed.add(PRO2);
+  ok("Un mécanicien dont l'abonnement n'est plus à jour ne peut pas accepter");
+
+  // 20. Acceptation vs réaffectation admin simultanées => une seule affectation active
+  const acc = await Promise.all([
+    api(T.pro2, "POST", `/api/assistance/pro/offers/${o2.id}/accept`),
+    api(T.admin, "POST", `/api/admin/assistance/requests/${id3}/assign`, { proPhone: PRO1 }),
+  ]);
+  assert.ok(acc.some((x) => x.status === 200));
   assert.equal((await pool.query("SELECT COUNT(*)::int n FROM assistance_assignments WHERE request_id=$1 AND ended_at IS NULL", [id3])).rows[0].n, 1);
   const ev = (await api(T.admin, "GET", `/api/admin/assistance/requests/${id3}`)).body;
   assert.ok(ev.timeline.length >= 5 && ev.timeline.every((e: any) => e.at && e.actor && e.type));
-  ok("Acceptation vs réaffectation admin simultanées => une seule affectation active ; chronologie horodatée complète");
-
-  // 20. Espèces : le pro seul ne suffit pas
-  const m3 = (await pool.query("SELECT assigned_phone, status FROM assistance_requests WHERE id=$1", [id3])).rows[0];
-  assert.ok(m3.assigned_phone);
-  const proTok = m3.assigned_phone === PRO1 ? T.pro1 : T.pro2;
-  await api(proTok, "POST", `/api/assistance/pro/missions/${id3}/status`, { to: "en_route" });
-  await api(proTok, "POST", `/api/assistance/pro/missions/${id3}/status`, { to: "sur_place" });
-  await api(proTok, "POST", `/api/assistance/pro/missions/${id3}/quotes`, { kind: "initial", lines: [{ kind: "diagnostic", amount: 7000 }] });
-  const dq = (await api(T.client2, "GET", `/api/assistance/requests/${id3}`)).body;
-  await api(T.client2, "POST", `/api/assistance/requests/${id3}/quotes/${dq.quotes[0].id}/decision`, { accept: true });
-  await api(proTok, "POST", `/api/assistance/pro/missions/${id3}/status`, { to: "en_intervention" });
-  await api(proTok, "POST", `/api/assistance/pro/missions/${id3}/status`, { to: "terminee" });
-  assert.equal((await api(proTok, "POST", `/api/assistance/pro/missions/${id3}/cash-received`)).status, 200);
-  d = (await api(T.client2, "GET", `/api/assistance/requests/${id3}`)).body;
-  assert.equal(d.request.paymentStatus, "especes_a_confirmer");
-  assert.equal((await api(T.client, "POST", `/api/assistance/requests/${id3}/payments/${d.payment.reference}/confirm-cash`)).status, 404);
-  assert.equal((await api(T.client2, "POST", `/api/assistance/requests/${id3}/payments/${d.payment.reference}/confirm-cash`)).status, 200);
-  assert.equal((await api(T.client2, "GET", `/api/assistance/requests/${id3}`)).body.request.paymentStatus, "paye");
-  ok("Espèces : déclarées par le pro, payées seulement après confirmation du client");
+  ok("Acceptation et réaffectation admin simultanées => une seule affectation ; chronologie horodatée");
 
   // 21. Médias : type vérifié, accès contrôlé
   const png = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex").toString("base64");
@@ -273,8 +259,27 @@ async function main() {
   assert.equal((await api(T.client, "GET", `/api/assistance/media/${up.body.media.id}`)).status, 200);
   ok("Médias : type/signature contrôlés, lecture réservée au propriétaire / pro affecté / admin");
 
-  // 22. Suspension : repart en recherche
+  // 21b. Invitation automatique des mécaniciens non abonnés (sans détails privés du client)
+  subscribed.delete(PRO2);
+  await pool.query("DELETE FROM assistance_notifications WHERE type='abonnement_invite'");
   await pool.query("UPDATE assistance_requests SET status='annulee' WHERE status IN ('recherche','sans_disponibilite')");
+  r = await api(T.client, "POST", "/api/assistance/requests", { ...base_req, position: { lat: 5.35, lng: -4.01, source: "gps", confirmed: true, landmark: "Portail bleu" }, submit: true });
+  await new Promise((res) => setTimeout(res, 300));
+  const inv = await pool.query("SELECT * FROM assistance_notifications WHERE type='abonnement_invite'");
+  assert.equal(inv.rowCount, 1);
+  assert.equal(inv.rows[0].phone, PRO2);
+  assert.ok(!/Portail|0700000001|5\.35/.test(inv.rows[0].body));
+  assert.ok(sent.length === 1 && sent[0].to === PRO2, JSON.stringify(sent));
+  ok("Un mécanicien non abonné de la zone reçoit une invitation WhatsApp à s'abonner, sans donnée privée du client");
+
+  // 22. Montant indicatif configurable, jamais inventé
+  st = (await api(T.client, "GET", "/api/assistance/status")).body;
+  assert.equal(st.services.find((s: any) => s.code === "mecanique").indicativeAmount, null);
+  assert.equal((await api(T.admin, "PUT", "/api/admin/assistance/settings", { tariffs: { mecanique: { indicatif: 15000 } } })).status, 200);
+  st = (await api(T.client, "GET", "/api/assistance/status")).body;
+  assert.equal(st.services.find((s: any) => s.code === "mecanique").indicativeAmount, 15000);
+  ok("Le montant indicatif est vide tant que l'admin ne l'a pas configuré");
+
   console.log(`\n${n} scénarios OK`);
   srv.close();
   await pool.end();

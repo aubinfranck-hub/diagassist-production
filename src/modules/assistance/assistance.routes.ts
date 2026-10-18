@@ -15,7 +15,8 @@ export type AssistanceRouteDeps = {
   isAdminPhone: (phone: string) => boolean;
   getDirectory: () => DirectoryMechanic[];
   sendWhatsApp?: (phone: string, message: string) => Promise<void>;
-  jeko?: CoreDeps["jeko"];
+  isProSubscribed: CoreDeps["isProSubscribed"];
+  analyze?: CoreDeps["analyze"];
   getOrigin: (req: Request) => string;
 };
 
@@ -27,9 +28,9 @@ function decodeBase64(raw: unknown): Buffer | null {
   return buf.length ? buf : null;
 }
 
-export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCore | null; onExternalWebhook: (ref: string, status: string, body: any) => Promise<boolean>; syncDirectory: () => Promise<void> } {
+export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCore | null; syncDirectory: () => Promise<void> } {
   const { app, pool } = d;
-  const core = pool ? createAssistanceCore({ pool, sendWhatsApp: d.sendWhatsApp, jeko: d.jeko }) : null;
+  const core = pool ? createAssistanceCore({ pool, sendWhatsApp: d.sendWhatsApp, isProSubscribed: d.isProSubscribed, analyze: d.analyze, appUrl: process.env.APP_URL }) : null;
 
   const wrap = (fn: (req: any, res: Response) => Promise<any>) => async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -86,12 +87,11 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
 
   // ---------- Statut public ----------
   app.get("/api/assistance/status", d.requireAuth, wrap(async (req, res) => {
-    if (!core) return res.json({ success: true, enabled: false, dbConfigured: false, paymentConfigured: false, whatsappConfigured: false, services: [], zones: [], paymentMethods: [], message: "Base de données non configurée : l'assistance automobile est indisponible." });
+    if (!core) return res.json({ success: true, enabled: false, dbConfigured: false, whatsappConfigured: false, services: [], zones: [], message: "Base de données non configurée : l'assistance automobile est indisponible." });
     const [services, zones, settings] = await Promise.all([core.servicesStatus(), core.pool.query("SELECT id, name FROM assistance_zones WHERE active ORDER BY name"), core.getSettings()]);
-    const paymentConfigured = !!d.jeko?.isConfigured();
     res.json({
-      success: true, enabled: true, dbConfigured: true, paymentConfigured, whatsappConfigured: !!d.sendWhatsApp && settings.whatsapp_notifications,
-      services, zones: zones.rows, paymentMethods: paymentConfigured ? ["wave", "orange", "mtn", "moov", "especes"] : ["especes"],
+      success: true, enabled: true, dbConfigured: true, whatsappConfigured: !!d.sendWhatsApp && settings.whatsapp_notifications,
+      services, zones: zones.rows,
     });
   }));
 
@@ -198,23 +198,6 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     await core!.decideQuote(String(req.params.id), Number(req.params.quoteId), phoneOf(req), req.body?.accept === true);
     res.json({ success: true });
   }));
-  app.post("/api/assistance/requests/:id/pay", ...auth, writeLimiter, wrap(async (req, res) => {
-    const out = await core!.startPayment(String(req.params.id), phoneOf(req), String(req.body?.method || ""), req.body?.payerPhone ? String(req.body.payerPhone) : undefined, d.getOrigin(req));
-    res.json({ success: true, ...out });
-  }));
-  app.get("/api/assistance/requests/:id/payment", ...auth, wrap(async (req, res) => {
-    const detail = await core!.clientDetail(String(req.params.id), phoneOf(req));
-    if (detail.payment?.status === "en_attente") {
-      await core!.reconcilePayment(detail.payment.reference);
-      const again = await core!.clientDetail(String(req.params.id), phoneOf(req));
-      return res.json({ success: true, payment: again.payment, paymentStatus: again.request.paymentStatus });
-    }
-    res.json({ success: true, payment: detail.payment, paymentStatus: detail.request.paymentStatus });
-  }));
-  app.post("/api/assistance/requests/:id/payments/:reference/confirm-cash", ...auth, writeLimiter, wrap(async (req, res) => {
-    await core!.confirmCash(String(req.params.id), String(req.params.reference), phoneOf(req), "client");
-    res.json({ success: true });
-  }));
   app.post("/api/assistance/requests/:id/review", ...auth, writeLimiter, wrap(async (req, res) => {
     await core!.addReview(String(req.params.id), phoneOf(req), Number(req.body?.rating), String(req.body?.comment || ""));
     res.json({ success: true });
@@ -315,11 +298,6 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     await core!.proposeQuote(String(req.params.id), phoneOf(req), req.body || {});
     res.json({ success: true, ...(await core!.proMissionDetail(String(req.params.id), phoneOf(req))) });
   }));
-  app.post("/api/assistance/pro/missions/:id/cash-received", ...auth, requireValidatedPro, writeLimiter, wrap(async (req, res) => {
-    await core!.declareCash(String(req.params.id), phoneOf(req));
-    res.json({ success: true });
-  }));
-
   // ---------- Administration ----------
   const A = (path: string) => `/api/admin/assistance${path}`;
   const adm = [d.requireAdminAuth, needDb];
@@ -350,11 +328,10 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     const r = await core!.getRequestRow(id);
     if (!r) return res.status(404).json({ success: false, message: "Demande introuvable." });
     const q = (sql: string) => core!.pool.query(sql, [id]).then((x) => x.rows);
-    const [events, offers, quotes, payments, media, claims, review, labels] = await Promise.all([
+    const [events, offers, quotes, media, claims, review, labels] = await Promise.all([
       q("SELECT id, at, actor, actor_role, type, from_status, to_status, reason, meta FROM assistance_events WHERE request_id=$1 ORDER BY at, id"),
       q("SELECT id, pro_phone, status, distance_km, sent_at, expires_at, responded_at FROM assistance_offers WHERE request_id=$1 ORDER BY id"),
       q("SELECT id, version, kind, lines, total, status, note, created_by, created_at, decided_at, decided_by FROM assistance_quotes WHERE request_id=$1 ORDER BY version"),
-      q("SELECT reference, method, provider, amount, commission_amount, status, confirmed_by, created_at, updated_at FROM assistance_payments WHERE request_id=$1 ORDER BY created_at"),
       q("SELECT id, kind, mime, size FROM assistance_media WHERE request_id=$1 ORDER BY created_at"),
       q("SELECT id, kind, message, status, admin_note, created_at FROM assistance_claims WHERE request_id=$1 ORDER BY id"),
       q("SELECT rating, comment FROM assistance_reviews WHERE request_id=$1"),
@@ -363,10 +340,10 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     const messages = await core!.listMessages(id);
     res.json({
       success: true,
-      request: { ...core!.summary(r, labels[r.service]), clientPhone: r.client_phone, contactPhone: r.contact_phone, faultCodes: r.fault_codes, description: r.description, proPhone: r.assigned_phone, zoneId: r.zone_id, proDiagnosis: r.pro_diagnosis, cancelReason: r.cancel_reason, shareDiagnostic: r.share_diagnostic, diagnostic: r.diagnostic, position: { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source, confirmed: r.position_confirmed } },
+      request: { ...core!.summary(r, labels[r.service]), clientPhone: r.client_phone, contactPhone: r.contact_phone, faultCodes: r.fault_codes, description: r.description, proPhone: r.assigned_phone, zoneId: r.zone_id, proDiagnosis: r.pro_diagnosis, aiAnalysis: r.ai_analysis, cancelReason: r.cancel_reason, shareDiagnostic: r.share_diagnostic, diagnostic: r.diagnostic, position: { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source, confirmed: r.position_confirmed } },
       timeline: events.map((e: any) => ({ id: Number(e.id), at: Number(e.at), actor: e.actor, actorRole: e.actor_role, type: e.type, from: e.from_status, to: e.to_status, reason: e.reason, meta: e.meta })),
       offers: offers.map((o: any) => ({ ...o, sent_at: Number(o.sent_at), expires_at: Number(o.expires_at), responded_at: o.responded_at ? Number(o.responded_at) : null })),
-      quotes, payments, media, claims, messages, review: review[0] || null,
+      quotes, media, claims, messages, review: review[0] || null,
     });
   }));
 
@@ -393,7 +370,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
               (SELECT COUNT(*)::int FROM assistance_trainings t WHERE t.pro_phone=p.phone AND t.status='verifiee') AS trainings_ok,
               (SELECT COUNT(*)::int FROM assistance_trainings t WHERE t.pro_phone=p.phone AND t.status='declaree') AS trainings_pending
        FROM assistance_pros p ${status ? "WHERE p.validation_status=$1" : ""} ORDER BY p.created_at DESC LIMIT 500`, status ? [status] : []);
-    res.json({ success: true, pros: rows.rows.map((p) => ({ phone: p.phone, displayName: p.display_name, garageName: p.garage_name, specialties: p.specialties, zoneIds: p.zone_ids, mobility: p.mobility, validationStatus: p.validation_status, validationNote: p.validation_note, validatedBy: p.validated_by, validatedAt: p.validated_at ? Number(p.validated_at) : null, available: p.available, source: p.source, missionsDone: p.done, documents: p.docs, trainings: p.trainings, trainingsVerified: p.trainings_ok, trainingsPending: p.trainings_pending, createdAt: Number(p.created_at) })) });
+    res.json({ success: true, pros: rows.rows.map((p) => ({ phone: p.phone, displayName: p.display_name, garageName: p.garage_name, specialties: p.specialties, zoneIds: p.zone_ids, mobility: p.mobility, validationStatus: p.validation_status, validationNote: p.validation_note, validatedBy: p.validated_by, validatedAt: p.validated_at ? Number(p.validated_at) : null, available: p.available, subscribed: d.isProSubscribed(p.phone), source: p.source, missionsDone: p.done, documents: p.docs, trainings: p.trainings, trainingsVerified: p.trainings_ok, trainingsPending: p.trainings_pending, createdAt: Number(p.created_at) })) });
   }));
   app.get(A("/pros/:phone"), ...adm, wrap(async (req, res) => {
     const phone = canonicalPhone(String(req.params.phone));
@@ -514,21 +491,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
   app.get(A("/settings"), ...adm, wrap(async (_req, res) => { res.json({ success: true, settings: await core!.getSettings(true) }); }));
   app.put(A("/settings"), ...adm, writeLimiter, wrap(async (req, res) => { res.json({ success: true, settings: await core!.saveSettings(req.body || {}) }); }));
 
-  // Paiements, réclamations
-  app.get(A("/payments"), ...adm, wrap(async (_req, res) => {
-    const r = await core!.pool.query(`SELECT reference, request_id, payer_phone, method, provider, amount, commission_amount, status, confirmed_by, created_at, updated_at FROM assistance_payments ORDER BY created_at DESC LIMIT 300`);
-    res.json({ success: true, payments: r.rows.map((p) => ({ ...p, created_at: Number(p.created_at), updated_at: Number(p.updated_at) })) });
-  }));
-  app.post(A("/payments/:reference/confirm-cash"), ...adm, writeLimiter, wrap(async (req, res) => {
-    const p = await core!.pool.query("SELECT request_id FROM assistance_payments WHERE reference=$1", [String(req.params.reference)]);
-    if (!p.rowCount) return res.status(404).json({ success: false, message: "Paiement introuvable." });
-    await core!.confirmCash(p.rows[0].request_id, String(req.params.reference), adminActor(req), "admin");
-    res.json({ success: true });
-  }));
-  app.post(A("/payments/:reference/reconcile"), ...adm, writeLimiter, wrap(async (req, res) => {
-    await core!.reconcilePayment(String(req.params.reference));
-    res.json({ success: true });
-  }));
+  // Réclamations
   app.get(A("/claims"), ...adm, wrap(async (_req, res) => {
     const r = await core!.pool.query(`SELECT id, request_id, author_phone, kind, message, status, admin_note, created_at, resolved_at FROM assistance_claims ORDER BY status, created_at DESC LIMIT 300`);
     res.json({ success: true, claims: r.rows.map((c) => ({ ...c, created_at: Number(c.created_at), resolved_at: c.resolved_at ? Number(c.resolved_at) : null })) });
@@ -541,7 +504,6 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
 
   return {
     core,
-    onExternalWebhook: async (ref, status, body) => (core ? core.handleJekoWebhook(ref, status, body) : false),
     syncDirectory: async () => { if (core) { const r = await core.syncDirectory(d.getDirectory()); console.log(`[ASSISTANCE] Annuaire synchronisé : ${r.created} profils créés (en attente de validation), ${r.linked} rattachés, ${r.suspended} suspendus.`); } },
   };
 }

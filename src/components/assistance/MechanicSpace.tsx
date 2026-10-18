@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, Clock, Loader2, MapPin, ShieldAlert, ShieldCheck, WifiOff, X } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, PAYMENT_LABEL, STATUS_SHORT, useOnline, usePolling, vehicleLabel,
+  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, indicativeText, MSG_ALREADY_TAKEN, MSG_AI_TITLE, MSG_SUBSCRIPTION, STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
 import MechanicMission, { normalizeMission, ProMission } from "./MechanicMission";
 import MechanicProfile, { ProProfile } from "./MechanicProfile";
@@ -17,13 +17,15 @@ interface Offer {
   approxPosition?: { lat: number; lng: number; radiusM: number };
   distanceKm?: number;
   expiresAt: number;
+  aiAnalysis?: string | null;
+  indicativeAmount?: number | null;
 }
 
 type Tab = "mission" | "profil" | "historique";
 const LIVE_STATUSES = ["affectee", "en_route", "sur_place", "en_intervention"];
 const LOCATION_EVERY_MS = 20000;
 
-export default function MechanicSpace({ onBack }: { onBack?: () => void }) {
+export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => void; onUpgrade?: () => void }) {
   const online = useOnline();
   const [tab, setTab] = useState<Tab>("mission");
   const [status, setStatus] = useState<AssistanceStatus | null>(null);
@@ -165,7 +167,8 @@ export default function MechanicSpace({ onBack }: { onBack?: () => void }) {
       setOffers([]);
       await refreshAll();
     } catch (e) {
-      if (e instanceof AssistanceError && (e.code === "ALREADY_TAKEN" || e.status === 409)) setOfferMsg("Déjà pris par un autre professionnel.");
+      if (e instanceof AssistanceError && (e.code === "ALREADY_TAKEN" || e.status === 409)) setOfferMsg(MSG_ALREADY_TAKEN);
+      else if (e instanceof AssistanceError && e.code === "SUBSCRIPTION_REQUIRED") setOfferMsg(MSG_SUBSCRIPTION);
       else setOfferMsg(errText(e));
       await loadOffers();
     } finally { setBusy(""); }
@@ -210,8 +213,13 @@ export default function MechanicSpace({ onBack }: { onBack?: () => void }) {
       {profile && vs === "en_attente" && <Notice tone="warn"><strong>Votre profil est en attente de validation par DiagAssist.</strong> Vous pourrez passer disponible dès qu'il sera validé.</Notice>}
       {profile && vs === "suspendu" && <Notice tone="error"><strong>Votre profil est suspendu.</strong> {profile.validationNote || "Contactez DiagAssist pour plus d'informations."}</Notice>}
       {profile && vs === "refuse" && <Notice tone="error"><strong>Votre profil a été refusé.</strong> {profile.validationNote || "Contactez DiagAssist pour plus d'informations."}</Notice>}
+      {profile && vs === "valide" && profile.subscribed === false && (
+        <Notice tone="warn" action={onUpgrade ? <button className={btnPrimary} onClick={onUpgrade}>Voir les forfaits</button> : undefined}>
+          <strong>{MSG_SUBSCRIPTION}</strong>
+        </Notice>
+      )}
       {profile && vs === "valide" && profile.blockers && profile.blockers.length > 0 && (
-        <Notice tone="warn"><ul className="list-disc pl-5 space-y-0.5">{profile.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul></Notice>
+        <Notice tone="warn"><ul className="list-disc pl-5 space-y-0.5">{profile.blockers.filter((b) => !(profile.subscribed === false && /abonnement/i.test(b))).map((b, i) => <li key={i}>{b}</li>)}</ul></Notice>
       )}
 
       {/* Disponibilité */}
@@ -262,7 +270,7 @@ export default function MechanicSpace({ onBack }: { onBack?: () => void }) {
           {!activeId && profile && (
             <div className="space-y-3">
               <h3 className="text-sm font-black uppercase tracking-wider text-slate-500">Offres</h3>
-              {offerMsg && <Notice tone="warn">{offerMsg}</Notice>}
+              {offerMsg && <Notice tone="warn" action={offerMsg === MSG_SUBSCRIPTION && onUpgrade ? <button className={btnPrimary} onClick={onUpgrade}>Voir les forfaits</button> : undefined}>{offerMsg}</Notice>}
               {!profile.available && <p className="text-sm text-slate-500 py-3">Passez « Disponible » pour recevoir des offres de clients proches.</p>}
               {profile.available && offers.length === 0 && (
                 <p className="text-sm text-slate-500 py-3 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Aucune offre pour le moment. Nous vous prévenons ici dès qu'un client a besoin de vous.</p>
@@ -301,6 +309,14 @@ function OfferCard({
         {offer.distanceKm != null && <span>À environ {offer.distanceKm.toFixed(1)} km</span>}
         {ap && <a className="underline" target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps?q=${ap.lat},${ap.lng}`}>Voir la zone sur la carte</a>}
       </div>
+      <div className="text-sm font-bold text-amber-300">{indicativeText(offer.indicativeAmount)}</div>
+      {offer.aiAnalysis && (
+        <div className="rounded-xl bg-slate-950/60 border border-white/[0.06] p-3">
+          <div className="text-[11px] font-black uppercase tracking-wider text-slate-400">{MSG_AI_TITLE}</div>
+          <p className="text-sm text-slate-300 whitespace-pre-line mt-1">{offer.aiAnalysis}</p>
+        </div>
+      )}
+      <p className="text-xs font-bold text-slate-300">Le premier à accepter prend la mission.</p>
       <p className="text-xs text-slate-500">Position approximative : l'adresse exacte vous sera donnée si vous acceptez.</p>
       <div className="grid grid-cols-2 gap-3">
         <button className={btnSecondary} disabled={busy} onClick={onDecline}><X className="w-5 h-5" /> Refuser</button>
@@ -325,9 +341,6 @@ function History() {
 
   if (err && !list) return <Notice tone="error" action={<button className={btnSecondary} onClick={() => void load()}>Réessayer</button>}>{err}</Notice>;
   if (!list) return <Spinner />;
-  const paid = list.filter((m) => m.paymentStatus && m.paymentStatus !== "aucun");
-  const total = list.filter((m) => m.paymentStatus === "paye").reduce((s, m) => s + (Number(m.total ?? m.amount) || 0), 0);
-
   return (
     <div className="space-y-5">
       <section className="space-y-2">
@@ -338,17 +351,6 @@ function History() {
             <div className="flex justify-between gap-2"><span className="font-black text-white truncate">{m.serviceLabel || m.service}</span><span className="text-xs text-slate-500 shrink-0">{formatDate(m.createdAt)}</span></div>
             <div className="text-sm text-slate-400 truncate">{vehicleLabel(m.vehicle)}{m.symptoms ? ` · ${m.symptoms}` : ""}</div>
             <div className="text-xs font-bold text-slate-300">{STATUS_SHORT[m.status] || m.status}</div>
-          </Card>
-        ))}
-      </section>
-      <section className="space-y-2">
-        <h3 className="text-sm font-black uppercase tracking-wider text-slate-500">Paiements</h3>
-        {paid.length === 0 && <p className="text-sm text-slate-500 py-3">Aucun paiement pour le moment.</p>}
-        {paid.length > 0 && <div className="text-sm text-slate-300">Encaissé et confirmé : <strong className="text-white">{formatXOF(total)}</strong></div>}
-        {paid.map((m) => (
-          <Card key={m.id} className="!p-4 flex justify-between items-center gap-3">
-            <div className="min-w-0"><div className="font-bold text-slate-200 truncate">{m.serviceLabel || m.service}</div><div className="text-xs text-slate-500">{formatDate(m.createdAt)}</div></div>
-            <div className="text-right shrink-0"><div className="font-black text-white">{formatXOF(m.total ?? m.amount)}</div><div className="text-xs text-slate-400">{PAYMENT_LABEL[m.paymentStatus] || m.paymentStatus}</div></div>
           </Card>
         ))}
       </section>

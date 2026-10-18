@@ -1,5 +1,7 @@
 # Assistance automobile — contrat d'API
 
+> Modèle (mis à jour) : l'automobiliste ne paie rien à la plateforme ; le règlement éventuel se fait directement avec le mécanicien. Seuls les mécaniciens en base, validés ET à jour de leur abonnement DiagAssist reçoivent les demandes, envoyées à plusieurs d'entre eux en même temps (le premier qui accepte prend la mission). DiagAssist analyse automatiquement texte et médias (`aiAnalysis`, « pistes à vérifier »). Un montant indicatif par type de panne est configuré par l'admin (`tariffs[service].indicatif`). Les mécaniciens de la zone non abonnés reçoivent une invitation WhatsApp à s'abonner (sans donnée privée du client). Les routes de paiement, d'espèces et `/payments` de l'admin n'existent plus.
+
 Toutes les routes renvoient `{ success: boolean, message?: string, ... }`. Les dates sont en millisecondes (epoch), les montants en entiers XOF.
 Auth client / mécanicien : `Authorization: Bearer <auth_session_token>`. Auth admin : mêmes en-têtes que le reste de l'admin (`x-admin-code` ou session admin).
 Si Postgres n'est pas configuré, toutes les routes `/api/assistance/*` répondent `503 { success:false, code:"ASSISTANCE_DB_MISSING", message }` (sauf `GET /api/assistance/status`).

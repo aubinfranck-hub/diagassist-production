@@ -4,14 +4,14 @@ import AdminDashboardView from "./AdminDashboardView";
 import AdminRequests from "./AdminRequests";
 import AdminPros from "./AdminPros";
 import AdminConfig from "./AdminConfig";
-import AdminPayments from "./AdminPayments";
+import AdminClaims from "./AdminClaims";
 
 const VIEWS = [
   { id: "dashboard", label: "Tableau de bord" },
   { id: "requests", label: "Demandes" },
   { id: "pros", label: "Professionnels" },
   { id: "config", label: "Configuration" },
-  { id: "payments", label: "Paiements et réclamations" },
+  { id: "claims", label: "Réclamations" },
 ] as const;
 type ViewId = (typeof VIEWS)[number]["id"];
 
@@ -38,7 +38,7 @@ export default function AssistanceAdmin() {
           {view === "requests" && <AdminRequests />}
           {view === "pros" && <AdminPros />}
           {view === "config" && <AdminConfig />}
-          {view === "payments" && <AdminPayments />}
+          {view === "claims" && <AdminClaims />}
         </>
       )}
     </div>

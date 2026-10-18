@@ -212,10 +212,6 @@ export default function App() {
 
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening" | "assistance" | "depannage">(() => {
-    // Retour d'un paiement mobile : on rouvre le suivi, l'état réel est relu sur le serveur.
-    try {
-      if (localStorage.getItem("assistance_resume") === "1") { localStorage.removeItem("assistance_resume"); return "assistance"; }
-    } catch { /* ignore */ }
     return "diagnose";
   });
   // Assistance automobile : pré-remplissage depuis un diagnostic IA (jamais transmis sans consentement)
@@ -1455,7 +1451,7 @@ export default function App() {
         )}
 
         {/* TAB: Espace dépannage (mécanicien) */}
-        {activeTab === "depannage" && <MechanicSpace onBack={() => setActiveTab("assistance")} />}
+        {activeTab === "depannage" && <MechanicSpace onBack={() => setActiveTab("assistance")} onUpgrade={() => setActiveTab("prices")} />}
 
         {/* TAB: DiagAssist Scanner — appairage tablette + coaching temps réel */}
         {activeTab === "screening" && accountType === "mechanic" && (

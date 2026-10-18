@@ -19,22 +19,22 @@ export type DirectoryMechanic = {
 export type CoreDeps = {
   pool: Pool;
   sendWhatsApp?: (phone: string, message: string) => Promise<void>;
-  jeko?: {
-    isConfigured: () => boolean;
-    create: (p: { reference: string; amountXof: number; paymentMethod: string; payerPhone?: string; successUrl: string; errorUrl: string }) => Promise<{ id?: string; redirectUrl?: string }>;
-    fetchStatus: (jekoId: string) => Promise<string>;
-  };
-  appOrigin?: (req?: any) => string;
+  // Droit d'accès : seuls les mécaniciens à jour de leur abonnement DiagAssist reçoivent des assistances.
+  isProSubscribed: (phone: string) => boolean;
+  // Analyse automatique par l'IA DiagAssist (texte + médias). Peut échouer : la demande part quand même.
+  appUrl?: string;
+  analyze?: (input: { service: string; vehicle: any; symptoms: string; faultCodes: string | null; media: { mime: string; data: Buffer }[] }) => Promise<string | null>;
 };
 
 const DEFAULT_SETTINGS = {
   offer_timeout_s: 60,
   search_radius_km: 25,
-  max_candidates: 5,
+  max_candidates: 10,
+  broadcast_size: 5,
   location_max_age_min: 15,
   avg_speed_kmh: 25,
   commission_pct: null as number | null,
-  tariffs: {} as Record<string, { deplacement?: number; diagnostic?: number }>,
+  tariffs: {} as Record<string, { deplacement?: number; diagnostic?: number; indicatif?: number }>,
   whatsapp_notifications: false,
 };
 export type Settings = typeof DEFAULT_SETTINGS;
@@ -104,17 +104,20 @@ export function createAssistanceCore(deps: CoreDeps) {
     const out: Record<string, unknown> = {};
     if ("offer_timeout_s" in patch) out.offer_timeout_s = Math.round(num("offer_timeout_s", 10, 600));
     if ("search_radius_km" in patch) out.search_radius_km = num("search_radius_km", 1, 200);
+    if ("broadcast_size" in patch) out.broadcast_size = Math.round(num("broadcast_size", 1, 20));
     if ("max_candidates" in patch) out.max_candidates = Math.round(num("max_candidates", 1, 50));
     if ("location_max_age_min" in patch) out.location_max_age_min = num("location_max_age_min", 1, 240);
     if ("avg_speed_kmh" in patch) out.avg_speed_kmh = num("avg_speed_kmh", 5, 120);
     if ("commission_pct" in patch) out.commission_pct = patch.commission_pct === null || patch.commission_pct === "" ? null : num("commission_pct", 0, 100);
     if ("whatsapp_notifications" in patch) out.whatsapp_notifications = patch.whatsapp_notifications === true;
     if ("tariffs" in patch) {
-      const t: Record<string, { deplacement?: number; diagnostic?: number }> = {};
+      const t: Record<string, { deplacement?: number; diagnostic?: number; indicatif?: number }> = {};
       const src: any = patch.tariffs || {};
       for (const code of Object.keys(src)) {
         const dep = src[code]?.deplacement, diag = src[code]?.diagnostic;
-        const entry: { deplacement?: number; diagnostic?: number } = {};
+        const entry: { deplacement?: number; diagnostic?: number; indicatif?: number } = {};
+        const ind = src[code]?.indicatif;
+        if (ind !== undefined && ind !== null && ind !== "") { if (!Number.isInteger(Number(ind)) || Number(ind) < 0) throw new AssistanceError(400, "Montant indicatif invalide."); entry.indicatif = Number(ind); }
         if (dep !== undefined && dep !== null && dep !== "") { if (!Number.isInteger(Number(dep)) || Number(dep) < 0) throw new AssistanceError(400, "Tarif de déplacement invalide."); entry.deplacement = Number(dep); }
         if (diag !== undefined && diag !== null && diag !== "") { if (!Number.isInteger(Number(diag)) || Number(diag) < 0) throw new AssistanceError(400, "Tarif de diagnostic invalide."); entry.diagnostic = Number(diag); }
         t[String(code)] = entry;
@@ -139,7 +142,7 @@ export function createAssistanceCore(deps: CoreDeps) {
     console.log(`[ASSISTANCE] ${requestId} ${type}${o.from || o.to ? ` ${o.from || "-"}→${o.to || "-"}` : ""} par ${actorRole}:${actor}${o.reason ? ` (${o.reason})` : ""}`);
   }
 
-  async function notify(phone: string, requestId: string | null, type: string, title: string, body: string, whatsapp = false) {
+  async function notify(phone: string, requestId: string | null, type: string, title: string, body: string, whatsapp: boolean | "force" = false) {
     try {
       await pool.query(
         `INSERT INTO assistance_notifications (phone, request_id, type, title, body, created_at) VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -147,7 +150,7 @@ export function createAssistanceCore(deps: CoreDeps) {
       );
       if (whatsapp && deps.sendWhatsApp) {
         const s = await getSettings();
-        if (s.whatsapp_notifications) deps.sendWhatsApp(phone, `DiagAssist - ${title}. ${body}`).catch((e) => console.warn("[ASSISTANCE] WhatsApp non envoyé:", e?.message || e));
+        if (whatsapp === "force" || s.whatsapp_notifications) deps.sendWhatsApp(phone, `DiagAssist - ${title}. ${body}`).catch((e) => console.warn("[ASSISTANCE] WhatsApp non envoyé:", e?.message || e));
       }
     } catch (e: any) {
       console.error("[ASSISTANCE] Notification impossible:", e.message);
@@ -168,13 +171,14 @@ export function createAssistanceCore(deps: CoreDeps) {
   async function servicesStatus() {
     const s = await pool.query(`SELECT code, label, description, enabled FROM assistance_services ORDER BY sort, code`);
     const pros = await pool.query(
-      `SELECT specialties, zone_ids, available, mobility FROM assistance_pros WHERE validation_status='valide' AND mobility IN ('mobile','both')`
+      `SELECT phone, specialties, zone_ids, available, mobility FROM assistance_pros WHERE validation_status='valide' AND mobility IN ('mobile','both')`
     );
+    const settings = await getSettings();
     const zones = await pool.query(`SELECT id FROM assistance_zones WHERE active`);
     const activeZoneIds = new Set(zones.rows.map((z) => z.id));
     return s.rows.filter((x) => x.enabled).map((x) => {
-      const comp = pros.rows.filter((p) => p.specialties.includes(x.code) && p.zone_ids.some((z: number) => activeZoneIds.has(z)));
-      return { code: x.code, label: x.label, description: x.description, available: comp.length > 0, proCount: comp.length, availableNow: comp.filter((p) => p.available).length };
+      const comp = pros.rows.filter((p) => deps.isProSubscribed(p.phone) && p.specialties.includes(x.code) && p.zone_ids.some((z: number) => activeZoneIds.has(z)));
+      return { code: x.code, label: x.label, description: x.description, available: comp.length > 0, proCount: comp.length, availableNow: comp.filter((p) => p.available).length, indicativeAmount: settings.tariffs[x.code]?.indicatif ?? null };
     });
   }
 
@@ -233,6 +237,7 @@ export function createAssistanceCore(deps: CoreDeps) {
     if (p.validation_status === "en_attente") b.push("Votre profil est en attente de validation par DiagAssist.");
     if (p.validation_status === "suspendu") b.push("Votre profil est suspendu. Contactez DiagAssist.");
     if (p.validation_status === "refuse") b.push("Votre profil n'a pas été retenu.");
+    if (!deps.isProSubscribed(p.phone)) b.push("Votre abonnement DiagAssist n'est plus à jour : renouvelez-le pour recevoir des assistances.");
     if (!p.specialties?.length) b.push("Choisissez au moins une spécialité.");
     if (!p.zone_ids?.length) b.push("Choisissez au moins une zone d'intervention.");
     if (p.mobility === "garage") b.push("Votre profil est réservé au garage fixe : les interventions mobiles ne vous sont pas proposées.");
@@ -256,7 +261,7 @@ export function createAssistanceCore(deps: CoreDeps) {
     if (p.validation_status === "valide" && p.available && !fresh) blockers.push("Partagez votre position pour recevoir des missions.");
     return {
       phone: p.phone, displayName: p.display_name, garageName: p.garage_name, specialties: p.specialties, zoneIds: p.zone_ids,
-      mobility: p.mobility, validationStatus: p.validation_status, validationNote: p.validation_note, available: p.available,
+      mobility: p.mobility, subscribed: deps.isProSubscribed(p.phone), validationStatus: p.validation_status, validationNote: p.validation_note, available: p.available,
       shareLocation: p.available || active.rowCount! > 0,
       location: p.last_lat != null ? { lat: p.last_lat, lng: p.last_lng, updatedAt: Number(p.last_loc_at) } : null,
       trainings: tr.rows.map((t) => ({ id: t.id, title: t.title, issuer: t.issuer, completedOn: t.completed_on, status: t.status })),
@@ -423,7 +428,54 @@ export function createAssistanceCore(deps: CoreDeps) {
       await logEvent(c, id, clientPhone, "client", "envoi", { from: "brouillon", to: "recherche", meta: { zone: zone.name } });
     });
     await notify(clientPhone, id, "demande_recue", "Demande reçue", "Nous cherchons un mécanicien près de vous.");
+    await analyzeRequest(id);
+    nudgeUnsubscribed(id).catch((e) => console.warn("[ASSISTANCE] Invitation abonnement:", e?.message || e));
     await dispatch(id);
+  }
+
+  // Les mécaniciens de la zone compétents mais PAS à jour de leur abonnement sont prévenus automatiquement
+  // (WhatsApp + notification) qu'une assistance existe près d'eux et invités à s'abonner pour la prendre.
+  // Aucun détail privé du client, ni sa position exacte. Une invitation par mécanicien et par 24 h.
+  async function nudgeUnsubscribed(requestId: string): Promise<void> {
+    const r = (await pool.query(`SELECT r.service, r.zone_id, r.client_phone, z.name AS zone_name, s.label FROM assistance_requests r LEFT JOIN assistance_zones z ON z.id=r.zone_id LEFT JOIN assistance_services s ON s.code=r.service WHERE r.id=$1 AND r.status='recherche'`, [requestId])).rows[0];
+    if (!r || !r.zone_id) return;
+    const cands = (await pool.query(
+      `SELECT p.phone FROM assistance_pros p
+       WHERE p.validation_status IN ('valide','en_attente') AND p.mobility IN ('mobile','both')
+         AND $1 = ANY(p.specialties) AND $2 = ANY(p.zone_ids) AND p.phone <> $3
+         AND NOT EXISTS (SELECT 1 FROM assistance_notifications n WHERE n.phone=p.phone AND n.type='abonnement_invite' AND n.created_at > $4)`,
+      [r.service, r.zone_id, r.client_phone, Date.now() - 24 * 3600000]
+    )).rows.filter((p) => !deps.isProSubscribed(p.phone)).slice(0, 20);
+    const link = deps.appUrl ? ` ${deps.appUrl}` : "";
+    for (const p of cands) {
+      await notify(
+        p.phone, null, "abonnement_invite", "Un dépannage vous attend près de vous",
+        `Un automobiliste demande une assistance (${r.label || r.service}) à ${r.zone_name || "votre zone"}. Abonnez-vous à DiagAssist pour recevoir et prendre ces demandes.${link}`,
+        "force"
+      );
+    }
+    if (cands.length) await logEvent(pool, requestId, "systeme", "systeme", "invitation_abonnement", { meta: { count: cands.length } });
+  }
+
+  // Analyse automatique DiagAssist : synthèse des symptômes et médias, transmise aux mécaniciens comme
+  // piste à vérifier. Limitée à 20 s ; en cas d'échec, la demande part quand même sans analyse.
+  async function analyzeRequest(id: string): Promise<void> {
+    if (!deps.analyze) return;
+    try {
+      const r = (await pool.query("SELECT * FROM assistance_requests WHERE id=$1", [id])).rows[0];
+      if (!r) return;
+      const m = (await pool.query("SELECT mime, data, kind FROM assistance_media WHERE request_id=$1 ORDER BY created_at LIMIT 4", [id])).rows;
+      const text = await Promise.race([
+        deps.analyze({ service: r.service, vehicle: r.vehicle, symptoms: r.symptoms || r.description || "", faultCodes: r.fault_codes, media: m.map((x) => ({ mime: x.mime, data: x.data })) }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 20000)),
+      ]);
+      if (text) {
+        await pool.query("UPDATE assistance_requests SET ai_analysis=$2, updated_at=$3 WHERE id=$1", [id, clean(text, 3000), Date.now()]);
+        await logEvent(pool, id, "systeme", "systeme", "analyse_ia");
+      }
+    } catch (e: any) {
+      console.warn("[ASSISTANCE] Analyse IA indisponible:", e?.message || e);
+    }
   }
 
   async function cancelRequest(id: string, actor: string, role: "client" | "pro" | "admin" | "systeme", reason: string) {
@@ -470,9 +522,12 @@ export function createAssistanceCore(deps: CoreDeps) {
   }
 
   // ---------- Affectation ----------
+  // Envoi simultané à plusieurs mécaniciens de la zone (les plus proches d'abord) : le premier qui
+  // accepte prend la mission (voir acceptOffer). Si personne n'accepte avant l'expiration, la vague
+  // suivante part, jusqu'à `max_candidates` professionnels au total.
   async function dispatch(requestId: string): Promise<void> {
     const settings = await getSettings();
-    let offered: { pro: string; svc: string } | null = null;
+    let offered: string[] = [];
     let noneFor: string | null = null;
     await tx(async (c) => {
       const r = (await c.query("SELECT * FROM assistance_requests WHERE id=$1 FOR UPDATE", [requestId])).rows[0];
@@ -483,8 +538,9 @@ export function createAssistanceCore(deps: CoreDeps) {
       if (open.rowCount) return;
       const round = Number(r.search_started_at || r.created_at);
       const tried = (await c.query(`SELECT COUNT(*)::int n FROM assistance_offers WHERE request_id=$1 AND sent_at>=$2`, [requestId, round])).rows[0].n;
-      let chosen: { phone: string; km: number } | null = null;
-      if (tried < settings.max_candidates && r.zone_id) {
+      let chosen: { phone: string; km: number }[] = [];
+      const room = Math.min(settings.broadcast_size, settings.max_candidates - tried);
+      if (room > 0 && r.zone_id) {
         const minLoc = now - settings.location_max_age_min * 60000;
         const cands = (await c.query(
           `SELECT p.phone, p.last_lat, p.last_lng FROM assistance_pros p
@@ -492,34 +548,32 @@ export function createAssistanceCore(deps: CoreDeps) {
              AND $1 = ANY(p.specialties) AND $2 = ANY(p.zone_ids) AND p.last_loc_at >= $3 AND p.phone <> $4
              AND NOT EXISTS (SELECT 1 FROM assistance_requests m WHERE m.assigned_phone=p.phone AND m.status = ANY($7))
              AND NOT EXISTS (SELECT 1 FROM assistance_offers o WHERE o.request_id=$5 AND o.pro_phone=p.phone AND o.sent_at>=$6)
-             AND NOT EXISTS (SELECT 1 FROM assistance_assignments a WHERE a.request_id=$5 AND a.pro_phone=p.phone)
-             AND NOT EXISTS (SELECT 1 FROM assistance_offers o2 WHERE o2.pro_phone=p.phone AND o2.status='envoyee')`,
+             AND NOT EXISTS (SELECT 1 FROM assistance_assignments a WHERE a.request_id=$5 AND a.pro_phone=p.phone)`,
           [r.service, r.zone_id, minLoc, r.client_phone, requestId, round, ACTIVE_MISSION_STATUSES]
         )).rows;
-        const ranked = cands
+        chosen = cands
+          .filter((p) => deps.isProSubscribed(p.phone))
           .map((p) => ({ phone: p.phone as string, km: haversineKm(r.lat, r.lng, p.last_lat, p.last_lng) }))
           .filter((p) => p.km <= settings.search_radius_km)
-          .sort((a, b) => a.km - b.km);
-        chosen = ranked[0] || null;
+          .sort((a, b) => a.km - b.km)
+          .slice(0, room);
       }
-      if (chosen) {
-        await c.query(
-          `INSERT INTO assistance_offers (request_id, pro_phone, distance_km, sent_at, expires_at) VALUES ($1,$2,$3,$4,$5)`,
-          [requestId, chosen.phone, chosen.km, now, now + settings.offer_timeout_s * 1000]
-        );
-        await logEvent(c, requestId, "systeme", "systeme", "proposition", { meta: { pro: chosen.phone, km: Math.round(chosen.km * 10) / 10 } });
-        offered = { pro: chosen.phone, svc: r.service };
+      if (chosen.length) {
+        for (const ch of chosen) {
+          await c.query(
+            `INSERT INTO assistance_offers (request_id, pro_phone, distance_km, sent_at, expires_at) VALUES ($1,$2,$3,$4,$5)`,
+            [requestId, ch.phone, ch.km, now, now + settings.offer_timeout_s * 1000]
+          );
+        }
+        await logEvent(c, requestId, "systeme", "systeme", "proposition", { meta: { pros: chosen.map((x) => x.phone), km: chosen.map((x) => Math.round(x.km * 10) / 10) } });
+        offered = chosen.map((x) => x.phone);
       } else {
         await c.query(`UPDATE assistance_requests SET status='sans_disponibilite', updated_at=$2 WHERE id=$1`, [requestId, now]);
         await logEvent(c, requestId, "systeme", "systeme", "sans_disponibilite", { from: "recherche", to: "sans_disponibilite", reason: tried >= settings.max_candidates ? "candidats épuisés" : "aucun professionnel éligible" });
         noneFor = r.client_phone;
       }
-    }).catch(async (e) => {
-      // Deux envois simultanés vers la même demande : l'index unique d'offre ouverte protège ; on ignore.
-      if (e?.code === "23505") return;
-      throw e;
     });
-    if (offered) await notify((offered as any).pro, requestId, "mission_proposee", "Nouvelle mission proche de vous", "Ouvrez DiagAssist pour accepter ou refuser.", true);
+    for (const pro of offered) await notify(pro, requestId, "mission_proposee", "Nouvelle assistance près de vous", "Le premier à accepter prend la mission. Ouvrez DiagAssist.", true);
     if (noneFor) await notify(noneFor, requestId, "sans_disponibilite", "Aucun mécanicien disponible", "Aucun professionnel n'est disponible pour le moment. Vous pouvez réessayer ou demander une prise en charge manuelle.");
   }
 
@@ -557,6 +611,7 @@ export function createAssistanceCore(deps: CoreDeps) {
       }
       const pro = (await c.query("SELECT * FROM assistance_pros WHERE phone=$1 FOR UPDATE", [proPhone])).rows[0];
       if (!pro || pro.validation_status !== "valide") throw new AssistanceError(403, "Votre profil n'est pas validé.");
+      if (!deps.isProSubscribed(proPhone)) throw new AssistanceError(403, "Votre abonnement DiagAssist n'est plus à jour.", "SUBSCRIPTION_REQUIRED");
       const busy = await c.query(`SELECT 1 FROM assistance_requests WHERE assigned_phone=$1 AND status = ANY($2)`, [proPhone, ACTIVE_MISSION_STATUSES]);
       if (busy.rowCount) throw new AssistanceError(409, "Terminez votre mission en cours avant d'en accepter une autre.");
       await c.query(`UPDATE assistance_offers SET status='acceptee', responded_at=$2 WHERE id=$1`, [offerId, now]);
@@ -588,6 +643,7 @@ export function createAssistanceCore(deps: CoreDeps) {
       if (!pro || pro.validation_status !== "valide") throw new AssistanceError(400, "Ce professionnel n'est pas validé.");
       if (!pro.specialties.includes(r.service)) throw new AssistanceError(400, "Ce professionnel n'est pas compétent pour ce service.");
       if (pro.phone === r.client_phone) throw new AssistanceError(400, "Un professionnel ne peut pas traiter sa propre demande.");
+      if (!deps.isProSubscribed(pro.phone)) throw new AssistanceError(400, "Ce professionnel n'est pas à jour de son abonnement.");
       const busy = await c.query(`SELECT 1 FROM assistance_requests WHERE assigned_phone=$1 AND status = ANY($2) AND id<>$3`, [proPhone, ACTIVE_MISSION_STATUSES, requestId]);
       if (busy.rowCount) throw new AssistanceError(409, "Ce professionnel a déjà une mission en cours.");
       const now = Date.now();
@@ -710,138 +766,6 @@ export function createAssistanceCore(deps: CoreDeps) {
     if (proPhone) await notify(proPhone, requestId, accept ? "devis_accepte" : "devis_refuse", accept ? "Devis accepté" : "Devis refusé", accept ? "Le client a donné son accord." : "Le client a refusé le devis.", true);
   }
 
-  // ---------- Paiement ----------
-  async function startPayment(requestId: string, clientPhone: string, method: string, payerPhone: string | undefined, origin: string) {
-    const r = (await pool.query("SELECT * FROM assistance_requests WHERE id=$1", [requestId])).rows[0];
-    if (!r || r.client_phone !== clientPhone) throw new AssistanceError(404, "Demande introuvable.");
-    if (r.status !== "terminee") throw new AssistanceError(409, "Le paiement s'ouvre une fois l'intervention terminée.");
-    if (r.payment_status === "paye") throw new AssistanceError(409, "Cette intervention est déjà payée.");
-    if (!(r.amount_due > 0)) throw new AssistanceError(409, "Aucun montant à payer.");
-    if (method === "especes") throw new AssistanceError(400, "Pour un paiement en espèces, le mécanicien déclare la réception et vous la confirmez.");
-    if (!["wave", "orange", "mtn", "moov"].includes(method)) throw new AssistanceError(400, "Moyen de paiement invalide.");
-    if (!deps.jeko?.isConfigured()) throw new AssistanceError(503, "Le paiement en ligne n'est pas encore activé. Réglez en espèces auprès du mécanicien.", "PAYMENT_NOT_CONFIGURED");
-    const recent = (await pool.query(`SELECT * FROM assistance_payments WHERE request_id=$1 AND status='en_attente' AND provider='jeko' AND created_at > $2 ORDER BY created_at DESC LIMIT 1`, [requestId, Date.now() - 10 * 60000])).rows[0];
-    if (recent && recent.method === method && recent.redirect_url) return { reference: recent.reference, redirectUrl: recent.redirect_url, paymentStatus: "en_attente" };
-    if (recent) throw new AssistanceError(409, "Un paiement est déjà en cours. Patientez quelques minutes avant de changer de moyen.");
-    const reference = `dgas-${requestId}-${crypto.randomBytes(4).toString("hex")}`;
-    const created = await deps.jeko.create({
-      reference, amountXof: r.amount_due, paymentMethod: method,
-      payerPhone: payerPhone ? normalizePhone(payerPhone) : undefined,
-      successUrl: `${origin}/?assistance=${encodeURIComponent(requestId)}&payment=return`,
-      errorUrl: `${origin}/?assistance=${encodeURIComponent(requestId)}&payment=return`,
-    });
-    const now = Date.now();
-    await tx(async (c) => {
-      await c.query(`UPDATE assistance_payments SET status='annule', updated_at=$2 WHERE request_id=$1 AND status='en_attente'`, [requestId, now]);
-      await c.query(
-        `INSERT INTO assistance_payments (reference, request_id, payer_phone, method, provider, amount, status, provider_ref, redirect_url, created_at, updated_at) VALUES ($1,$2,$3,$4,'jeko',$5,'en_attente',$6,$7,$8,$8)`,
-        [reference, requestId, clientPhone, method, r.amount_due, created.id || null, created.redirectUrl || null, now]
-      );
-      await c.query(`UPDATE assistance_requests SET payment_status='en_attente', updated_at=$2 WHERE id=$1 AND payment_status<>'paye'`, [requestId, now]);
-      await logEvent(c, requestId, clientPhone, "client", "paiement_initie", { meta: { reference, method, amount: r.amount_due } });
-    });
-    return { reference, redirectUrl: created.redirectUrl, paymentStatus: "en_attente" };
-  }
-
-  async function applyPaymentResult(reference: string, outcome: "paye" | "echoue", by: string) {
-    await tx(async (c) => {
-      const p = (await c.query("SELECT * FROM assistance_payments WHERE reference=$1 FOR UPDATE", [reference])).rows[0];
-      if (!p) return;
-      if (!["en_attente", "annule"].includes(p.status)) return; // déjà traité : pas de double traitement
-      const r = (await c.query("SELECT * FROM assistance_requests WHERE id=$1 FOR UPDATE", [p.request_id])).rows[0];
-      const now = Date.now();
-      if (outcome === "paye") {
-        const settings = await getSettings();
-        const commission = settings.commission_pct != null ? Math.round((p.amount * settings.commission_pct) / 100) : null;
-        await c.query(`UPDATE assistance_payments SET status='paye', commission_amount=$2, confirmed_by=$3, updated_at=$4 WHERE reference=$1`, [reference, commission, by, now]);
-        const dup = r.payment_status === "paye";
-        await c.query(`UPDATE assistance_requests SET payment_status='paye', updated_at=$2 WHERE id=$1`, [p.request_id, now]);
-        await logEvent(c, p.request_id, by, by === "jeko" ? "systeme" : "admin", dup ? "double_paiement_detecte" : "paiement_confirme", { meta: { reference, amount: p.amount } });
-      } else {
-        await c.query(`UPDATE assistance_payments SET status='echoue', updated_at=$2 WHERE reference=$1`, [reference, now]);
-        if (r.payment_status !== "paye") {
-          const other = (await c.query(`SELECT 1 FROM assistance_payments WHERE request_id=$1 AND reference<>$2 AND status IN ('en_attente','especes_a_confirmer')`, [p.request_id, reference])).rowCount;
-          if (!other) await c.query(`UPDATE assistance_requests SET payment_status='echoue', updated_at=$2 WHERE id=$1`, [p.request_id, now]);
-        }
-        await logEvent(c, p.request_id, by, "systeme", "paiement_echoue", { meta: { reference } });
-      }
-    });
-    const pay = (await pool.query("SELECT request_id, payer_phone FROM assistance_payments WHERE reference=$1", [reference])).rows[0];
-    if (pay && outcome === "paye") {
-      const r = (await pool.query("SELECT assigned_phone FROM assistance_requests WHERE id=$1", [pay.request_id])).rows[0];
-      if (r?.assigned_phone) await notify(r.assigned_phone, pay.request_id, "paiement_recu", "Paiement reçu", "Le client a réglé l'intervention.");
-      await notify(pay.payer_phone, pay.request_id, "paiement_confirme", "Paiement confirmé", "Merci, votre paiement est bien enregistré.");
-    }
-  }
-
-  // Appelé par le webhook Jèko (signature déjà vérifiée par jeko.routes). Contrôle montant et identifiants.
-  async function handleJekoWebhook(reference: string, status: string, body: any): Promise<boolean> {
-    const p = (await pool.query("SELECT * FROM assistance_payments WHERE reference=$1", [reference])).rows[0];
-    if (!p) return false;
-    if (p.provider !== "jeko") return true;
-    if (!["en_attente", "annule"].includes(p.status)) return true;
-    const webhookAmount = Number(body?.amount?.amount);
-    if (Number.isFinite(webhookAmount) && webhookAmount !== p.amount * 100) {
-      console.warn(`[ASSISTANCE][Webhook] Montant différent pour ${reference} : reçu=${webhookAmount}, attendu=${p.amount * 100}.`);
-      return true;
-    }
-    const jid = body?.transactionDetails?.id;
-    if (p.provider_ref && jid && String(jid) !== String(p.provider_ref)) {
-      console.warn(`[ASSISTANCE][Webhook] Identifiant Jèko différent pour ${reference}.`);
-      return true;
-    }
-    const s = status.toLowerCase();
-    if (s === "success" || s === "completed") await applyPaymentResult(reference, "paye", "jeko");
-    else await applyPaymentResult(reference, "echoue", "jeko");
-    return true;
-  }
-
-  async function reconcilePayment(reference: string) {
-    const p = (await pool.query("SELECT * FROM assistance_payments WHERE reference=$1", [reference])).rows[0];
-    if (!p || p.status !== "en_attente" || p.provider !== "jeko" || !p.provider_ref || !deps.jeko?.isConfigured()) return;
-    try {
-      const s = (await deps.jeko.fetchStatus(p.provider_ref)).toLowerCase();
-      if (s === "success" || s === "completed") await applyPaymentResult(reference, "paye", "jeko");
-      else if (s === "error" || s === "failed") await applyPaymentResult(reference, "echoue", "jeko");
-    } catch (e: any) {
-      console.error("[ASSISTANCE] Réconciliation Jèko impossible:", e.message);
-    }
-  }
-
-  async function declareCash(requestId: string, proPhone: string) {
-    await tx(async (c) => {
-      const r = (await c.query("SELECT * FROM assistance_requests WHERE id=$1 FOR UPDATE", [requestId])).rows[0];
-      if (!r || r.assigned_phone !== proPhone) throw new AssistanceError(404, "Mission introuvable.");
-      if (r.status !== "terminee") throw new AssistanceError(409, "Terminez l'intervention avant de déclarer un règlement.");
-      if (r.payment_status === "paye") throw new AssistanceError(409, "Cette intervention est déjà payée.");
-      const now = Date.now();
-      await c.query(`UPDATE assistance_payments SET status='annule', updated_at=$2 WHERE request_id=$1 AND status IN ('en_attente','especes_a_confirmer')`, [requestId, now]);
-      const ref = `dgas-${requestId}-cash-${crypto.randomBytes(3).toString("hex")}`;
-      await c.query(`INSERT INTO assistance_payments (reference, request_id, payer_phone, method, provider, amount, status, created_at, updated_at) VALUES ($1,$2,$3,'especes','especes',$4,'especes_a_confirmer',$5,$5)`, [ref, requestId, r.client_phone, r.amount_due, now]);
-      await c.query(`UPDATE assistance_requests SET payment_status='especes_a_confirmer', updated_at=$2 WHERE id=$1`, [requestId, now]);
-      await logEvent(c, requestId, proPhone, "pro", "especes_declarees", { meta: { amount: r.amount_due } });
-    });
-    const r = (await pool.query("SELECT client_phone FROM assistance_requests WHERE id=$1", [requestId])).rows[0];
-    await notify(r.client_phone, requestId, "especes_a_confirmer", "Confirmez votre paiement en espèces", "Le mécanicien indique avoir reçu des espèces. Confirmez dans l'application.", true);
-  }
-
-  async function confirmCash(requestId: string, reference: string, actor: string, role: "client" | "admin") {
-    const p = (await pool.query("SELECT * FROM assistance_payments WHERE reference=$1 AND request_id=$2", [reference, requestId])).rows[0];
-    if (!p || p.method !== "especes") throw new AssistanceError(404, "Paiement introuvable.");
-    if (role === "client" && p.payer_phone !== actor) throw new AssistanceError(404, "Paiement introuvable.");
-    if (p.status !== "especes_a_confirmer") throw new AssistanceError(409, "Ce règlement n'est plus à confirmer.");
-    await tx(async (c) => {
-      const settings = await getSettings();
-      const commission = settings.commission_pct != null ? Math.round((p.amount * settings.commission_pct) / 100) : null;
-      const locked = (await c.query("SELECT status FROM assistance_payments WHERE reference=$1 FOR UPDATE", [reference])).rows[0];
-      if (locked.status !== "especes_a_confirmer") throw new AssistanceError(409, "Ce règlement n'est plus à confirmer.");
-      const now = Date.now();
-      await c.query(`UPDATE assistance_payments SET status='paye', commission_amount=$2, confirmed_by=$3, updated_at=$4 WHERE reference=$1`, [reference, commission, actor, now]);
-      await c.query(`UPDATE assistance_requests SET payment_status='paye', updated_at=$2 WHERE id=$1`, [requestId, now]);
-      await logEvent(c, requestId, actor, role, "paiement_especes_confirme", { meta: { reference, amount: p.amount } });
-    });
-  }
-
   // ---------- Avis, réclamations ----------
   async function addReview(requestId: string, clientPhone: string, rating: number, comment: string) {
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new AssistanceError(400, "La note doit être entre 1 et 5.");
@@ -899,7 +823,7 @@ export function createAssistanceCore(deps: CoreDeps) {
   // ---------- Vues ----------
   const summary = (r: any, serviceLabel?: string) => ({
     id: r.id, status: r.status, statusLabel: STATUS_LABELS[r.status as RequestStatus], service: r.service, serviceLabel: serviceLabel || r.service,
-    vehicle: r.vehicle, symptoms: r.symptoms, quoteStatus: r.quote_status, paymentStatus: r.payment_status, amountDue: r.amount_due,
+    vehicle: r.vehicle, symptoms: r.symptoms, quoteStatus: r.quote_status, amountAgreed: r.amount_due,
     createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), manualRequested: r.manual_requested,
   });
 
@@ -930,10 +854,9 @@ export function createAssistanceCore(deps: CoreDeps) {
     const r = (await pool.query("SELECT * FROM assistance_requests WHERE id=$1 AND client_phone=$2", [id, phone])).rows[0];
     if (!r) throw new AssistanceError(404, "Demande introuvable.");
     const settings = await getSettings();
-    const [labels, quotes, pay, ev, media, review] = await Promise.all([
+    const [labels, quotes, ev, media, review] = await Promise.all([
       serviceLabels(),
       pool.query(`SELECT id, version, kind, lines, total, currency, status, note, created_at, decided_at FROM assistance_quotes WHERE request_id=$1 ORDER BY version`, [id]),
-      pool.query(`SELECT reference, method, amount, status, created_at, updated_at, redirect_url FROM assistance_payments WHERE request_id=$1 ORDER BY created_at DESC LIMIT 1`, [id]),
       pool.query(`SELECT at, type, to_status FROM assistance_events WHERE request_id=$1 ORDER BY at, id`, [id]),
       pool.query(`SELECT id, kind, mime, size FROM assistance_media WHERE request_id=$1 ORDER BY created_at`, [id]),
       pool.query(`SELECT rating, comment, created_at FROM assistance_reviews WHERE request_id=$1`, [id]),
@@ -970,11 +893,10 @@ export function createAssistanceCore(deps: CoreDeps) {
       request: {
         ...summary(r, labels[r.service]), faultCodes: r.fault_codes, description: r.description, contactPhone: r.contact_phone,
         position: { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source, confirmed: r.position_confirmed },
-        shareDiagnostic: r.share_diagnostic, diagnostic: r.diagnostic, proDiagnosis: r.pro_diagnosis, cancelReason: r.cancel_reason,
+        shareDiagnostic: r.share_diagnostic, diagnostic: r.diagnostic, aiAnalysis: r.ai_analysis, proDiagnosis: r.pro_diagnosis, cancelReason: r.cancel_reason,
       },
       pro,
       quotes: quotes.rows.map((q) => ({ id: q.id, version: q.version, kind: q.kind, lines: q.lines, total: q.total, currency: q.currency, status: q.status, note: q.note, createdAt: Number(q.created_at), decidedAt: q.decided_at ? Number(q.decided_at) : null })),
-      payment: pay.rows[0] ? { reference: pay.rows[0].reference, method: pay.rows[0].method, amount: pay.rows[0].amount, status: pay.rows[0].status, redirectUrl: pay.rows[0].status === "en_attente" ? pay.rows[0].redirect_url : null, updatedAt: Number(pay.rows[0].updated_at) } : null,
       timeline,
       media: media.rows,
       review: hasReview ? { rating: review.rows[0].rating, comment: review.rows[0].comment } : null,
@@ -982,7 +904,6 @@ export function createAssistanceCore(deps: CoreDeps) {
         cancel: CLIENT_CANCELLABLE.includes(r.status),
         retry: r.status === "sans_disponibilite",
         manual: ["recherche", "sans_disponibilite"].includes(r.status) && !r.manual_requested,
-        pay: r.status === "terminee" && r.amount_due > 0 && r.payment_status !== "paye",
         review: r.status === "terminee" && !hasReview,
         claim: !!r.assigned_phone,
         decideQuote: r.quote_status === "propose" && ACTIVE_MISSION_STATUSES.includes(r.status),
@@ -993,13 +914,15 @@ export function createAssistanceCore(deps: CoreDeps) {
   async function proOffers(phone: string) {
     const labels = await serviceLabels();
     const o = await pool.query(
-      `SELECT o.id, o.request_id, o.distance_km, o.expires_at, r.service, r.vehicle, r.symptoms, r.lat, r.lng
+      `SELECT o.id, o.request_id, o.distance_km, o.expires_at, r.service, r.vehicle, r.symptoms, r.ai_analysis, r.lat, r.lng
        FROM assistance_offers o JOIN assistance_requests r ON r.id=o.request_id
        WHERE o.pro_phone=$1 AND o.status='envoyee' AND o.expires_at>$2 AND r.status='recherche'`,
       [phone, Date.now()]
     );
+    const settings = await getSettings();
     return o.rows.map((x) => ({
       id: x.id, requestId: x.request_id, service: x.service, serviceLabel: labels[x.service] || x.service, vehicle: x.vehicle, symptoms: x.symptoms,
+      aiAnalysis: x.ai_analysis, indicativeAmount: settings.tariffs[x.service]?.indicatif ?? null,
       approxPosition: approxPosition(x.lat, x.lng), distanceKm: Math.round(x.distance_km * 10) / 10, expiresAt: Number(x.expires_at),
     }));
   }
@@ -1015,10 +938,9 @@ export function createAssistanceCore(deps: CoreDeps) {
   async function proMissionDetail(id: string, phone: string) {
     const r = (await pool.query("SELECT * FROM assistance_requests WHERE id=$1 AND assigned_phone=$2", [id, phone])).rows[0];
     if (!r) throw new AssistanceError(404, "Mission introuvable.");
-    const [labels, quotes, pay, media, msgs] = await Promise.all([
+    const [labels, quotes, media, msgs] = await Promise.all([
       serviceLabels(),
       pool.query(`SELECT id, version, kind, lines, total, currency, status, note, created_at, decided_at FROM assistance_quotes WHERE request_id=$1 ORDER BY version`, [id]),
-      pool.query(`SELECT reference, method, amount, status, updated_at FROM assistance_payments WHERE request_id=$1 ORDER BY created_at DESC LIMIT 1`, [id]),
       pool.query(`SELECT id, kind, mime, size FROM assistance_media WHERE request_id=$1 ORDER BY created_at`, [id]),
       listMessages(id),
     ]);
@@ -1031,10 +953,9 @@ export function createAssistanceCore(deps: CoreDeps) {
         position: open ? { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source } : null,
         clientPhone: open ? r.contact_phone : null,
         // Dossier IA transmis seulement avec le consentement du client.
-        diagnostic: r.share_diagnostic ? r.diagnostic : null, shareDiagnostic: r.share_diagnostic, proDiagnosis: r.pro_diagnosis,
+        diagnostic: r.share_diagnostic ? r.diagnostic : null, shareDiagnostic: r.share_diagnostic, aiAnalysis: r.ai_analysis, proDiagnosis: r.pro_diagnosis,
       },
       quotes: quotes.rows.map((q) => ({ id: q.id, version: q.version, kind: q.kind, lines: q.lines, total: q.total, status: q.status, note: q.note, createdAt: Number(q.created_at), decidedAt: q.decided_at ? Number(q.decided_at) : null })),
-      payment: pay.rows[0] ? { reference: pay.rows[0].reference, method: pay.rows[0].method, amount: pay.rows[0].amount, status: pay.rows[0].status } : null,
       media: open ? media.rows : [],
       messages: msgs,
       tariffs: s.tariffs[r.service] || {},
@@ -1042,7 +963,7 @@ export function createAssistanceCore(deps: CoreDeps) {
         enRoute: r.status === "affectee", surPlace: r.status === "en_route", enIntervention: r.status === "sur_place" && r.quote_status === "accepte",
         terminer: r.status === "en_intervention" && r.quote_status !== "propose",
         quote: ["sur_place", "en_intervention"].includes(r.status) && r.quote_status !== "propose",
-        cashReceived: r.status === "terminee" && r.payment_status !== "paye", release: ["affectee", "en_route", "sur_place"].includes(r.status),
+        release: ["affectee", "en_route", "sur_place"].includes(r.status),
       },
     };
   }
@@ -1063,7 +984,7 @@ export function createAssistanceCore(deps: CoreDeps) {
       pool.query(`SELECT COUNT(*) FILTER (WHERE status<>'brouillon')::int received, COUNT(*) FILTER (WHERE assigned_at IS NOT NULL)::int accepted, COUNT(*) FILTER (WHERE status='terminee')::int completed, COUNT(*) FILTER (WHERE status='annulee')::int cancelled, COUNT(*) FILTER (WHERE status='sans_disponibilite')::int unavailable, COUNT(*) FILTER (WHERE manual_requested AND status IN ('recherche','sans_disponibilite'))::int manual FROM assistance_requests`),
       pool.query(`SELECT status, COUNT(*)::int n FROM assistance_requests GROUP BY status`),
       pool.query(`SELECT AVG(r.assigned_at - e.at)::float accept_ms FROM assistance_requests r JOIN LATERAL (SELECT at FROM assistance_events WHERE request_id=r.id AND type='envoi' ORDER BY at LIMIT 1) e ON true WHERE r.assigned_at IS NOT NULL`),
-      pool.query(`SELECT COALESCE(SUM(amount) FILTER (WHERE status='paye'),0)::bigint paid, COALESCE(SUM(amount) FILTER (WHERE status IN ('en_attente','especes_a_confirmer')),0)::bigint pending, COALESCE(SUM(commission_amount) FILTER (WHERE status='paye'),0)::bigint commission, COUNT(*) FILTER (WHERE status='paye')::int paid_count FROM assistance_payments`),
+      pool.query(`SELECT COALESCE(SUM(amount_due) FILTER (WHERE status='terminee'),0)::bigint agreed, COUNT(*) FILTER (WHERE status='terminee' AND amount_due>0)::int done_with_amount FROM assistance_requests`),
       pool.query(`SELECT validation_status, COUNT(*)::int n, COUNT(*) FILTER (WHERE available)::int available FROM assistance_pros GROUP BY validation_status`),
       pool.query(`SELECT COUNT(*) FILTER (WHERE status='ouverte')::int open FROM assistance_claims`),
     ]);
@@ -1071,7 +992,7 @@ export function createAssistanceCore(deps: CoreDeps) {
     return {
       requests: req.rows[0], byStatus: st.rows, avgAcceptMs: times.rows[0].accept_ms ? Math.round(times.rows[0].accept_ms) : null,
       avgArrivalMs: arrival.rows[0].ms ? Math.round(arrival.rows[0].ms) : null,
-      payments: { paid: Number(money.rows[0].paid), pending: Number(money.rows[0].pending), commission: Number(money.rows[0].commission), paidCount: money.rows[0].paid_count },
+      amounts: { agreedTotal: Number(money.rows[0].agreed), missionsWithAmount: money.rows[0].done_with_amount },
       pros: pros.rows, openClaims: claims.rows[0].open,
     };
   }
@@ -1079,8 +1000,8 @@ export function createAssistanceCore(deps: CoreDeps) {
   return {
     pool, tx, init, getSettings, saveSettings, logEvent, notify, resolveZone, servicesStatus, syncDirectory, proProfile, upsertProProfile,
     setPresence, updateLocation, clearLocationIfIdle, createRequest, updateDraft, getRequestRow, submitRequest, cancelRequest, retryRequest,
-    requestManual, dispatch, dispatchTick, startWorker, stopWorker, acceptOffer, declineOffer, adminAssign, redispatch, proProgress,
-    setProDiagnosis, proposeQuote, decideQuote, startPayment, handleJekoWebhook, reconcilePayment, declareCash, confirmCash, applyPaymentResult,
+    requestManual, dispatch, dispatchTick, analyzeRequest, startWorker, stopWorker, acceptOffer, declineOffer, adminAssign, redispatch, proProgress,
+    setProDiagnosis, proposeQuote, decideQuote,
     addReview, addClaim, addMessage, listMessages, storeMedia, listForClient, clientDetail, proOffers, proMissionList, proMissionDetail,
     accessMedia, adminDashboard, serviceLabels, summary,
   };

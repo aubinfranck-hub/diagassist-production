@@ -12,7 +12,7 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { XMLParser } from "fast-xml-parser";
 import { registerScreening } from "./src/modules/screening/screening.routes";
-import { registerJekoPayments, jekoIsConfigured, createJekoRedirectPayment, fetchJekoPaymentStatus } from "./src/modules/payments/jeko.routes";
+import { registerJekoPayments } from "./src/modules/payments/jeko.routes";
 import { registerAssistance, initAssistance } from "./src/modules/assistance/assistance.routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
@@ -5303,8 +5303,8 @@ Directives pour ce tour :
 
   // Paiements d'abonnement automatisés (Orange/Wave/MTN/Moov via Jèko) : à la confirmation par
   // webhook, active le forfait exactement comme le fait l'admin manuellement aujourd'hui.
-  // Assistance automobile : demandes géolocalisées acceptées par un mécanicien validé. Enregistré avant
-  // Jèko car le webhook de paiement lui délègue les références "dgas-…".
+  // Assistance automobile : demande envoyée à plusieurs mécaniciens validés et à jour de leur abonnement ;
+  // le premier qui accepte prend la mission. Aucun paiement client via la plateforme.
   const assistance = registerAssistance({
     app,
     pool: dbPool,
@@ -5314,14 +5314,26 @@ Directives pour ce tour :
     isAdminPhone: (phone: string) => !!userAccounts.get(phone)?.isAdmin,
     getDirectory: () => Array.from(mechanics.values()),
     sendWhatsApp: (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) ? sendShopWhatsApp : undefined,
-    jeko: { isConfigured: jekoIsConfigured, create: createJekoRedirectPayment, fetchStatus: fetchJekoPaymentStatus },
+    // Droit d'accès : seuls les mécaniciens à jour de leur abonnement reçoivent des assistances.
+    isProSubscribed: (phone: string) => {
+      if (!userAccounts.has(phone)) return false;
+      return userAccounts.get(phone)?.isAdmin === true || ["payg_active", "lite", "premium"].includes(getEffectivePlan(phone));
+    },
+    analyze: async ({ service, vehicle, symptoms, faultCodes, media }) => {
+      if (getGeminiKeys().length === 0) return null;
+      const parts: any[] = [{
+        text: `Tu es DiagAssist, assistant des mécaniciens professionnels (Abidjan, Côte d'Ivoire). Un automobiliste en panne demande une assistance (${service}). Véhicule : ${[vehicle?.brand, vehicle?.model, vehicle?.year, vehicle?.engine].filter(Boolean).join(" ") || "non précisé"}. Symptômes : ${symptoms || "non précisés"}. Codes défaut : ${faultCodes || "aucun"}. Analyse le texte et les médias joints. Réponds en 3 phrases maximum, sans markdown, vocabulaire de garage : pistes probables de panne puis premières vérifications à faire sur place. Ce sont des pistes à vérifier, pas un diagnostic certain. Si une pièce est probablement défectueuse, termine par : Pour des pièces garanties, contactez-nous au 0707312797.`,
+      }];
+      for (const m of media.slice(0, 4)) parts.push({ inlineData: { mimeType: m.mime, data: m.data.toString("base64") } });
+      const r = await getAIClient().models.generateContent({ model: "gemini-flash-latest", contents: [{ role: "user", parts }] });
+      return r.text?.trim() || null;
+    },
     getOrigin: (req) => process.env.APP_URL || `https://${req.headers.host}`,
   });
   assistanceSync = assistance.syncDirectory;
   await initAssistance(assistance).catch((err: any) => console.error("[ASSISTANCE] Initialisation échouée:", err.message));
 
   registerJekoPayments(app, {
-    onExternalWebhook: assistance.onExternalWebhook,
     requireAuth,
     requireAdminAuth,
     setUserPlan,

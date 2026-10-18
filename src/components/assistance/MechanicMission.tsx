@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Banknote, Loader2, MapPin, MessageCircle, Navigation, Phone, Plus, Wrench } from "lucide-react";
+import { Loader2, MapPin, MessageCircle, Navigation, Phone, Plus, Wrench } from "lucide-react";
 import {
-  api, faultCodesList, formatXOF, LINE_LABEL, LINE_ORDER, mapsDirections, mediaUrl, PAYMENT_LABEL, Quote, QuoteLine,
+  api, faultCodesList, formatXOF, LINE_LABEL, LINE_ORDER, mapsDirections, indicativeText, MSG_AI_TITLE, mediaUrl, Quote, QuoteLine,
   quoteTotal, telHref, vehicleLabel, whatsappHref,
 } from "./api";
 import { TrackMap } from "./AssistanceMaps";
@@ -25,8 +25,7 @@ export interface ProMission {
   quotes: Quote[];
   quoteStatus?: string;
   media: { id: string; mime?: string }[];
-  payment?: { status?: string; amount?: number } | null;
-  paymentStatus?: string;
+  aiAnalysis?: string | null;
   createdAt?: number;
   total?: number | null;
   amount?: number | null;
@@ -40,8 +39,6 @@ export function normalizeMission(raw: any): ProMission {
   const out = { ...r, ...m } as ProMission;
   out.quotes = raw?.quotes ?? m.quotes ?? [];
   out.media = raw?.media ?? m.media ?? [];
-  out.payment = raw?.payment ?? m.payment ?? null;
-  out.paymentStatus = (out.payment?.status as string) ?? (m.paymentStatus as string) ?? (r.paymentStatus as string) ?? "aucun";
   out.diagnostic = raw?.diagnostic ?? m.diagnostic ?? r.diagnostic ?? null;
   return out;
 }
@@ -62,7 +59,7 @@ export default function MechanicMission({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [diag, setDiag] = useState(mission.diagnosisText || "");
-  const [tariffs, setTariffs] = useState<Record<string, { deplacement?: number; diagnostic?: number }>>({});
+  const [tariffs, setTariffs] = useState<Record<string, { deplacement?: number; diagnostic?: number; indicatif?: number }>>({});
   const reqId = (mission.requestId as string) || mission.id;
   const st = mission.status;
   const pending = mission.quotes.some((q) => q.status === "propose") || mission.quoteStatus === "propose";
@@ -84,7 +81,6 @@ export default function MechanicMission({
   const clientPhone = (mission.clientPhone ?? mission.contactPhone) as string | undefined;
   const hasInitial = mission.quotes.some((q) => q.kind === "initial" && q.status !== "refuse");
   const canQuote = (st === "sur_place" || st === "en_intervention") && !pending;
-  const canCash = ["sur_place", "en_intervention", "terminee"].includes(st) && ["aucun", "en_attente", "echoue"].includes(mission.paymentStatus || "aucun");
   const live = !["terminee", "annulee"].includes(st);
 
   return (
@@ -102,6 +98,14 @@ export default function MechanicMission({
           {mission.description && <div><span className="text-slate-500">Détails :</span> {mission.description}</div>}
           {faultCodesList(mission.faultCodes).length > 0 && <div><span className="text-slate-500">Codes défaut :</span> {faultCodesList(mission.faultCodes).join(", ")}</div>}
         </div>
+
+        <div className="text-sm font-bold text-amber-300">{indicativeText(tariffs[mission.service || ""]?.indicatif)}</div>
+        {mission.aiAnalysis && (
+          <div className="rounded-xl bg-slate-950/60 border border-white/[0.06] p-3">
+            <div className="text-[11px] font-black uppercase tracking-wider text-slate-400">{MSG_AI_TITLE}</div>
+            <p className="text-sm text-slate-300 whitespace-pre-line mt-1">{mission.aiAnalysis}</p>
+          </div>
+        )}
 
         {/* Étapes de la mission */}
         <div className="space-y-2 pt-1">
@@ -218,20 +222,7 @@ export default function MechanicMission({
       )}
       {(st === "sur_place" || st === "en_intervention") && pending && <Notice tone="warn">Devis envoyé : en attente de la réponse du client.</Notice>}
 
-      {/* Paiement */}
-      {(mission.paymentStatus && mission.paymentStatus !== "aucun") || canCash ? (
-        <Card className="space-y-3">
-          <h3 className="text-base font-black text-white">Paiement</h3>
-          <div className="text-sm text-slate-300">Statut : <strong>{PAYMENT_LABEL[mission.paymentStatus || "aucun"]}</strong></div>
-          {canCash && (
-            <button className={btnGreen} disabled={!!busy} onClick={() => {
-              if (window.confirm("Confirmez-vous avoir reçu les espèces du client ?")) void run("cash", () => api(`/pro/missions/${mission.id}/cash-received`, { body: {} }), "Espèces déclarées. Le client doit aussi confirmer.");
-            }}>
-              <Banknote className="w-5 h-5" /> Espèces reçues
-            </button>
-          )}
-        </Card>
-      ) : null}
+      {st === "terminee" && <Notice tone="info">Mission terminée. Le montant convenu se règle directement avec le client, hors plateforme.</Notice>}
 
       <ChatPanel requestId={reqId} me="pro" disabled={st === "annulee"} />
     </div>
@@ -242,14 +233,14 @@ function QuoteBuilder({
   kind, defaults, busy, onSend,
 }: {
   kind: "initial" | "supplementaire";
-  defaults: { deplacement?: number; diagnostic?: number };
+  defaults: { deplacement?: number; diagnostic?: number; indicatif?: number };
   busy: boolean;
   onSend: (lines: QuoteLine[], note: string, kind: "initial" | "supplementaire") => void;
 }) {
   const [amounts, setAmounts] = useState<Record<string, string>>({
     deplacement: defaults.deplacement ? String(defaults.deplacement) : "",
     diagnostic: defaults.diagnostic ? String(defaults.diagnostic) : "",
-    main_oeuvre: "", pieces: "",
+    main_oeuvre: defaults.indicatif ? String(defaults.indicatif) : "", pieces: "",
   });
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
@@ -261,8 +252,9 @@ function QuoteBuilder({
       ...a,
       deplacement: a.deplacement || (defaults.deplacement ? String(defaults.deplacement) : ""),
       diagnostic: a.diagnostic || (defaults.diagnostic ? String(defaults.diagnostic) : ""),
+      main_oeuvre: a.main_oeuvre || (defaults.indicatif ? String(defaults.indicatif) : ""),
     }));
-  }, [defaults.deplacement, defaults.diagnostic]);
+  }, [defaults.deplacement, defaults.diagnostic, defaults.indicatif]);
 
   const lines: QuoteLine[] = LINE_ORDER
     .map((k) => ({ kind: k, label: labels[k]?.trim() || undefined, amount: Math.round(Number(amounts[k]) || 0) }))

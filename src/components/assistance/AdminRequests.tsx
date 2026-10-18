@@ -91,7 +91,6 @@ function RequestDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const offers: any[] = data.offers || r.offers || [];
   const messages: any[] = data.messages || r.messages || [];
   const quotes: any[] = data.quotes || r.quotes || [];
-  const payment = data.payment ?? r.payment ?? null;
   const media: any[] = data.media || r.media || [];
   const pos = r.position || data.position || null;
   const closed = ["terminee", "annulee"].includes(r.status);
@@ -119,7 +118,8 @@ function RequestDetail({ id, onBack }: { id: string; onBack: () => void }) {
           {r.faultCodes && <p className="sm:col-span-2">Codes défaut : {Array.isArray(r.faultCodes) ? r.faultCodes.join(", ") : String(r.faultCodes)}</p>}
           {r.description && <p className="sm:col-span-2">Description : {r.description}</p>}
           <p>Statut devis : {statusLabel(r.quoteStatus)}</p>
-          <p>Statut paiement : {statusLabel(r.paymentStatus)}</p>
+          <p>Montant convenu (hors plateforme) : {r.amountAgreed ? fmtXof(r.amountAgreed) : "—"}</p>
+          {r.aiAnalysis && <p className="sm:col-span-2">Analyse DiagAssist — pistes à vérifier : <span className="text-slate-400 whitespace-pre-line">{String(r.aiAnalysis)}</span></p>}
         </div>
         {pos && (
           <p className="text-xs text-slate-300">
@@ -144,10 +144,10 @@ function RequestDetail({ id, onBack }: { id: string; onBack: () => void }) {
       {assignOpen && (
         <div className={cardCls}>
           <Field label="Professionnel validé">
-            {pros.loading ? <Loading /> : pros.error ? <ErrorBox message={pros.error} onRetry={pros.reload} /> : (pros.data?.pros || []).length === 0 ? <Empty text="Aucun professionnel validé." /> : (
+            {pros.loading ? <Loading /> : pros.error ? <ErrorBox message={pros.error} onRetry={pros.reload} /> : (pros.data?.pros || []).filter((p: any) => p.subscribed !== false).length === 0 ? <Empty text="Aucun professionnel validé et à jour de son abonnement." /> : (
               <select className={inputCls} value={proPhone} onChange={(e) => setProPhone(e.target.value)}>
                 <option value="">Choisir…</option>
-                {(pros.data?.pros || []).map((p: any) => <option key={p.phone} value={p.phone}>{p.displayName || p.garageName || p.phone} — {p.phone}{p.available === false ? " (indisponible)" : ""}</option>)}
+                {(pros.data?.pros || []).filter((p: any) => p.subscribed !== false).map((p: any) => <option key={p.phone} value={p.phone}>{p.displayName || p.garageName || p.phone} — {p.phone}{p.available === false ? " (indisponible)" : ""}</option>)}
               </select>
             )}
           </Field>
@@ -209,12 +209,6 @@ function RequestDetail({ id, onBack }: { id: string; onBack: () => void }) {
             {(q.decidedAt || q.decision) && <p className="pl-3 text-slate-400">Décision : {q.decision || q.status} le {fmtDate(q.decidedAt)}{q.decidedBy ? ` par ${q.decidedBy}` : ""}</p>}
           </div>
         ))}
-      </Section>
-
-      <Section title="Paiement">
-        {!payment ? <Empty text="Aucun paiement." /> : (
-          <p className="text-xs text-slate-300"><Badge status={payment.status || r.paymentStatus} /> · {payment.method || "—"} · {fmtXof(payment.amount)} · Réf. <span className="font-mono">{payment.reference || "—"}</span></p>
-        )}
       </Section>
 
       <Section title="Médias">

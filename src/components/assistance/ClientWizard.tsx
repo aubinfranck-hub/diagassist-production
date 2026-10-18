@@ -4,7 +4,7 @@ import {
   LocateFixed, MapPin, Camera, Video, Mic, X, ChevronDown, ChevronLeft, Check, Search, Loader2, ShieldCheck,
 } from "lucide-react";
 import {
-  api, authToken, AssistanceStatus, compressImage, knownPhone, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
+  api, authToken, AssistanceStatus, compressImage, formatXOF, indicativeText, knownPhone, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
 } from "./api";
 import { LocationPicker, LatLng } from "./AssistanceMaps";
 import { btnPrimary, btnSecondary, Card, errText, inputCls, Label, Notice } from "./ui";
@@ -275,6 +275,12 @@ export default function ClientWizard({
                     <span className="block text-xs text-slate-400 mt-0.5 leading-snug">
                       {ok ? t.hint : "Bientôt disponible dans votre zone"}
                     </span>
+                    {ok && (() => {
+                      const code = t.service || "";
+                      const info = code ? status.services.find((x) => x.code === code) : null;
+                      if (!code) return null;
+                      return <span className="block text-[11px] text-amber-300/90 mt-1 leading-snug">{typeof info?.indicativeAmount === "number" && info.indicativeAmount > 0 ? `Indicatif : ${formatXOF(info.indicativeAmount)}` : "Montant à convenir"}</span>;
+                    })()}
                   </span>
                 </button>
               );
@@ -446,7 +452,7 @@ export default function ClientWizard({
         <>
           <div>
             <h2 className="text-2xl font-black text-white">Vérifiez et envoyez</h2>
-            <p className="text-sm text-slate-400 mt-1">Un mécanicien proche de vous va recevoir votre demande.</p>
+            <p className="text-sm text-slate-400 mt-1">Nous contactons les mécaniciens près de vous : le premier qui accepte prend votre demande.</p>
           </div>
 
           <Card className="space-y-3 text-sm">
@@ -457,6 +463,7 @@ export default function ClientWizard({
             <Row k="Position" v={address.trim() || (source === "gps" ? "Position GPS confirmée" : "Point confirmé sur la carte")} />
             {landmark.trim() && <Row k="Repère" v={landmark} />}
             <Row k="Téléphone" v={phone} />
+            <Row k="Montant" v={indicativeText(serviceInfo?.indicativeAmount)} />
             {attachments.length > 0 && <Row k="Pièces jointes" v={`${attachments.length} fichier${attachments.length > 1 ? "s" : ""}`} />}
           </Card>
 
@@ -470,9 +477,11 @@ export default function ClientWizard({
             </label>
           )}
 
+          <Notice tone="info">DiagAssist analysera votre description et vos photos pour aider le mécanicien.</Notice>
+
           <Notice tone="info">
             <span className="inline-flex items-start gap-2"><ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" />
-              Aucun paiement maintenant. Le mécanicien vous propose un devis, vous l'acceptez ou le refusez avant tout travail.</span>
+              Aucun paiement via DiagAssist. Le mécanicien vous propose un devis, vous l'acceptez ou le refusez avant tout travail ; le montant convenu se règle directement avec lui.</span>
           </Notice>
 
           {error && <Notice tone="error">{error}</Notice>}
