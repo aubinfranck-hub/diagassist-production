@@ -107,13 +107,13 @@ CREATE TABLE IF NOT EXISTS assistance_offers (
   id SERIAL PRIMARY KEY,
   request_id TEXT NOT NULL REFERENCES assistance_requests(id) ON DELETE CASCADE,
   pro_phone TEXT NOT NULL REFERENCES assistance_pros(phone),
-  status TEXT NOT NULL DEFAULT 'envoyee' CHECK (status IN ('envoyee','acceptee','refusee','expiree','annulee')),
+  status TEXT NOT NULL DEFAULT 'envoyee' CHECK (status IN ('envoyee','offre_faite','acceptee','refusee','expiree','annulee')),
   distance_km DOUBLE PRECISION,
   sent_at BIGINT NOT NULL,
   expires_at BIGINT NOT NULL,
   responded_at BIGINT
 );
--- Envoi simultané à plusieurs mécaniciens : plusieurs propositions ouvertes par demande ; le premier à accepter l'emporte.
+-- Envoi simultané à plusieurs mécaniciens : plusieurs propositions ouvertes par demande ; chacun fait une offre de prix, le client choisit.
 DROP INDEX IF EXISTS idx_assistance_offers_open;
 CREATE INDEX IF NOT EXISTS idx_assistance_offers_req ON assistance_offers (request_id, status);
 CREATE INDEX IF NOT EXISTS idx_assistance_offers_pro ON assistance_offers (pro_phone, status);
@@ -248,4 +248,17 @@ ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS payout_status TEXT CHEC
 ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS payout_at BIGINT;
 ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS payout_by TEXT;
 CREATE INDEX IF NOT EXISTS idx_assistance_payments_pro ON assistance_payments (pro_phone, status);
+-- Offres de prix des mécaniciens (statut d'offre 'offre_faite' = offre envoyée, en attente du choix du client).
+ALTER TABLE assistance_offers ADD COLUMN IF NOT EXISTS bid_amount INTEGER;
+ALTER TABLE assistance_offers ADD COLUMN IF NOT EXISTS bid_eta_min INTEGER;
+ALTER TABLE assistance_offers ADD COLUMN IF NOT EXISTS bid_at BIGINT;
+ALTER TABLE assistance_offers ADD COLUMN IF NOT EXISTS bid_expires_at BIGINT;
+ALTER TABLE assistance_offers ADD COLUMN IF NOT EXISTS bid_revised BOOLEAN NOT NULL DEFAULT false;
+-- Contrainte de statut élargie sur les bases existantes (idempotent : ne touche à la contrainte que si 'offre_faite' manque).
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='assistance_offers'::regclass AND conname='assistance_offers_status_check' AND pg_get_constraintdef(oid) LIKE '%offre_faite%') THEN
+    ALTER TABLE assistance_offers DROP CONSTRAINT IF EXISTS assistance_offers_status_check;
+    ALTER TABLE assistance_offers ADD CONSTRAINT assistance_offers_status_check CHECK (status IN ('envoyee','offre_faite','acceptee','refusee','expiree','annulee'));
+  END IF;
+END $$;
 `;

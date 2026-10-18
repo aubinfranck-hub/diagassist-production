@@ -159,3 +159,12 @@ export function normalizePhone(p: string): string {
 export function clean(s: unknown, max: number): string {
   return String(s ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").trim().slice(0, max);
 }
+
+// Fourchette de prix acceptée pour une offre de mécanicien. Réglage `tariffs[service].min/.max` ; à défaut,
+// 50 % / 150 % du tarif affiché (`indicatif`) arrondis ; sans aucun réglage : 1..500 000 F CFA.
+export function bidRange(t?: { min?: number; max?: number; indicatif?: number } | null): { min: number; max: number } {
+  const ind = t?.indicatif && t.indicatif > 0 ? t.indicatif : null;
+  const min = Math.max(1, Math.round(t?.min ?? (ind ? ind * 0.5 : 1)));
+  const max = Math.round(t?.max ?? (ind ? ind * 1.5 : 500000));
+  return { min, max };
+}

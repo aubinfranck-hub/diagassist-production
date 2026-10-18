@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence } from "motion/react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText,
@@ -108,6 +108,8 @@ interface AdminLogEntry {
 export default function App() {
   // Splash screen state
   const [showSplash, setShowSplash] = useState(true);
+  // Callback stable : sinon SplashScreen réarme son minuteur à chaque rendu d'App et ne se ferme jamais.
+  const hideSplash = useCallback(() => setShowSplash(false), []);
   // Page d'accueil publique (vitrine) affichée avant l'écran de connexion — pour le référencement
   // et la présentation du produit aux visiteurs qui n'ont pas encore de compte.
   const [showLandingPage, setShowLandingPage] = useState(true);
@@ -743,7 +745,7 @@ export default function App() {
     <>
       <AnimatePresence>
         {showSplash && (
-          <SplashScreen onComplete={() => setShowSplash(false)} />
+          <SplashScreen onComplete={hideSplash} />
         )}
       </AnimatePresence>
 

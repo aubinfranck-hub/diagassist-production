@@ -44,7 +44,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     }
   };
 
-  // Sans base PostgreSQL, l'acceptation atomique est impossible : état explicite plutôt qu'un faux service.
+  // Sans base PostgreSQL, le choix atomique de l'offre est impossible : état explicite plutôt qu'un faux service.
   const needDb = (req: any, res: Response, next: NextFunction) => {
     if (!core) return res.status(503).json({ success: false, code: "ASSISTANCE_DB_MISSING", message: "L'assistance automobile est indisponible : la base de données n'est pas configurée sur ce serveur." });
     next();
@@ -137,6 +137,11 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
   }));
   app.post("/api/assistance/requests/:id/leaving", ...auth, writeLimiter, wrap(async (req, res) => {
     await core!.clientLeaving(String(req.params.id), phoneOf(req));
+    res.json({ success: true, ...(await core!.clientDetail(String(req.params.id), phoneOf(req))) });
+  }));
+  // Le client valide l'offre de son choix (atomique) : le mécanicien est affecté, les autres offres sont annulées.
+  app.post("/api/assistance/requests/:id/bids/:offerId/select", ...auth, writeLimiter, wrap(async (req, res) => {
+    await core!.selectBid(String(req.params.id), Number(req.params.offerId), phoneOf(req));
     res.json({ success: true, ...(await core!.clientDetail(String(req.params.id), phoneOf(req))) });
   }));
   app.post("/api/assistance/requests/:id/retry", ...auth, writeLimiter, wrap(async (req, res) => {
@@ -291,9 +296,10 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
   app.get("/api/assistance/pro/offers", ...auth, requireValidatedPro, wrap(async (req, res) => {
     res.json({ success: true, offers: await core!.proOffers(phoneOf(req)) });
   }));
-  app.post("/api/assistance/pro/offers/:id/accept", ...auth, requireValidatedPro, writeLimiter, wrap(async (req, res) => {
-    const requestId = await core!.acceptOffer(Number(req.params.id), phoneOf(req));
-    res.json({ success: true, mission: await core!.proMissionDetail(requestId, phoneOf(req)) });
+  // Offre de prix (ou révision) : le client compare et choisit. Remplace l'ancien « accept » (premier arrivé).
+  app.post("/api/assistance/pro/offers/:id/bid", ...auth, requireValidatedPro, writeLimiter, wrap(async (req, res) => {
+    const id = await core!.bidOffer(Number(req.params.id), phoneOf(req), req.body || {});
+    res.json({ success: true, offer: (await core!.proOffers(phoneOf(req))).find((o: any) => o.id === id) || null });
   }));
   app.post("/api/assistance/pro/offers/:id/decline", ...auth, requireValidatedPro, writeLimiter, wrap(async (req, res) => {
     await core!.declineOffer(Number(req.params.id), phoneOf(req));
@@ -419,7 +425,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     if (!r.rowCount) return res.status(404).json({ success: false, message: "Professionnel introuvable." });
     console.log(`[ASSISTANCE] Professionnel ${phone} → ${status} par ${adminActor(req)}`);
     if (status !== "valide") {
-      await core!.pool.query("UPDATE assistance_offers SET status='annulee', responded_at=$2 WHERE pro_phone=$1 AND status='envoyee'", [phone, Date.now()]);
+      await core!.pool.query("UPDATE assistance_offers SET status='annulee', responded_at=$2 WHERE pro_phone=$1 AND status IN ('envoyee','offre_faite')", [phone, Date.now()]);
       // Les missions encore à venir d'un professionnel suspendu repartent en recherche.
       const active = await core!.pool.query("SELECT id FROM assistance_requests WHERE assigned_phone=$1 AND status IN ('affectee','en_route','sur_place')", [phone]);
       for (const m of active.rows) await core!.redispatch(m.id, adminActor(req), "admin", `professionnel ${status}`).catch((e: any) => console.error("[ASSISTANCE]", e.message));

@@ -296,7 +296,7 @@ export function MapScreen({
         </button>
       )}
       {topRight && <div className="absolute top-3 right-3 z-10">{topRight}</div>}
-      <div ref={sheet} className="absolute inset-x-0 bottom-0 z-10 flex flex-col max-h-[78%] bg-slate-900/[0.97] backdrop-blur-md border-t border-white/[0.1] rounded-t-3xl shadow-[0_-12px_40px_rgba(0,0,0,0.5)]">
+      <div ref={sheet} className="absolute inset-x-0 bottom-0 z-10 flex flex-col max-h-[78%] bg-slate-900/95 backdrop-blur-md border-t border-white/[0.1] rounded-t-3xl shadow-[0_-12px_40px_rgba(0,0,0,0.5)]">
         <div className="pt-2.5 pb-1 flex justify-center shrink-0"><span className="w-10 h-1.5 rounded-full bg-slate-700" /></div>
         <div className="overflow-y-auto px-5 pb-4 pt-1 space-y-4 min-h-0">{children}</div>
         {footer && <div className="shrink-0 px-5 pb-5 pt-3 border-t border-white/[0.06] space-y-2">{footer}</div>}
