@@ -367,7 +367,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     const q = (sql: string) => core!.pool.query(sql, [id]).then((x) => x.rows);
     const [events, offers, quotes, payments, media, claims, review, labels] = await Promise.all([
       q("SELECT id, at, actor, actor_role, type, from_status, to_status, reason, meta FROM assistance_events WHERE request_id=$1 ORDER BY at, id"),
-      q("SELECT id, pro_phone, status, distance_km, sent_at, expires_at, responded_at FROM assistance_offers WHERE request_id=$1 ORDER BY id"),
+      q("SELECT id, pro_phone, status, distance_km, sent_at, expires_at, responded_at, bid_amount AS amount, bid_eta_min AS \"etaMinutes\" FROM assistance_offers WHERE request_id=$1 ORDER BY id"),
       q("SELECT id, version, kind, lines, total, status, note, created_by, created_at, decided_at, decided_by FROM assistance_quotes WHERE request_id=$1 ORDER BY version"),
       q("SELECT reference, method, provider, amount, commission_pct, commission_amount, pro_amount, status, payout_status, payout_at, payout_by, confirmed_by, created_at, updated_at FROM assistance_payments WHERE request_id=$1 ORDER BY created_at"),
       q("SELECT id, kind, mime, size FROM assistance_media WHERE request_id=$1 ORDER BY created_at"),
