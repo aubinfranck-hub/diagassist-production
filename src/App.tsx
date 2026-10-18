@@ -222,6 +222,10 @@ export default function App() {
 
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening" | "assistance" | "depannage">(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.get("assistance") && q.get("payment") === "return") return "assistance"; // retour de paiement Jèko
+    } catch { /* ignoré */ }
     return readUserMode() === "driver" ? "assistance" : "diagnose";
   });
   // Assistance automobile : pré-remplissage depuis un diagnostic IA (jamais transmis sans consentement)
