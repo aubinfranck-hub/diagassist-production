@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronRight, LifeBuoy, MapPin, WifiOff, Wrench } from "lucide-react";
+import { AlertTriangle, ChevronRight, LifeBuoy, LocateFixed, MapPin, WifiOff, Wrench } from "lucide-react";
 import {
   api, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, RequestSummary,
   STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
 import ClientWizard, { AssistancePrefill } from "./ClientWizard";
 import ClientTracking from "./ClientTracking";
-import { LocationPicker, LatLng } from "./AssistanceMaps";
-import { btnPrimary, btnSecondary, Card, errText, Notice, Spinner, StateBox } from "./ui";
+import { LatLng, MapScreen, useAddress } from "./AssistanceMaps";
+import { btnPrimary, btnSecondary, errText, Notice, Spinner, StateBox } from "./ui";
 
 export type { AssistancePrefill } from "./ClientWizard";
 
@@ -51,7 +51,8 @@ export default function ClientAssistance({
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
     );
   }, []);
-  useEffect(() => { if (driverMode) locate(); }, [driverMode, locate]);
+  useEffect(() => { locate(); }, [locate]);
+  const homeAddr = useAddress(homePos);
 
   // Une nouvelle pré-remplissage (depuis un diagnostic) ouvre toujours le parcours.
   useEffect(() => {
@@ -103,6 +104,7 @@ export default function ClientAssistance({
           status={status}
           prefill={wizardPrefill}
           initialPos={homePos}
+          initialAccuracy={homeAcc}
           onClose={() => { setWizardPrefill(null); setView({ name: "home" }); }}
           onCreated={(id) => { setWizardPrefill(null); void loadAll(); setView({ name: "track", id }); }}
         />
@@ -118,95 +120,95 @@ export default function ClientAssistance({
     );
   }
 
-  // ----- Accueil -----
+  // ----- Accueil : carte plein écran + panneau du bas -----
   const anyAvailable = !!status?.services.some((s) => s.available);
   const active = requests?.find(isActive);
   const past = (requests || []).filter((r) => r !== active);
 
   return (
     <Wrap>
-      {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Vous êtes hors ligne. Reconnectez-vous pour demander de l'aide.</span></Notice>}
-      {loadError && online && <Notice tone="warn" action={<button className={btnSecondary} onClick={() => void loadAll()}>Réessayer</button>}>{loadError}</Notice>}
+      <MapScreen
+        client={homePos}
+        accuracy={homeAcc}
+        editable
+        onChange={(p) => { setHomePos(p); setHomeAcc(undefined); setGeoMsg(""); }}
+        footer={
+          active ? (
+            <button className={btnPrimary} onClick={() => setView({ name: "track", id: active.id })}>
+              Voir ma demande en cours <ChevronRight className="w-5 h-5" />
+            </button>
+          ) : (
+            <button className={`${btnPrimary} !min-h-[60px] !text-lg`} disabled={!status || !anyAvailable || !online} onClick={() => { setWizardPrefill(null); setView({ name: "wizard" }); }}>
+              <LifeBuoy className="w-6 h-6" /> Je suis en panne
+            </button>
+          )
+        }
+      >
+        {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Vous êtes hors ligne. Reconnectez-vous pour demander de l'aide.</span></Notice>}
+        {loadError && online && <Notice tone="warn" action={<button className={btnSecondary} onClick={() => void loadAll()}>Réessayer</button>}>{loadError}</Notice>}
 
-      {driverMode && (
-        <Card className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-bold text-slate-300 flex items-center gap-2 text-sm"><MapPin className="w-4 h-4 text-red-500" /> Vous êtes ici</span>
-            <button className="text-sm font-bold text-red-400 hover:text-red-300 min-h-[44px] px-2 cursor-pointer" onClick={locate}>Me localiser</button>
-          </div>
-          <LocationPicker value={homePos} accuracy={homeAcc} onChange={(p) => { setHomePos(p); setHomeAcc(undefined); setGeoMsg(""); }} />
-          <p className="text-xs text-slate-500">{geoMsg || (homePos ? "Ce n'est pas le bon endroit ? Faites glisser le point rouge." : "")}</p>
-        </Card>
-      )}
-
-      <Card className="space-y-4">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-red-600/15 text-red-500 flex items-center justify-center shrink-0"><LifeBuoy className="w-6 h-6" /></div>
-          <div>
-            <h2 className="text-2xl font-black text-white leading-tight">En panne ?</h2>
-            <p className="text-sm text-slate-400">Un mécanicien proche de vous vient jusqu'à votre véhicule.</p>
+          <div className="w-11 h-11 rounded-full bg-red-600/15 text-red-500 flex items-center justify-center shrink-0"><MapPin className="w-5 h-5" /></div>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Vous êtes ici</div>
+            <div className="text-base font-black text-white truncate">
+              {homeAddr || (homePos ? "Position sur la carte" : geoMsg.startsWith("Recherche") ? "Recherche de votre position…" : "Position non trouvée")}
+            </div>
           </div>
+          <button onClick={locate} className="shrink-0 inline-flex items-center gap-1.5 min-h-[44px] px-3 rounded-full bg-slate-950/80 border border-white/[0.1] text-sm font-bold text-slate-200 cursor-pointer">
+            <LocateFixed className="w-4 h-4 text-red-500" /> Me localiser
+          </button>
         </div>
+        {(geoMsg || homePos) && (
+          <p className="text-xs text-slate-500 -mt-2">{geoMsg || "Ce n'est pas le bon endroit ? Faites glisser le point rouge."}</p>
+        )}
+
         {!status ? <Spinner /> : !anyAvailable ? (
           <Notice tone="warn">Aucun mécanicien n'est disponible dans votre zone pour le moment. Bientôt disponible.</Notice>
-        ) : null}
-        <button className={btnPrimary} disabled={!status || !anyAvailable || !online} onClick={() => { setWizardPrefill(null); setView({ name: "wizard" }); }}>
-          Je suis en panne
-        </button>
-      </Card>
-
-      {active && (
-        <button onClick={() => setView({ name: "track", id: active.id })} className="w-full text-left cursor-pointer">
-          <Card className="!border-2 !border-red-500/50 flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <div className="text-xs font-black uppercase tracking-wider text-red-500">Demande en cours</div>
-              <div className="text-base font-black text-white mt-0.5">{STATUS_SHORT[active.status] || active.status}</div>
-              <div className="text-sm text-slate-400 truncate">{vehicleLabel(active.vehicle)}{active.symptoms ? ` · ${active.symptoms}` : ""}</div>
-            </div>
-            <ChevronRight className="w-6 h-6 text-slate-400 shrink-0" />
-          </Card>
-        </button>
-      )}
-
-      <div className="space-y-3">
-        <h3 className="text-sm font-black uppercase tracking-wider text-slate-500">Mes demandes</h3>
-        {requests === null && !loadError && <Spinner />}
-        {requests !== null && past.length === 0 && !active && (
-          <p className="text-sm text-slate-500 py-4 text-center">Vous n'avez encore fait aucune demande.</p>
+        ) : (
+          !active && <p className="text-sm text-slate-400">Un mécanicien proche de vous vient jusqu'à votre véhicule.</p>
         )}
-        {past.map((r) => {
-          const proName = (r.proName ?? r.proDisplayName) as string | undefined;
-          const amount = r.amountAgreed || null;
-          return (
-            <button key={r.id} onClick={() => setView({ name: "track", id: r.id })} className="w-full text-left cursor-pointer">
-              <Card className="!p-4 space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-base font-black text-white truncate">{vehicleLabel(r.vehicle)}</span>
-                  <span className="text-xs font-bold text-slate-400 shrink-0">{formatDate(r.createdAt)}</span>
-                </div>
-                <div className="text-sm text-slate-400 truncate">{r.symptoms || r.serviceLabel}</div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
-                  <span className="font-bold text-slate-300">{STATUS_SHORT[r.status] || r.status}</span>
-                  {proName && <span>Pro : {proName}</span>}
-                  {r.works && <span className="truncate">Travaux : {String(r.works)}</span>}
-                  {amount != null && <span>{formatXOF(amount)}</span>}
-                </div>
-                {r.diagnosisText && <div className="text-xs text-slate-500 truncate">Diagnostic : {String(r.diagnosisText)}</div>}
-              </Card>
-            </button>
-          );
-        })}
-      </div>
 
-      {onOpenMechanicSpace && !driverMode && (
-        <button onClick={onOpenMechanicSpace} className="w-full min-h-[48px] inline-flex items-center justify-center gap-2 text-sm font-bold text-slate-400 hover:text-white cursor-pointer">
-          <Wrench className="w-4 h-4" /> Vous êtes mécanicien ? Espace dépannage
-        </button>
-      )}
+        {active && (
+          <div className="rounded-2xl border-2 border-red-500/50 px-4 py-3">
+            <div className="text-xs font-black uppercase tracking-wider text-red-500">Demande en cours</div>
+            <div className="text-base font-black text-white mt-0.5">{STATUS_SHORT[active.status] || active.status}</div>
+            <div className="text-sm text-slate-400 truncate">{vehicleLabel(active.vehicle)}{active.symptoms ? ` · ${active.symptoms}` : ""}</div>
+          </div>
+        )}
+
+        {past.length > 0 && (
+          <details className="text-sm">
+            <summary className="cursor-pointer font-bold text-slate-400 min-h-[44px] flex items-center">Mes dernières demandes ({past.length})</summary>
+            <div className="space-y-2 pt-1">
+              {past.slice(0, 5).map((r) => {
+                const proName = (r.proName ?? r.proDisplayName) as string | undefined;
+                return (
+                  <button key={r.id} onClick={() => setView({ name: "track", id: r.id })} className="w-full text-left rounded-2xl border border-white/[0.08] px-4 py-3 cursor-pointer">
+                    <div className="flex justify-between gap-2">
+                      <span className="font-black text-white truncate">{r.symptoms || r.serviceLabel || vehicleLabel(r.vehicle)}</span>
+                      <span className="text-xs text-slate-500 shrink-0">{formatDate(r.createdAt)}</span>
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      {STATUS_SHORT[r.status] || r.status}{proName ? ` · ${proName}` : ""}{r.amountAgreed != null ? ` · ${formatXOF(r.amountAgreed)}` : ""}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </details>
+        )}
+
+        {onOpenMechanicSpace && !driverMode && (
+          <button onClick={onOpenMechanicSpace} className="w-full min-h-[44px] inline-flex items-center justify-center gap-2 text-sm font-bold text-slate-400 hover:text-white cursor-pointer">
+            <Wrench className="w-4 h-4" /> Vous êtes mécanicien ? Espace dépannage
+          </button>
+        )}
+      </MapScreen>
     </Wrap>
   );
 }
 
 function Wrap({ children }: { children: React.ReactNode }) {
-  return <div className="max-w-xl mx-auto space-y-4 pb-24 lg:pb-6">{children}</div>;
+  return <div className="max-w-xl mx-auto pb-2">{children}</div>;
 }

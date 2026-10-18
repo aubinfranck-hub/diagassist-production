@@ -1,19 +1,42 @@
 import { useCallback, useState } from "react";
 import {
-  ArrowLeft, Phone, MessageCircle, MapPin, Clock, Wrench, CheckCircle2, XCircle, RefreshCw,
-  Loader2, Flag, ShieldCheck, WifiOff, AlertTriangle, Star,
+  Phone, MessageCircle, Clock, CheckCircle2, Loader2, Flag, WifiOff, AlertTriangle, Star, Check, X,
 } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, faultCodesList, formatDate, formatXOF, isFinalStatus, LINE_LABEL, LINE_ORDER,
+  api, AssistanceError, AssistanceStatus, faultCodesList, formatDate, formatXOF, LINE_LABEL, LINE_ORDER,
   MSG_AI_TITLE, mediaUrl, Quote, quoteTotal, RequestDetail, STATUS_LABEL,
-  telHref, useOnline, usePolling, vehicleLabel, whatsappHref,
+  telHref, useOnline, usePolling, vehicleLabel,
 } from "./api";
-import { TrackMap } from "./AssistanceMaps";
+import { MapScreen } from "./AssistanceMaps";
 import {
-  btnGreen, btnPrimary, btnSecondary, Card, ChatPanel, errText, inputCls, Label, Notice, Spinner, StateBox, Stars,
+  btnGreen, btnPrimary, btnSecondary, Card, ChatPanel, errText, inputCls, Notice, Spinner, StateBox, Stars,
 } from "./ui";
 
-const STEPS = ["recherche", "affectee", "en_route", "sur_place", "en_intervention", "terminee"] as const;
+/** Étapes affichées au client une fois le mécanicien trouvé. */
+const PHASES = [
+  { st: "en_route", label: "En route" },
+  { st: "sur_place", label: "Arrivé" },
+  { st: "en_intervention", label: "En intervention" },
+  { st: "terminee", label: "Terminé" },
+] as const;
+
+function initials(name?: string): string {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "M";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+function Avatar({ name, photo }: { name?: string; photo?: string }) {
+  const [broken, setBroken] = useState(false);
+  if (photo && !broken) {
+    return <img src={photo} alt="" onError={() => setBroken(true)} className="w-16 h-16 rounded-full object-cover border-2 border-white/[0.15] shrink-0" />;
+  }
+  return (
+    <div className="w-16 h-16 rounded-full bg-emerald-600 text-[#ffffff] text-xl font-black flex items-center justify-center shrink-0 border-2 border-white/[0.15]" aria-hidden="true">
+      {initials(name)}
+    </div>
+  );
+}
 
 export default function ClientTracking({
   requestId, status, onBack,
@@ -25,6 +48,7 @@ export default function ClientTracking({
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -57,174 +81,202 @@ export default function ClientTracking({
   if (fatal) {
     return (
       <div className="space-y-3">
-        <BackBtn onBack={onBack} />
         <StateBox
           icon={<AlertTriangle className="w-7 h-7" />}
           title={fatal.unavailable ? "Assistance momentanément indisponible" : fatal.status === 404 ? "Demande introuvable" : "Connexion requise"}
           text={fatal.message}
         >
           <button className={btnSecondary} onClick={() => { setFatal(null); void load(); }}>Réessayer</button>
+          <button className={btnSecondary} onClick={onBack}>Retour à l'accueil</button>
         </StateBox>
       </div>
     );
   }
   if (!detail) {
-    return <div className="space-y-3"><BackBtn onBack={onBack} />{!online && <Notice tone="warn">Vous êtes hors ligne.</Notice>}<Spinner text="Chargement de votre demande…" /></div>;
+    return (
+      <div className="space-y-3">
+        {!online && <Notice tone="warn">Vous êtes hors ligne.</Notice>}
+        <Spinner text="Chargement de votre demande…" />
+        <button className={btnSecondary} onClick={onBack}>Retour</button>
+      </div>
+    );
   }
 
   const { request: r, pro, quotes, timeline, media, review, allowed } = detail;
   const st = r.status;
   const assigned = ["affectee", "en_route", "sur_place", "en_intervention", "terminee"].includes(st) && !!pro;
+  const live = ["affectee", "en_route", "sur_place", "en_intervention"].includes(st);
   const pendingQuote = quotes.find((q) => (q.status ?? r.quoteStatus) === "propose" && q.status !== "accepte" && q.status !== "refuse");
-  const stepIdx = STEPS.indexOf(st as (typeof STEPS)[number]);
   const clientPos = r.position ? { lat: r.position.lat, lng: r.position.lng } : null;
   const proPos = pro?.location && ["affectee", "en_route", "sur_place"].includes(st) ? { lat: pro.location.lat, lng: pro.location.lng } : null;
   const amountAgreed = Number(r.amountAgreed) || 0;
   const proDiag = (r.diagnosisText ?? (r as any).proDiagnosis ?? (r as any).diagnosis) as string | undefined;
+  const photo = ((pro as any)?.photoUrl || (pro as any)?.photo || (pro as any)?.avatarUrl) as string | undefined;
+  const phaseIdx = PHASES.findIndex((p) => p.st === st);
+  const searching = st === "recherche" || st === "brouillon";
+  const etaMin = pro?.eta ? Math.max(1, Math.round(pro.eta.minutes)) : null;
 
-  return (
-    <div className="space-y-4 animate-fade-in">
-      <BackBtn onBack={onBack} />
-      {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Hors ligne : les informations affichées peuvent ne pas être à jour.</span></Notice>}
+  const cancelBtn = allowed.cancel ? (
+    <button
+      className="w-full min-h-[48px] text-sm font-bold text-red-400 hover:text-red-300 underline underline-offset-4 cursor-pointer"
+      disabled={!!busy}
+      onClick={() => {
+        if (window.confirm("Voulez-vous vraiment annuler cette demande ?")) {
+          void act("cancel", () => api(`/requests/${requestId}/cancel`, { body: { reason: "Annulée par le client" } }));
+        }
+      }}
+    >
+      Annuler ma demande
+    </button>
+  ) : null;
+
+  const banners = (
+    <>
+      {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Hors ligne : les informations peuvent ne pas être à jour.</span></Notice>}
       {online && lastError && <Notice tone="warn">{lastError}</Notice>}
       {actionError && <Notice tone="error">{actionError}</Notice>}
       {notice && <Notice tone="ok">{notice}</Notice>}
+    </>
+  );
 
-      {/* ---- État principal ---- */}
-      <Card className="space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">{r.serviceLabel || "Assistance"}</div>
-            <h2 className="text-2xl font-black text-white leading-tight mt-1">{STATUS_LABEL[st] || st}</h2>
-            <p className="text-sm text-slate-400 mt-1">{vehicleLabel(r.vehicle)}{r.symptoms ? ` · ${r.symptoms}` : ""}</p>
-          </div>
-          {st === "recherche" && <Loader2 className="w-7 h-7 text-red-500 animate-spin shrink-0" />}
-          {st === "terminee" && <CheckCircle2 className="w-8 h-8 text-emerald-500 shrink-0" />}
-          {st === "annulee" && <XCircle className="w-8 h-8 text-slate-500 shrink-0" />}
+  // ===================== Recherche en cours =====================
+  if (searching) {
+    return (
+      <MapScreen client={clientPos} pulse onBack={onBack} backLabel="Accueil" footer={cancelBtn}>
+        {banners}
+        <div className="text-center space-y-2 py-2">
+          <Loader2 className="w-7 h-7 text-red-500 animate-spin mx-auto" />
+          <h2 className="text-xl font-black text-white">Nous contactons les mécaniciens près de vous</h2>
+          <p className="text-sm text-slate-400">
+            Le premier qui accepte prend votre demande. Cela peut prendre quelques minutes, vous pouvez quitter cet écran : nous gardons votre demande.
+          </p>
+          <p className="text-xs text-slate-500">{r.serviceLabel || "Assistance"} · {vehicleLabel(r.vehicle)}{r.symptoms ? ` · ${r.symptoms}` : ""}</p>
         </div>
-
-        {stepIdx >= 0 && (
-          <ol className="flex items-center gap-1.5" aria-label="Avancement">
-            {STEPS.map((s, i) => (
-              <li key={s} className={`h-2 flex-1 rounded-full ${i <= stepIdx ? "bg-red-600" : "bg-slate-800"}`} title={STATUS_LABEL[s]} />
-            ))}
-          </ol>
+        {st === "brouillon" && (
+          <button className={btnPrimary} disabled={!!busy} onClick={() => act("submit", () => api(`/requests/${requestId}/submit`, { body: {} }))}>Envoyer la demande</button>
         )}
+      </MapScreen>
+    );
+  }
 
-        {st === "terminee" && amountAgreed > 0 && (
-          <Notice tone="ok">Intervention terminée — montant convenu : {formatXOF(amountAgreed)}, à régler directement avec le mécanicien.</Notice>
+  // ===================== Sans disponibilité / annulée =====================
+  if (st === "sans_disponibilite" || st === "annulee") {
+    return (
+      <MapScreen client={clientPos} onBack={onBack} backLabel="Accueil" footer={<button className={btnSecondary} onClick={onBack}>Retour à l'accueil</button>}>
+        {banners}
+        <h2 className="text-xl font-black text-white">{STATUS_LABEL[st]}</h2>
+        {st === "sans_disponibilite" ? (
+          <>
+            <Notice tone="warn">
+              Aucun mécanicien n'est disponible près de vous pour le moment. Vous pouvez relancer la recherche, ou demander à l'équipe DiagAssist de trouver quelqu'un manuellement.
+            </Notice>
+            {allowed.retry && <button className={btnPrimary} disabled={!!busy} onClick={() => act("retry", () => api(`/requests/${requestId}/retry`, { body: {} }), "Nous relançons la recherche.")}>Relancer la recherche</button>}
+            {allowed.manual && <button className={btnSecondary} disabled={!!busy} onClick={() => act("manual", () => api(`/requests/${requestId}/manual`, { body: {} }), "Demande transmise à l'équipe DiagAssist, elle vous rappellera.")}>Demander une prise en charge manuelle</button>}
+            {cancelBtn}
+          </>
+        ) : (
+          <p className="text-sm text-slate-400">Cette demande a été annulée. Vous pouvez en faire une nouvelle depuis l'accueil.</p>
         )}
-        {st === "recherche" && <p className="text-sm text-slate-400">Cela peut prendre quelques minutes. Vous pouvez quitter cet écran, nous gardons votre demande.</p>}
+      </MapScreen>
+    );
+  }
 
-        {st === "sans_disponibilite" && (
-          <Notice tone="warn">
-            Aucun mécanicien n'est disponible près de vous pour le moment. Vous pouvez réessayer la recherche, ou demander à l'équipe DiagAssist de trouver quelqu'un manuellement.
-          </Notice>
-        )}
+  // ===================== Mécanicien trouvé / suivi / fin =====================
+  const title = st === "terminee" ? "Intervention terminée" : st === "affectee" ? "Mécanicien trouvé" : STATUS_LABEL[st] || st;
 
-        {/* ETA */}
-        {pro?.eta && ["affectee", "en_route"].includes(st) && (
-          <div className="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3">
-            <Clock className="w-6 h-6 text-emerald-400 shrink-0" />
-            <div>
-              <div className="text-lg font-black text-white">Arrivée dans environ {Math.max(1, Math.round(pro.eta.minutes))} min</div>
-              <div className="text-xs text-slate-400">À environ {pro.eta.distanceKm.toFixed(1)} km de vous. Estimation, elle peut varier avec la circulation.</div>
-            </div>
-          </div>
-        )}
-        {st === "sur_place" && <Notice tone="ok">Votre mécanicien est arrivé. Rejoignez-le ou signalez-vous par téléphone.</Notice>}
-
-        {/* Actions de statut */}
-        <div className="space-y-2">
-          {st === "brouillon" && allowed.cancel !== false && (
-            <button className={btnPrimary} disabled={!!busy} onClick={() => act("submit", () => api(`/requests/${requestId}/submit`, { body: {} }))}>
-              Envoyer la demande
-            </button>
-          )}
-          {st === "sans_disponibilite" && (
-            <>
-              {allowed.retry && <button className={btnPrimary} disabled={!!busy} onClick={() => act("retry", () => api(`/requests/${requestId}/retry`, { body: {} }), "Nous relançons la recherche.")}><RefreshCw className="w-5 h-5" /> Réessayer</button>}
-              {allowed.manual && <button className={btnSecondary} disabled={!!busy} onClick={() => act("manual", () => api(`/requests/${requestId}/manual`, { body: {} }), "Demande transmise à l'équipe DiagAssist, elle vous rappellera.")}>Demander une prise en charge manuelle</button>}
-            </>
-          )}
-          {allowed.cancel && (
-            <button
-              className="w-full min-h-[48px] text-sm font-bold text-red-400 hover:text-red-300 underline underline-offset-4 cursor-pointer"
-              disabled={!!busy}
-              onClick={() => {
-                if (window.confirm("Voulez-vous vraiment annuler cette demande ?")) {
-                  void act("cancel", () => api(`/requests/${requestId}/cancel`, { body: { reason: "Annulée par le client" } }));
-                }
-              }}
-            >
-              Annuler ma demande
-            </button>
-          )}
+  return (
+    <MapScreen
+      client={clientPos}
+      pro={live ? proPos : null}
+      onBack={onBack}
+      backLabel="Accueil"
+      footer={assigned && pro?.phone && st !== "terminee" ? (
+        <div className="grid grid-cols-2 gap-3">
+          <a href={telHref(pro.phone)} className={btnGreen}><Phone className="w-5 h-5" /> Appeler</a>
+          <button className={btnSecondary} onClick={() => setChatOpen((v) => !v)} aria-expanded={chatOpen}>
+            <MessageCircle className="w-5 h-5" /> Message
+          </button>
         </div>
-      </Card>
+      ) : undefined}
+    >
+      {banners}
 
-      {/* ---- Carte ---- */}
-      {clientPos && !isFinalStatus(st) && st !== "sans_disponibilite" && (
-        <Card className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-bold text-slate-300 flex items-center gap-2"><MapPin className="w-4 h-4 text-red-500" /> Votre position (rouge){proPos ? " et le mécanicien (vert)" : ""}</span>
-          </div>
-          <TrackMap client={clientPos} pro={proPos} />
-          {pro && !proPos && ["affectee", "en_route"].includes(st) && (
-            <p className="text-xs text-slate-500">La position du mécanicien n'est pas disponible pour le moment.</p>
-          )}
-          {proPos && pro?.location && <p className="text-xs text-slate-500">Position du mécanicien mise à jour à {new Date(pro.location.updatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}.</p>}
-        </Card>
-      )}
-
-      {/* ---- Mécanicien ---- */}
+      {/* Fiche mécanicien */}
       {assigned && pro && (
-        <Card className="space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-red-600/15 text-red-500 flex items-center justify-center shrink-0"><Wrench className="w-6 h-6" /></div>
-            <div className="min-w-0">
-              <div className="text-lg font-black text-white truncate">{pro.displayName || "Votre mécanicien"}</div>
-              {pro.garageName && <div className="text-sm text-slate-400 truncate">{pro.garageName}</div>}
-              {pro.rating ? (
-                <div className="text-sm text-amber-400 flex items-center gap-1 font-bold"><Star className="w-4 h-4 fill-amber-400" /> {pro.rating.avg.toFixed(1)} <span className="text-slate-500 font-normal">({pro.rating.count} avis)</span></div>
-              ) : <div className="text-xs text-slate-500">Pas encore d'avis</div>}
-            </div>
+        <div className="flex items-center gap-3.5">
+          <Avatar name={pro.displayName} photo={photo} />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-black uppercase tracking-wider text-emerald-400">{title}</div>
+            <div className="text-lg font-black text-white truncate">{pro.displayName || "Votre mécanicien"}</div>
+            {pro.garageName && <div className="text-sm text-slate-400 truncate">{pro.garageName}</div>}
+            {pro.rating ? (
+              <div className="text-sm text-amber-400 flex items-center gap-1 font-bold"><Star className="w-4 h-4 fill-amber-400" /> {pro.rating.avg.toFixed(1)} <span className="text-slate-500 font-normal">({pro.rating.count} avis)</span></div>
+            ) : <div className="text-xs text-slate-500">Pas encore d'avis</div>}
           </div>
-          {pro.specialties && pro.specialties.length > 0 && <p className="text-sm text-slate-400">Spécialités : {pro.specialties.join(", ")}</p>}
-          {pro.trainings && pro.trainings.length > 0 && (
-            <ul className="text-sm text-slate-300 space-y-1">
-              {pro.trainings.map((t, i) => (
-                <li key={i} className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" /> {t.title}{t.issuer ? ` — ${t.issuer}` : ""} <span className="text-xs text-emerald-500">(vérifiée)</span></li>
-              ))}
-            </ul>
-          )}
-          {pro.phone && st !== "terminee" && (
-            <div className="grid grid-cols-2 gap-3">
-              <a href={telHref(pro.phone)} className={btnGreen}><Phone className="w-5 h-5" /> Appeler</a>
-              {(status?.whatsappConfigured ?? true) && (
-                <a href={whatsappHref(pro.phone, "Bonjour, je vous écris au sujet de ma demande DiagAssist.")} target="_blank" rel="noopener noreferrer" className={btnSecondary}><MessageCircle className="w-5 h-5" /> WhatsApp</a>
-              )}
-            </div>
-          )}
-        </Card>
+        </div>
       )}
 
-      {/* ---- Diagnostic du mécanicien ---- */}
+      {/* Temps d'arrivée */}
+      {etaMin !== null && ["affectee", "en_route"].includes(st) && pro?.eta && (
+        <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 flex items-center gap-3">
+          <Clock className="w-7 h-7 text-emerald-400 shrink-0" />
+          <div>
+            <div className="text-2xl font-black text-white leading-tight">Arrive dans ~{etaMin} min</div>
+            <div className="text-xs text-slate-400">À environ {pro.eta.distanceKm.toFixed(1)} km de vous. Estimation, elle peut varier avec la circulation.</div>
+          </div>
+        </div>
+      )}
+      {["affectee", "en_route"].includes(st) && !pro?.eta && (
+        <p className="text-sm text-slate-400">{pro?.location ? "Votre mécanicien arrive." : "Le temps d'arrivée s'affichera dès que la position du mécanicien est connue."}</p>
+      )}
+      {st === "sur_place" && <Notice tone="ok">Votre mécanicien est arrivé. Rejoignez-le ou signalez-vous par téléphone.</Notice>}
+
+      {/* Étapes */}
+      {phaseIdx >= 0 || st === "affectee" ? (
+        <ol className="grid grid-cols-4 gap-1.5" aria-label="Avancement">
+          {PHASES.map((p, i) => {
+            const done = phaseIdx >= 0 && i < phaseIdx || st === "terminee";
+            const cur = i === phaseIdx && st !== "terminee";
+            return (
+              <li key={p.st} className="text-center">
+                <div className={`mx-auto w-7 h-7 rounded-full flex items-center justify-center text-xs font-black ${done ? "bg-emerald-600 text-[#ffffff]" : cur ? "bg-red-600 text-[#ffffff] ring-4 ring-red-600/25" : "bg-slate-800 text-slate-500"}`}>
+                  {done ? <Check className="w-4 h-4" /> : i + 1}
+                </div>
+                <div className={`mt-1 text-[11px] leading-tight font-bold ${done || cur ? "text-white" : "text-slate-500"}`}>{p.label}</div>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+
+      {/* Chat */}
+      {assigned && chatOpen && (
+        <div>
+          <div className="flex justify-end"><button className="text-xs font-bold text-slate-400 min-h-[36px] px-2 inline-flex items-center gap-1 cursor-pointer" onClick={() => setChatOpen(false)}><X className="w-3.5 h-3.5" /> Fermer</button></div>
+          <ChatPanel requestId={requestId} me="client" disabled={st === "terminee"} />
+        </div>
+      )}
+
+      {/* Fin : montant à régler directement + avis */}
+      {st === "terminee" && (
+        <>
+          <div className="text-center space-y-2 py-1">
+            <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
+            <h2 className="text-xl font-black text-white">{title}</h2>
+          </div>
+          {amountAgreed > 0 ? (
+            <Notice tone="ok">Montant convenu : <strong>{formatXOF(amountAgreed)}</strong>. À régler directement avec le mécanicien. Aucun paiement via DiagAssist.</Notice>
+          ) : (
+            <Notice tone="info">Le montant convenu se règle directement avec le mécanicien. Aucun paiement via DiagAssist.</Notice>
+          )}
+        </>
+      )}
+
       {proDiag && (
-        <Card className="space-y-1">
-          <h3 className="text-base font-black text-white">Constat du mécanicien</h3>
-          <p className="text-sm text-slate-300 whitespace-pre-wrap">{proDiag}</p>
-        </Card>
+        <div><h3 className="text-sm font-black text-white">Constat du mécanicien</h3><p className="text-sm text-slate-300 whitespace-pre-wrap">{proDiag}</p></div>
       )}
 
-      {r.aiAnalysis && (
-        <Card className="space-y-1">
-          <h3 className="text-base font-black text-white">{MSG_AI_TITLE}</h3>
-          <p className="text-sm text-slate-300 whitespace-pre-line">{r.aiAnalysis}</p>
-        </Card>
-      )}
-
-      {/* ---- Devis ---- */}
+      {/* Devis */}
       {quotes.length > 0 && (
         <div className="space-y-3">
           {quotes.map((q, i) => (
@@ -235,67 +287,57 @@ export default function ClientTracking({
               onDecide={(accept) => act(`q${q.id}`, () => api(`/requests/${requestId}/quotes/${q.id}/decision`, { body: { accept } }), accept ? "Devis accepté." : "Devis refusé.")}
             />
           ))}
-          {pendingQuote && allowed.decideQuote && (
-            <Notice tone="warn">Le mécanicien attend votre réponse pour continuer.</Notice>
-          )}
+          {pendingQuote && allowed.decideQuote && <Notice tone="warn">Le mécanicien attend votre réponse pour continuer.</Notice>}
         </div>
       )}
 
-      {/* ---- Note + réclamation ---- */}
+      {/* Avis */}
       {review ? (
-        <Card className="space-y-1">
-          <h3 className="text-base font-black text-white">Votre avis</h3>
+        <div className="space-y-1">
+          <h3 className="text-sm font-black text-white">Votre avis</h3>
           <Stars value={review.rating} size={26} />
           {review.comment && <p className="text-sm text-slate-400">{review.comment}</p>}
-        </Card>
+        </div>
       ) : allowed.review ? (
         <ReviewForm onSend={(rating, comment) => act("review", () => api(`/requests/${requestId}/review`, { body: { rating, comment: comment || undefined } }), "Merci pour votre avis.")} busy={busy === "review"} />
       ) : null}
       {allowed.claim && <ClaimForm onSend={(kind, message) => act("claim", () => api(`/requests/${requestId}/claims`, { body: { kind, message } }), "Réclamation envoyée. L'équipe DiagAssist revient vers vous.")} busy={busy === "claim"} />}
 
-      {/* ---- Messagerie ---- */}
-      {assigned && <ChatPanel requestId={requestId} me="client" disabled={st === "terminee"} />}
+      {cancelBtn}
 
-      {/* ---- Détails & historique ---- */}
-      <Card className="space-y-3 text-sm">
-        <h3 className="text-base font-black text-white">Détails de la demande</h3>
-        <KV k="Date" v={formatDate(r.createdAt)} />
-        <KV k="Véhicule" v={vehicleLabel(r.vehicle)} />
-        <KV k="Panne" v={r.symptoms || "—"} />
-        {faultCodesList(r.faultCodes).length > 0 && <KV k="Codes défaut" v={faultCodesList(r.faultCodes).join(", ")} />}
-        {r.position?.address && <KV k="Adresse" v={r.position.address} />}
-        {r.position?.landmark && <KV k="Repère" v={r.position.landmark} />}
-        {media.length > 0 && (
-          <div className="flex flex-wrap gap-2 pt-1">
-            {media.map((m) => m.mime?.startsWith("image/") ? (
-              <img key={m.id} src={mediaUrl(m.id)} alt="Pièce jointe" loading="lazy" className="w-20 h-20 object-cover rounded-xl border border-white/[0.1]" />
-            ) : m.mime?.startsWith("video/") ? (
-              <video key={m.id} src={mediaUrl(m.id)} controls preload="none" className="w-40 rounded-xl" />
-            ) : (
-              <audio key={m.id} src={mediaUrl(m.id)} controls preload="none" className="w-full" />
-            ))}
-          </div>
-        )}
-        {timeline.length > 0 && (
-          <details className="pt-1">
-            <summary className="cursor-pointer font-bold text-slate-300">Déroulé de la demande</summary>
-            <ul className="mt-2 space-y-1.5">
+      {/* Détails */}
+      <details className="text-sm">
+        <summary className="cursor-pointer font-bold text-slate-300 min-h-[44px] flex items-center">Détails de la demande</summary>
+        <div className="space-y-2 pt-1">
+          <KV k="Date" v={formatDate(r.createdAt)} />
+          <KV k="Véhicule" v={vehicleLabel(r.vehicle)} />
+          <KV k="Panne" v={r.symptoms || "—"} />
+          {faultCodesList(r.faultCodes).length > 0 && <KV k="Codes défaut" v={faultCodesList(r.faultCodes).join(", ")} />}
+          {r.position?.address && <KV k="Adresse" v={r.position.address} />}
+          {r.position?.landmark && <KV k="Repère" v={r.position.landmark} />}
+          {pro?.specialties && pro.specialties.length > 0 && <KV k="Spécialités" v={pro.specialties.join(", ")} />}
+          {r.aiAnalysis && <div className="pt-1"><div className="font-bold text-slate-300">{MSG_AI_TITLE}</div><p className="text-slate-400 whitespace-pre-line">{r.aiAnalysis}</p></div>}
+          {media.length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              {media.map((m) => m.mime?.startsWith("image/") ? (
+                <img key={m.id} src={mediaUrl(m.id)} alt="Pièce jointe" loading="lazy" className="w-20 h-20 object-cover rounded-xl border border-white/[0.1]" />
+              ) : m.mime?.startsWith("video/") ? (
+                <video key={m.id} src={mediaUrl(m.id)} controls preload="none" className="w-40 rounded-xl" />
+              ) : (
+                <audio key={m.id} src={mediaUrl(m.id)} controls preload="none" className="w-full" />
+              ))}
+            </div>
+          )}
+          {timeline.length > 0 && (
+            <ul className="pt-1 space-y-1.5">
               {timeline.map((t, i) => (
                 <li key={i} className="flex justify-between gap-3 text-slate-400"><span>{t.label}</span><span className="text-slate-500 shrink-0">{formatDate(t.at)}</span></li>
               ))}
             </ul>
-          </details>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-function BackBtn({ onBack }: { onBack: () => void }) {
-  return (
-    <button onClick={onBack} className="inline-flex items-center gap-2 min-h-[44px] text-sm font-bold text-slate-400 hover:text-white cursor-pointer">
-      <ArrowLeft className="w-4 h-4" /> Mes demandes
-    </button>
+          )}
+        </div>
+      </details>
+    </MapScreen>
   );
 }
 
