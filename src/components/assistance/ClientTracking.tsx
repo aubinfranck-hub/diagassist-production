@@ -1,9 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
-  Phone, MessageCircle, Clock, CheckCircle2, Loader2, Flag, WifiOff, AlertTriangle, Star, Check, X,
+  Phone, MessageCircle, Clock, CheckCircle2, Loader2, Flag, WifiOff, AlertTriangle, Star, Check, X, Navigation, Wallet,
 } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, faultCodesList, formatDate, formatXOF, LINE_LABEL, LINE_ORDER,
+  api, AssistanceError, AssistanceStatus, faultCodesList, formatDate, formatXOF, LINE_LABEL, LINE_ORDER, mapsDirections, PAY_METHODS, PayMethod, tariffText,
   MSG_AI_TITLE, mediaUrl, Quote, quoteTotal, RequestDetail, STATUS_LABEL,
   telHref, useOnline, usePolling, vehicleLabel,
 } from "./api";
@@ -17,6 +17,12 @@ const PHASES = [
   { st: "en_route", label: "En route" },
   { st: "sur_place", label: "Arrivé" },
   { st: "en_intervention", label: "En intervention" },
+  { st: "terminee", label: "Terminé" },
+] as const;
+const PHASES_ATELIER = [
+  { st: "en_route", label: "Je pars" },
+  { st: "sur_place", label: "Arrivé" },
+  { st: "en_intervention", label: "Intervention" },
   { st: "terminee", label: "Terminé" },
 ] as const;
 
@@ -39,8 +45,8 @@ function Avatar({ name, photo }: { name?: string; photo?: string }) {
 }
 
 export default function ClientTracking({
-  requestId, status, onBack,
-}: { requestId: string; status: AssistanceStatus | null; onBack: () => void }) {
+  requestId, status, onBack, paymentReturn,
+}: { requestId: string; status: AssistanceStatus | null; onBack: () => void; paymentReturn?: boolean }) {
   const online = useOnline();
   const [detail, setDetail] = useState<RequestDetail | null>(null);
   const [fatal, setFatal] = useState<AssistanceError | null>(null);
@@ -64,6 +70,16 @@ export default function ClientTracking({
 
   const status0 = detail?.request.status;
   usePolling(load, 6000, status0 !== "annulee", requestId);
+
+  // Paiement : on interroge le serveur tant que le règlement n'est pas confirmé (webhook Jèko / réconciliation).
+  const payWatchStart = useRef(Date.now());
+  const payStatus0 = detail?.request.paymentStatus;
+  const payWatching = status0 === "terminee" && payStatus0 !== "paye" && payStatus0 !== "echoue"
+    && (!!paymentReturn || payStatus0 === "en_attente") && Date.now() - payWatchStart.current < 180000;
+  usePolling(async () => {
+    await api(`/requests/${requestId}/payment`);
+    await load();
+  }, 4000, payWatching, requestId);
 
   const act = async (key: string, fn: () => Promise<unknown>, okMsg?: string) => {
     setBusy(key); setActionError(""); setNotice("");
@@ -104,6 +120,11 @@ export default function ClientTracking({
 
   const { request: r, pro, quotes, timeline, media, review, allowed } = detail;
   const st = r.status;
+  const atelier = r.mode === "atelier";
+  const visit = r.visitStatus;
+  const proposed = atelier && st === "affectee" && visit === "proposee";
+  const paid = r.paymentStatus === "paye";
+  const phases = atelier ? PHASES_ATELIER : PHASES;
   const assigned = ["affectee", "en_route", "sur_place", "en_intervention", "terminee"].includes(st) && !!pro;
   const live = ["affectee", "en_route", "sur_place", "en_intervention"].includes(st);
   const pendingQuote = quotes.find((q) => (q.status ?? r.quoteStatus) === "propose" && q.status !== "accepte" && q.status !== "refuse");
@@ -112,7 +133,7 @@ export default function ClientTracking({
   const amountAgreed = Number(r.amountAgreed) || 0;
   const proDiag = (r.diagnosisText ?? (r as any).proDiagnosis ?? (r as any).diagnosis) as string | undefined;
   const photo = ((pro as any)?.photoUrl || (pro as any)?.photo || (pro as any)?.avatarUrl) as string | undefined;
-  const phaseIdx = PHASES.findIndex((p) => p.st === st);
+  const phaseIdx = phases.findIndex((p) => p.st === st);
   const searching = st === "recherche" || st === "brouillon";
   const etaMin = pro?.eta ? Math.max(1, Math.round(pro.eta.minutes)) : null;
 
@@ -146,11 +167,17 @@ export default function ClientTracking({
         {banners}
         <div className="text-center space-y-2 py-2">
           <Loader2 className="w-7 h-7 text-red-500 animate-spin mx-auto" />
-          <h2 className="text-xl font-black text-white">Nous contactons les mécaniciens près de vous</h2>
+          <h2 className="text-xl font-black text-white">{atelier ? "Nous cherchons un mécanicien près de vous" : "Nous contactons les mécaniciens près de vous"}</h2>
+          <div className="flex justify-center gap-1.5" aria-hidden="true">
+            {[0, 1, 2].map((i) => <span key={i} className="w-2.5 h-2.5 rounded-full bg-red-500 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />)}
+          </div>
           <p className="text-sm text-slate-400">
-            Le premier qui accepte prend votre demande. Cela peut prendre quelques minutes, vous pouvez quitter cet écran : nous gardons votre demande.
+            {atelier
+              ? "Dès qu'un garage accepte de vous recevoir, nous vous le proposons et vous confirmez. Vous pouvez quitter cet écran : nous gardons votre demande."
+              : "Le premier qui accepte prend votre demande. Cela peut prendre quelques minutes, vous pouvez quitter cet écran : nous gardons votre demande."}
           </p>
           <p className="text-xs text-slate-500">{r.serviceLabel || "Assistance"} · {vehicleLabel(r.vehicle)}{r.symptoms ? ` · ${r.symptoms}` : ""}</p>
+          <p className="text-xs font-bold text-amber-300">{r.amountAgreed ? formatXOF(r.amountAgreed) : tariffText(r.tariff)}</p>
         </div>
         {st === "brouillon" && (
           <button className={btnPrimary} disabled={!!busy} onClick={() => act("submit", () => api(`/requests/${requestId}/submit`, { body: {} }))}>Envoyer la demande</button>
@@ -182,7 +209,59 @@ export default function ClientTracking({
   }
 
   // ===================== Mécanicien trouvé / suivi / fin =====================
-  const title = st === "terminee" ? "Intervention terminée" : st === "affectee" ? "Mécanicien trouvé" : STATUS_LABEL[st] || st;
+  const title = st === "terminee" ? "Intervention terminée"
+    : r.statusLabel ? r.statusLabel
+    : st === "affectee" ? "Mécanicien trouvé" : STATUS_LABEL[st] || st;
+  const garagePos = pro?.location ? { lat: pro.location.lat, lng: pro.location.lng } : null;
+  const etaLine = pro?.eta ? (
+    <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 flex items-center gap-3">
+      <Clock className="w-7 h-7 text-emerald-400 shrink-0" />
+      <div>
+        <div className="text-2xl font-black text-white leading-tight">Trajet estimé : ~{Math.max(1, Math.round(pro.eta.minutes))} min</div>
+        <div className="text-xs text-slate-400">Environ {pro.eta.distanceKm.toFixed(1)} km jusqu'au garage. Estimation, elle peut varier avec la circulation.</div>
+      </div>
+    </div>
+  ) : null;
+
+  // ----- Atelier : garage proposé, le client confirme -----
+  if (proposed && pro) {
+    return (
+      <MapScreen
+        client={clientPos}
+        pro={garagePos}
+        onBack={onBack}
+        backLabel="Accueil"
+        footer={allowed.confirmVisit ? (
+          <>
+            <button className={btnGreen} disabled={!!busy} onClick={() => act("visit", () => api(`/requests/${requestId}/visit`, { body: { accept: true } }))}>
+              {busy === "visit" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />} Je confirme, j'y vais
+            </button>
+            <button className={btnSecondary} disabled={!!busy} onClick={() => act("visitNo", () => api(`/requests/${requestId}/visit`, { body: { accept: false } }), "Nous cherchons un autre mécanicien.")}>
+              Autre mécanicien
+            </button>
+          </>
+        ) : undefined}
+      >
+        {banners}
+        <div className="flex items-center gap-3.5">
+          <Avatar name={pro.displayName} photo={photo} />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-black uppercase tracking-wider text-emerald-400">{r.statusLabel || "Garage proposé"}</div>
+            <div className="text-lg font-black text-white truncate">{pro.displayName || "Un mécanicien"}</div>
+            {pro.garageName && <div className="text-sm text-slate-400 truncate">{pro.garageName}</div>}
+            {pro.rating ? (
+              <div className="text-sm text-amber-400 flex items-center gap-1 font-bold"><Star className="w-4 h-4 fill-amber-400" /> {pro.rating.avg.toFixed(1)} <span className="text-slate-500 font-normal">({pro.rating.count} avis)</span></div>
+            ) : <div className="text-xs text-slate-500">Pas encore d'avis</div>}
+          </div>
+        </div>
+        <Notice tone="ok">Le mécanicien a accepté de vous recevoir.</Notice>
+        {etaLine}
+        <div className="text-sm text-amber-300 font-bold">{amountAgreed > 0 ? formatXOF(amountAgreed) : tariffText(r.tariff)}</div>
+        {!allowed.confirmVisit && <p className="text-sm text-slate-400">Votre confirmation est en cours de prise en compte…</p>}
+        {cancelBtn}
+      </MapScreen>
+    );
+  }
 
   return (
     <MapScreen
@@ -190,13 +269,27 @@ export default function ClientTracking({
       pro={live ? proPos : null}
       onBack={onBack}
       backLabel="Accueil"
-      footer={assigned && pro?.phone && st !== "terminee" ? (
-        <div className="grid grid-cols-2 gap-3">
-          <a href={telHref(pro.phone)} className={btnGreen}><Phone className="w-5 h-5" /> Appeler</a>
-          <button className={btnSecondary} onClick={() => setChatOpen((v) => !v)} aria-expanded={chatOpen}>
-            <MessageCircle className="w-5 h-5" /> Message
-          </button>
-        </div>
+      footer={assigned && st !== "terminee" ? (
+        <>
+          {atelier && allowed.leaving && (
+            <button className={`${btnPrimary} !min-h-[58px] !text-lg`} disabled={!!busy} onClick={() => act("leaving", () => api(`/requests/${requestId}/leaving`, { body: {} }))}>
+              {busy === "leaving" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Navigation className="w-5 h-5" />} Je pars
+            </button>
+          )}
+          {atelier && garagePos && (
+            <a href={mapsDirections(garagePos.lat, garagePos.lng)} target="_blank" rel="noopener noreferrer" className={btnSecondary}>
+              <Navigation className="w-5 h-5" /> Itinéraire vers le garage
+            </a>
+          )}
+          {pro?.phone && (
+            <div className="grid grid-cols-2 gap-3">
+              <a href={telHref(pro.phone)} className={btnGreen}><Phone className="w-5 h-5" /> Appeler</a>
+              <button className={btnSecondary} onClick={() => setChatOpen((v) => !v)} aria-expanded={chatOpen}>
+                <MessageCircle className="w-5 h-5" /> Message
+              </button>
+            </div>
+          )}
+        </>
       ) : undefined}
     >
       {banners}
@@ -216,8 +309,9 @@ export default function ClientTracking({
         </div>
       )}
 
-      {/* Temps d'arrivée */}
-      {etaMin !== null && ["affectee", "en_route"].includes(st) && pro?.eta && (
+      {/* Temps d'arrivée / trajet */}
+      {atelier && ["affectee", "en_route"].includes(st) && etaLine}
+      {!atelier && etaMin !== null && ["affectee", "en_route"].includes(st) && pro?.eta && (
         <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 flex items-center gap-3">
           <Clock className="w-7 h-7 text-emerald-400 shrink-0" />
           <div>
@@ -226,15 +320,18 @@ export default function ClientTracking({
           </div>
         </div>
       )}
-      {["affectee", "en_route"].includes(st) && !pro?.eta && (
+      {!atelier && ["affectee", "en_route"].includes(st) && !pro?.eta && (
         <p className="text-sm text-slate-400">{pro?.location ? "Votre mécanicien arrive." : "Le temps d'arrivée s'affichera dès que la position du mécanicien est connue."}</p>
       )}
-      {st === "sur_place" && <Notice tone="ok">Votre mécanicien est arrivé. Rejoignez-le ou signalez-vous par téléphone.</Notice>}
+      {atelier && st === "affectee" && allowed.leaving && (
+        <Notice tone="ok">Visite confirmée. Appuyez sur « Je pars » quand vous quittez l'endroit où vous êtes.</Notice>
+      )}
+      {st === "sur_place" && <Notice tone="ok">{atelier ? "Vous êtes arrivé au garage. Présentez-vous au mécanicien." : "Votre mécanicien est arrivé. Rejoignez-le ou signalez-vous par téléphone."}</Notice>}
 
       {/* Étapes */}
       {phaseIdx >= 0 || st === "affectee" ? (
         <ol className="grid grid-cols-4 gap-1.5" aria-label="Avancement">
-          {PHASES.map((p, i) => {
+          {phases.map((p, i) => {
             const done = phaseIdx >= 0 && i < phaseIdx || st === "terminee";
             const cur = i === phaseIdx && st !== "terminee";
             return (
@@ -257,7 +354,7 @@ export default function ClientTracking({
         </div>
       )}
 
-      {/* Fin : montant à régler directement + avis */}
+      {/* Fin : paiement dans l'appli */}
       {st === "terminee" && (
         <>
           <div className="text-center space-y-2 py-1">
@@ -265,9 +362,21 @@ export default function ClientTracking({
             <h2 className="text-xl font-black text-white">{title}</h2>
           </div>
           {amountAgreed > 0 ? (
-            <Notice tone="ok">Montant convenu : <strong>{formatXOF(amountAgreed)}</strong>. À régler directement avec le mécanicien. Aucun paiement via DiagAssist.</Notice>
+            <PaymentPanel
+              requestId={requestId}
+              amount={amountAgreed}
+              paymentStatus={r.paymentStatus}
+              redirectUrl={detail.payment?.redirectUrl || null}
+              methods={status?.paymentMethods}
+              notConfigured={!!status && (status.paymentConfigured === false || (Array.isArray(status.paymentMethods) && status.paymentMethods.length === 0))}
+              canPay={allowed.pay !== false}
+              watching={payWatching}
+              returned={!!paymentReturn}
+              onCheck={() => act("check", async () => { await api(`/requests/${requestId}/payment`); })}
+              checking={busy === "check"}
+            />
           ) : (
-            <Notice tone="info">Le montant convenu se règle directement avec le mécanicien. Aucun paiement via DiagAssist.</Notice>
+            <Notice tone="info">Aucun montant à régler pour cette intervention.</Notice>
           )}
         </>
       )}
@@ -298,7 +407,7 @@ export default function ClientTracking({
           <Stars value={review.rating} size={26} />
           {review.comment && <p className="text-sm text-slate-400">{review.comment}</p>}
         </div>
-      ) : allowed.review ? (
+      ) : allowed.review && (amountAgreed <= 0 || paid) ? (
         <ReviewForm onSend={(rating, comment) => act("review", () => api(`/requests/${requestId}/review`, { body: { rating, comment: comment || undefined } }), "Merci pour votre avis.")} busy={busy === "review"} />
       ) : null}
       {allowed.claim && <ClaimForm onSend={(kind, message) => act("claim", () => api(`/requests/${requestId}/claims`, { body: { kind, message } }), "Réclamation envoyée. L'équipe DiagAssist revient vers vous.")} busy={busy === "claim"} />}
@@ -432,5 +541,105 @@ function ClaimForm({ onSend, busy }: { onSend: (kind: string, message: string) =
         <button className={btnPrimary} disabled={busy || message.trim().length < 5} onClick={() => onSend(kind, message.trim())}>Envoyer</button>
       </div>
     </Card>
+  );
+}
+
+
+function PaymentPanel({
+  requestId, amount, paymentStatus, redirectUrl, methods, notConfigured, canPay, watching, returned, onCheck, checking,
+}: {
+  requestId: string; amount: number; paymentStatus?: string; redirectUrl: string | null;
+  methods?: PayMethod[]; notConfigured: boolean; canPay: boolean; watching: boolean; returned: boolean;
+  onCheck: () => void; checking: boolean;
+}) {
+  const [method, setMethod] = useState<PayMethod | "">("");
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  // « Payé » uniquement quand le serveur l'a confirmé (webhook signé ou réconciliation).
+  if (paymentStatus === "paye") {
+    return (
+      <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-4 text-center space-y-1">
+        <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
+        <div className="text-lg font-black text-white">Paiement reçu</div>
+        <div className="text-sm text-slate-300">{formatXOF(amount)} · Merci !</div>
+      </div>
+    );
+  }
+
+  const available = PAY_METHODS.filter((m) => !methods || methods.includes(m.code));
+  const pay = async () => {
+    if (!method || busy) return;
+    setBusy(true); setError("");
+    try {
+      const d = await api<{ redirectUrl?: string }>(`/requests/${requestId}/pay`, {
+        body: { method, payerPhone: phone.trim() || undefined },
+      });
+      if (d.redirectUrl) { window.location.href = d.redirectUrl; return; }
+      setError("Le paiement n'a pas pu démarrer. Réessayez dans un instant.");
+    } catch (e) {
+      setError(errText(e));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="rounded-2xl border-2 border-amber-500/40 px-4 py-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-1.5"><Wallet className="w-4 h-4" /> Montant à payer</div>
+          <div className="text-2xl font-black text-white">{formatXOF(amount)}</div>
+        </div>
+      </div>
+      <p className="text-xs text-slate-400">Vous réglez le mécanicien ici, dans l'appli. DiagAssist ne vous facture rien en plus.</p>
+
+      {paymentStatus === "en_attente" && (
+        <Notice
+          tone="info"
+          action={
+            <div className="grid grid-cols-1 gap-2">
+              {redirectUrl && <button className={btnSecondary} onClick={() => { window.location.href = redirectUrl; }}>Reprendre le paiement</button>}
+              <button className={btnSecondary} disabled={checking} onClick={onCheck}>{checking ? "Vérification…" : "Vérifier mon paiement"}</button>
+            </div>
+          }
+        >
+          <span className="inline-flex items-center gap-2">
+            {watching && <Loader2 className="w-4 h-4 animate-spin" />}
+            Paiement en attente de confirmation. {watching ? "Nous vérifions…" : "Si vous avez déjà payé, touchez « Vérifier »."}
+          </span>
+        </Notice>
+      )}
+      {paymentStatus !== "en_attente" && returned && paymentStatus !== "echoue" && (
+        <Notice tone="info"><span className="inline-flex items-center gap-2">{watching && <Loader2 className="w-4 h-4 animate-spin" />}Nous vérifions votre paiement…</span></Notice>
+      )}
+      {paymentStatus === "echoue" && <Notice tone="error">Le paiement n'a pas abouti. Vous pouvez réessayer.</Notice>}
+      {notConfigured && <Notice tone="warn">Le paiement en ligne n'est pas encore activé.</Notice>}
+
+      {!notConfigured && canPay && (
+        <>
+          <div className="text-sm font-bold text-slate-300">Choisissez comment payer</div>
+          <div className="grid grid-cols-2 gap-2.5">
+            {available.map((m) => {
+              const sel = method === m.code;
+              return (
+                <button
+                  key={m.code} type="button" aria-pressed={sel} onClick={() => setMethod(m.code)}
+                  className={`rounded-2xl border-2 min-h-[72px] px-3 flex items-center justify-center gap-2 text-base font-black text-white transition cursor-pointer ${sel ? "border-red-500 bg-red-600/15" : "border-white/[0.1] bg-slate-950/50 hover:border-red-500/40"}`}
+                >
+                  <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ background: m.color }} aria-hidden="true" />
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
+          <input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Numéro qui paie (facultatif)" aria-label="Numéro qui paie" className={inputCls} />
+          {error && <Notice tone="error">{error}</Notice>}
+          <button className={`${btnPrimary} !min-h-[58px] !text-lg`} disabled={!method || busy} onClick={pay}>
+            {busy ? <><Loader2 className="w-5 h-5 animate-spin" /> Ouverture du paiement…</> : <>Payer {formatXOF(amount)}</>}
+          </button>
+        </>
+      )}
+    </div>
   );
 }

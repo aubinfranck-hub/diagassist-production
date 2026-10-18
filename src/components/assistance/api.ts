@@ -174,12 +174,15 @@ export class AssistanceError extends Error {
     this.status = status;
     this.code = code;
   }
-  get unavailable() { return this.code === "ASSISTANCE_DB_MISSING" || this.status === 503; }
+  get unavailable() { return this.code === "ASSISTANCE_DB_MISSING" || (this.status === 503 && this.code !== "PAYMENT_NOT_CONFIGURED"); }
+  get paymentNotConfigured() { return this.code === "PAYMENT_NOT_CONFIGURED"; }
   get offline() { return this.code === "OFFLINE"; }
 }
 
 export const MSG_UNAVAILABLE =
   "Le service d'assistance n'est pas encore ouvert. Merci de réessayer plus tard.";
+
+export const MSG_PAYMENT_OFF = "Le paiement en ligne n'est pas encore activé.";
 
 export function authToken(): string {
   try { return localStorage.getItem("auth_session_token") || ""; } catch { return ""; }
@@ -213,6 +216,9 @@ export async function api<T = any>(
   }
   let data: any = null;
   try { data = await res.json(); } catch { /* corps vide */ }
+  if (data?.code === "PAYMENT_NOT_CONFIGURED") {
+    throw new AssistanceError(MSG_PAYMENT_OFF, res.status || 503, "PAYMENT_NOT_CONFIGURED");
+  }
   if (res.status === 503 || data?.code === "ASSISTANCE_DB_MISSING") {
     throw new AssistanceError(MSG_UNAVAILABLE, 503, "ASSISTANCE_DB_MISSING");
   }
@@ -321,11 +327,36 @@ export const MSG_SUBSCRIPTION =
 export const MSG_ALREADY_TAKEN = "Un autre mécanicien a déjà pris cette mission.";
 export const MSG_AI_TITLE = "Analyse DiagAssist — pistes à vérifier";
 
-/** Texte du montant indicatif (jamais un prix inventé : null = à convenir). */
+/** Conservé pour l'espace mécanicien. */
 export function indicativeText(n?: number | null): string {
   return typeof n === "number" && n > 0
-    ? `Montant indicatif : ${formatXOF(n)} (à confirmer avec le mécanicien)`
-    : "Montant à convenir avec le mécanicien";
+    ? `Tarif : ${Math.round(n).toLocaleString("fr-FR")} F CFA`
+    : "Tarif à confirmer avec le client";
+}
+
+/** Tarif affiché (jamais un prix inventé : null = à confirmer). */
+export function tariffText(n?: number | null): string {
+  return typeof n === "number" && n > 0
+    ? `Tarif : ${Math.round(n).toLocaleString("fr-FR")} F CFA`
+    : "Tarif à confirmer";
+}
+
+export const PAY_METHODS: { code: PayMethod; label: string; color: string }[] = [
+  { code: "wave", label: "Wave", color: "#1dc8ff" },
+  { code: "orange", label: "Orange Money", color: "#ff7900" },
+  { code: "mtn", label: "MTN Money", color: "#ffcc00" },
+  { code: "moov", label: "Moov Money", color: "#0a7ad1" },
+];
+
+export const PAYMENT_SHORT: Record<string, string> = {
+  aucun: "À payer", en_attente: "Paiement en attente", paye: "Payé", echoue: "Paiement échoué",
+};
+
+/** Statut de paiement lisible pour l'historique (vide si rien n'est dû). */
+export function paymentShort(r: { status?: string; paymentStatus?: string; amountAgreed?: number | null }): string {
+  if (r.paymentStatus === "paye") return "Payé";
+  if (r.status !== "terminee" || !(Number(r.amountAgreed) > 0)) return "";
+  return PAYMENT_SHORT[r.paymentStatus || "aucun"] || "À payer";
 }
 
 export const isFinalStatus = (s?: string) => s === "terminee" || s === "annulee";

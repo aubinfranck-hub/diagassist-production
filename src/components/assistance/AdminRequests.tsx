@@ -21,6 +21,7 @@ export default function AdminRequests() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [manual, setManual] = useState(false);
+  const [mode, setMode] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
 
   const zones = useAdminLoad("/zones");
@@ -29,14 +30,17 @@ export default function AdminRequests() {
 
   if (openId) return <RequestDetail id={openId} onBack={() => { setOpenId(null); list.reload(); }} />;
 
-  const requests: any[] = list.data?.requests || [];
+  const requests: any[] = (list.data?.requests || []).filter((r: any) => !mode || (r.mode || "depannage") === mode);
   const zoneName = (r: any) => r.zoneName || (zones.data?.zones || []).find((z: any) => String(z.id) === String(r.zoneId))?.name || (r.zoneId ?? "—");
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 lg:grid-cols-7 gap-2">
         <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">Tous statuts</option>{STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
+        </select>
+        <select className={inputCls} value={mode} onChange={(e) => setMode(e.target.value)}>
+          <option value="">Tous parcours</option><option value="depannage">Dépannage</option><option value="atelier">Atelier</option>
         </select>
         <select className={inputCls} value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
           <option value="">Toutes zones</option>{(zones.data?.zones || []).map((z: any) => <option key={z.id} value={z.id}>{z.name}</option>)}
@@ -60,6 +64,9 @@ export default function AdminRequests() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-[11px] text-slate-400">#{String(r.id).slice(0, 8)}</span>
                 <Badge status={r.status} />
+                <Badge status={r.mode || "depannage"} />
+                {r.mode === "atelier" && r.visitStatus && r.visitStatus !== "aucune" ? <Badge status={r.visitStatus} label={`Visite : ${statusLabel(r.visitStatus)}`} /> : null}
+                {r.paymentStatus && r.paymentStatus !== "aucun" ? <Badge status={r.paymentStatus} label={`Paiement : ${statusLabel(r.paymentStatus)}`} /> : null}
                 {r.manualRequested || r.manualRequestedAt ? <ManualTag /> : null}
                 <span className="text-xs text-white font-bold">{svc(r.service)}</span>
                 <span className="text-[11px] text-slate-400 ml-auto">{fmtDate(r.createdAt)}</span>
@@ -93,6 +100,7 @@ function RequestDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const quotes: any[] = data.quotes || r.quotes || [];
   const media: any[] = data.media || r.media || [];
   const pos = r.position || data.position || null;
+  const payments: any[] = data.payments || r.payments || [];
   const closed = ["terminee", "annulee"].includes(r.status);
   const canRedispatch = ["recherche", "sans_disponibilite", "affectee"].includes(r.status) || !!r.manualRequested;
 
@@ -118,7 +126,10 @@ function RequestDetail({ id, onBack }: { id: string; onBack: () => void }) {
           {r.faultCodes && <p className="sm:col-span-2">Codes défaut : {Array.isArray(r.faultCodes) ? r.faultCodes.join(", ") : String(r.faultCodes)}</p>}
           {r.description && <p className="sm:col-span-2">Description : {r.description}</p>}
           <p>Statut devis : {statusLabel(r.quoteStatus)}</p>
-          <p>Montant convenu (hors plateforme) : {r.amountAgreed ? fmtXof(r.amountAgreed) : "—"}</p>
+          <p>Parcours : <b className="text-white">{statusLabel(r.mode || "depannage")}</b>{r.mode === "atelier" ? ` · Visite : ${statusLabel(r.visitStatus || "aucune")}` : ""}</p>
+          <p>Tarif affiché : {r.tariff ? fmtXof(r.tariff) : "—"}</p>
+          <p>Montant convenu : {r.amountAgreed ? fmtXof(r.amountAgreed) : "—"}</p>
+          <p>Paiement : {statusLabel(r.paymentStatus || "aucun")}</p>
           {r.aiAnalysis && <p className="sm:col-span-2">Analyse DiagAssist — pistes à vérifier : <span className="text-slate-400 whitespace-pre-line">{String(r.aiAnalysis)}</span></p>}
         </div>
         {pos && (
@@ -208,6 +219,14 @@ function RequestDetail({ id, onBack }: { id: string; onBack: () => void }) {
             {q.note && <p className="pl-3 text-slate-400">Note : {q.note}</p>}
             {(q.decidedAt || q.decision) && <p className="pl-3 text-slate-400">Décision : {q.decision || q.status} le {fmtDate(q.decidedAt)}{q.decidedBy ? ` par ${q.decidedBy}` : ""}</p>}
           </div>
+        ))}
+      </Section>
+
+      <Section title="Paiement">
+        {payments.length === 0 ? <Empty text="Aucun paiement." /> : payments.map((p, i) => (
+          <p key={p.reference ?? i} className="text-xs text-slate-300">
+            <span className="font-mono text-slate-500">{p.reference}</span> · <Badge status={p.status} /> · Brut {fmtXof(p.amount)} · Commission {fmtXof(p.commission_amount ?? p.commissionAmount)} · Net {fmtXof(p.pro_amount ?? p.proAmount)} · <Badge status={p.payout_status ?? p.payoutStatus} />
+          </p>
         ))}
       </Section>
 

@@ -26,6 +26,15 @@ export interface ProMission {
   quoteStatus?: string;
   media: { id: string; mime?: string }[];
   aiAnalysis?: string | null;
+  mode?: "depannage" | "atelier";
+  visitStatus?: string;
+  tariff?: number | null;
+  allowed?: { enRoute?: boolean; surPlace?: boolean; enIntervention?: boolean; terminer?: boolean; quote?: boolean; release?: boolean };
+  payment?: {
+    reference?: string; method?: string; amount?: number; status?: string;
+    commissionAmount?: number; proAmount?: number; payoutStatus?: string; payoutAt?: number | null;
+  } | null;
+  distanceKm?: number | null;
   createdAt?: number;
   total?: number | null;
   amount?: number | null;
@@ -39,6 +48,8 @@ export function normalizeMission(raw: any): ProMission {
   const out = { ...r, ...m } as ProMission;
   out.quotes = raw?.quotes ?? m.quotes ?? [];
   out.media = raw?.media ?? m.media ?? [];
+  out.allowed = raw?.allowed ?? m.allowed;
+  out.payment = raw?.payment ?? m.payment ?? null;
   out.diagnostic = raw?.diagnostic ?? m.diagnostic ?? r.diagnostic ?? null;
   return out;
 }
@@ -51,6 +62,17 @@ const PRO_STATUS: Record<string, string> = {
   terminee: "Mission terminée",
   annulee: "Mission annulée",
 };
+
+const ATELIER_STATUS: Record<string, string> = {
+  affectee: "Visite confirmée : le client vient à votre garage",
+  en_route: "Le client est en route vers votre garage",
+  sur_place: "Le client est arrivé",
+  en_intervention: "Intervention en cours",
+  terminee: "Mission terminée",
+  annulee: "Mission annulée",
+};
+
+const PAY_LABEL: Record<string, string> = { en_attente: "En attente", paye: "Payé", echoue: "Échoué", annule: "Annulé" };
 
 export default function MechanicMission({
   mission, onChanged,
@@ -77,10 +99,15 @@ export default function MechanicMission({
   };
   const setStatus = (to: string) => run(to, () => api(`/pro/missions/${mission.id}/status`, { body: { to } }));
 
-  const pos = mission.position;
+  const atelier = mission.mode === "atelier";
+  const awaitingClient = atelier && mission.visitStatus !== "confirmee" && st === "affectee";
+  const al = mission.allowed;
+  const can = (k: keyof NonNullable<ProMission["allowed"]>) => (al ? !!al[k] : !awaitingClient);
+  const tariff = mission.tariff ?? tariffs[mission.service || ""]?.indicatif ?? null;
+  const pos = atelier ? undefined : mission.position;
   const clientPhone = (mission.clientPhone ?? mission.contactPhone) as string | undefined;
   const hasInitial = mission.quotes.some((q) => q.kind === "initial" && q.status !== "refuse");
-  const canQuote = (st === "sur_place" || st === "en_intervention") && !pending;
+  const canQuote = (st === "sur_place" || st === "en_intervention") && !pending && (al ? al.quote !== false : true);
   const live = !["terminee", "annulee"].includes(st);
 
   return (
@@ -90,7 +117,11 @@ export default function MechanicMission({
 
       <Card className="space-y-3 !border-2 !border-red-500/40">
         <div className="text-xs font-black uppercase tracking-wider text-red-500">Mission en cours</div>
-        <h2 className="text-xl font-black text-white leading-tight">{PRO_STATUS[st] || st}</h2>
+        <span className={`inline-block text-[11px] font-black uppercase tracking-wider rounded-full px-2.5 py-1 ${atelier ? "bg-sky-500/15 text-sky-300" : "bg-red-500/15 text-red-300"}`}>
+          {atelier ? "Client vient à votre garage" : "Dépannage chez le client"}
+        </span>
+        <h2 className="text-xl font-black text-white leading-tight">{awaitingClient ? "En attente de la confirmation du client" : (atelier ? ATELIER_STATUS : PRO_STATUS)[st] || st}</h2>
+        {awaitingClient && <Notice tone="warn">Vous avez accepté de recevoir le client. La mission ne peut pas avancer tant qu'il n'a pas confirmé sa venue. Son téléphone vous sera communiqué à ce moment.</Notice>}
         <div className="text-sm text-slate-300 space-y-1">
           <div><span className="text-slate-500">Service :</span> {mission.serviceLabel || mission.service}</div>
           <div><span className="text-slate-500">Véhicule :</span> {vehicleLabel(mission.vehicle)}</div>
@@ -99,7 +130,7 @@ export default function MechanicMission({
           {faultCodesList(mission.faultCodes).length > 0 && <div><span className="text-slate-500">Codes défaut :</span> {faultCodesList(mission.faultCodes).join(", ")}</div>}
         </div>
 
-        <div className="text-sm font-bold text-amber-300">{indicativeText(tariffs[mission.service || ""]?.indicatif)}</div>
+        <div className="text-sm font-bold text-amber-300">{tariff ? `Tarif : ${formatXOF(tariff)}` : indicativeText(null)}</div>
         {mission.aiAnalysis && (
           <div className="rounded-xl bg-slate-950/60 border border-white/[0.06] p-3">
             <div className="text-[11px] font-black uppercase tracking-wider text-slate-400">{MSG_AI_TITLE}</div>
@@ -109,16 +140,23 @@ export default function MechanicMission({
 
         {/* Étapes de la mission */}
         <div className="space-y-2 pt-1">
-          {st === "affectee" && <button className={btnPrimary} disabled={!!busy} onClick={() => setStatus("en_route")}>{busy === "en_route" && <Loader2 className="w-5 h-5 animate-spin" />} Je pars</button>}
-          {st === "en_route" && <button className={btnPrimary} disabled={!!busy} onClick={() => setStatus("sur_place")}>{busy === "sur_place" && <Loader2 className="w-5 h-5 animate-spin" />} Je suis arrivé</button>}
-          {st === "sur_place" && <button className={btnPrimary} disabled={!!busy} onClick={() => setStatus("en_intervention")}>{busy === "en_intervention" && <Loader2 className="w-5 h-5 animate-spin" />} Je commence</button>}
+          {!atelier && st === "affectee" && <button className={btnPrimary} disabled={!!busy || !can("enRoute")} onClick={() => setStatus("en_route")}>{busy === "en_route" && <Loader2 className="w-5 h-5 animate-spin" />} Je pars</button>}
+          {!atelier && st === "en_route" && <button className={btnPrimary} disabled={!!busy || !can("surPlace")} onClick={() => setStatus("sur_place")}>{busy === "sur_place" && <Loader2 className="w-5 h-5 animate-spin" />} Je suis arrivé</button>}
+          {atelier && awaitingClient && <button className={btnPrimary} disabled>En attente du client…</button>}
+          {atelier && !awaitingClient && ["affectee", "en_route"].includes(st) && (
+            <>
+              {st === "en_route" && <p className="text-sm font-bold text-sky-300">Le client est en route.</p>}
+              <button className={btnPrimary} disabled={!!busy || !can("surPlace")} onClick={() => setStatus("sur_place")}>{busy === "sur_place" && <Loader2 className="w-5 h-5 animate-spin" />} Client arrivé</button>
+            </>
+          )}
+          {st === "sur_place" && <button className={btnPrimary} disabled={!!busy || !can("enIntervention")} onClick={() => setStatus("en_intervention")}>{busy === "en_intervention" && <Loader2 className="w-5 h-5 animate-spin" />} {atelier ? "Démarrer la réparation" : "Je commence"}</button>}
           {st === "en_intervention" && (
             <>
-              <button className={btnGreen} disabled={!!busy || pending} onClick={() => setStatus("terminee")}>{busy === "terminee" && <Loader2 className="w-5 h-5 animate-spin" />} Terminer la mission</button>
+              <button className={btnGreen} disabled={!!busy || pending || !can("terminer")} onClick={() => setStatus("terminee")}>{busy === "terminee" && <Loader2 className="w-5 h-5 animate-spin" />} {atelier ? "Terminer la réparation" : "Terminer la mission"}</button>
               {pending && <p className="text-xs text-amber-400">Un devis attend l'accord du client : vous pourrez terminer ensuite.</p>}
             </>
           )}
-          {["affectee", "en_route", "sur_place"].includes(st) && (
+          {["affectee", "en_route", "sur_place"].includes(st) && (!al || al.release !== false) && (
             <button
               className="w-full min-h-[44px] text-sm font-bold text-red-400 underline underline-offset-4 cursor-pointer"
               disabled={!!busy}
@@ -134,9 +172,10 @@ export default function MechanicMission({
       </Card>
 
       {/* Client + itinéraire */}
-      {live && (
+      {live && (!atelier || clientPhone) && (
         <Card className="space-y-3">
           <h3 className="text-base font-black text-white flex items-center gap-2"><MapPin className="w-5 h-5 text-red-500" /> Le client</h3>
+          {atelier && mission.distanceKm != null && <div className="text-sm text-slate-400">Distance annoncée : environ {Number(mission.distanceKm).toFixed(1)} km</div>}
           {pos?.address && <div className="text-sm text-slate-200">{pos.address}</div>}
           {pos?.landmark && <div className="text-sm text-slate-400">Repère : {pos.landmark}</div>}
           {pos && <TrackMap client={{ lat: pos.lat, lng: pos.lng }} height="h-52" />}
@@ -222,7 +261,26 @@ export default function MechanicMission({
       )}
       {(st === "sur_place" || st === "en_intervention") && pending && <Notice tone="warn">Devis envoyé : en attente de la réponse du client.</Notice>}
 
-      {st === "terminee" && <Notice tone="info">Mission terminée. Le montant convenu se règle directement avec le client, hors plateforme.</Notice>}
+      {(st === "terminee" || mission.payment) && (
+        <Card className="space-y-2">
+          <h3 className="text-base font-black text-white">Paiement</h3>
+          {!mission.payment ? (
+            <p className="text-sm text-slate-400">Le client paie via DiagAssist une fois la mission terminée ; vous recevez le montant moins la commission.</p>
+          ) : (
+            <div className="text-sm space-y-1">
+              <div className="flex justify-between text-slate-300"><span>Montant</span><span>{formatXOF(mission.payment.amount)}</span></div>
+              <div className="flex justify-between text-slate-300"><span>État</span><span className={mission.payment.status === "paye" ? "font-black text-emerald-400" : "font-black text-amber-400"}>{mission.payment.status === "paye" ? "Payé" : PAY_LABEL[mission.payment.status || ""] || "En attente"}</span></div>
+              {mission.payment.status === "paye" && (
+                <>
+                  <div className="flex justify-between text-slate-400"><span>Commission DiagAssist</span><span>− {formatXOF(mission.payment.commissionAmount)}</span></div>
+                  <div className="flex justify-between font-black text-white"><span>Net pour vous</span><span>{formatXOF(mission.payment.proAmount)}</span></div>
+                  <div className="flex justify-between text-slate-300"><span>Reversement</span><span>{mission.payment.payoutStatus === "reverse" ? "Reversé" : "À recevoir"}</span></div>
+                </>
+              )}
+            </div>
+          )}
+        </Card>
+      )}
 
       <ChatPanel requestId={reqId} me="pro" disabled={st === "annulee"} />
     </div>

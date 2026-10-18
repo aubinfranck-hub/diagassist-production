@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronRight, LifeBuoy, LocateFixed, MapPin, WifiOff, Wrench } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, RequestSummary,
+  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, paymentShort, tariffText, RequestSummary,
   STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
 import ClientWizard, { AssistancePrefill } from "./ClientWizard";
@@ -14,7 +14,16 @@ import { btnPrimary, btnSecondary, errText, Notice, Spinner, StateBox } from "./
 
 export type { AssistancePrefill } from "./ClientWizard";
 
-type View = { name: "home" } | { name: "wizard" } | { name: "track"; id: string };
+type View = { name: "home" } | { name: "wizard" } | { name: "track"; id: string; payReturn?: boolean };
+
+/** Retour de Jèko : `?assistance=<id>&payment=return`. Lu une seule fois, puis retiré de l'URL. */
+function readPaymentReturn(): string | null {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const id = q.get("assistance");
+    return id && q.get("payment") === "return" ? id : null;
+  } catch { return null; }
+}
 
 /** Une demande est « active » tant qu'elle n'est ni terminée ni annulée. */
 function isActive(r: RequestSummary): boolean {
@@ -35,9 +44,20 @@ export default function ClientAssistance({
   const [requests, setRequests] = useState<RequestSummary[] | null>(null);
   const [unavailable, setUnavailable] = useState<string>("");
   const [loadError, setLoadError] = useState("");
-  const [view, setView] = useState<View>(prefill ? { name: "wizard" } : { name: "home" });
+  const [returnId] = useState<string | null>(() => readPaymentReturn());
+  const [view, setView] = useState<View>(
+    returnId ? { name: "track", id: returnId, payReturn: true } : prefill ? { name: "wizard" } : { name: "home" }
+  );
+  useEffect(() => {
+    if (!returnId) return;
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("assistance"); u.searchParams.delete("payment");
+      window.history.replaceState(null, "", u.pathname + (u.search || "") + u.hash);
+    } catch { /* sans effet */ }
+  }, [returnId]);
   const [wizardPrefill, setWizardPrefill] = useState<AssistancePrefill | null>(prefill || null);
-  const autoOpened = useRef(!!prefill);
+  const autoOpened = useRef(!!prefill || !!returnId);
 
   // Position de l'automobiliste (accueil) : géolocalisation, sinon repli sur l'épingle à déplacer.
   const [homePos, setHomePos] = useState<LatLng | null>(null);
@@ -123,7 +143,7 @@ export default function ClientAssistance({
     return (
       <Wrap>
         <div className="relative">
-          <ClientTracking requestId={view.id} status={status} onBack={() => { setView({ name: "home" }); void loadAll(); }} />
+          <ClientTracking requestId={view.id} status={status} paymentReturn={!!view.payReturn} onBack={() => { setView({ name: "home" }); void loadAll(); }} />
           <SosButton className="absolute top-3 right-3 z-20" />
         </div>
       </Wrap>
@@ -133,6 +153,7 @@ export default function ClientAssistance({
   // ----- Accueil : carte plein écran + panneau du bas -----
   const anyAvailable = !!status?.services.some((s) => s.available);
   const active = requests?.find(isActive);
+  const toPay = (requests || []).find((r) => r.status === "terminee" && Number(r.amountAgreed) > 0 && r.paymentStatus !== "paye");
   const past = (requests || []).filter((r) => r !== active);
 
   return (
@@ -178,7 +199,7 @@ export default function ClientAssistance({
         {!status ? <Spinner /> : !anyAvailable ? (
           <Notice tone="warn">Aucun mécanicien n'est disponible dans votre zone pour le moment. Bientôt disponible.</Notice>
         ) : (
-          !active && <p className="text-sm text-slate-400">Un mécanicien proche de vous vient jusqu'à votre véhicule.</p>
+          !active && <p className="text-sm text-slate-400">Dépannage chez vous ou garage proche : vous choisissez à l'étape suivante.</p>
         )}
 
         {active && (
@@ -186,7 +207,16 @@ export default function ClientAssistance({
             <div className="text-xs font-black uppercase tracking-wider text-red-500">Demande en cours</div>
             <div className="text-base font-black text-white mt-0.5">{STATUS_SHORT[active.status] || active.status}</div>
             <div className="text-sm text-slate-400 truncate">{vehicleLabel(active.vehicle)}{active.symptoms ? ` · ${active.symptoms}` : ""}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{active.statusLabel || ""}{active.statusLabel ? " · " : ""}{active.amountAgreed ? formatXOF(active.amountAgreed) : tariffText(active.tariff)}</div>
           </div>
+        )}
+
+        {toPay && (
+          <button onClick={() => setView({ name: "track", id: toPay.id })} className="w-full text-left rounded-2xl border-2 border-amber-500/50 px-4 py-3 cursor-pointer">
+            <div className="text-xs font-black uppercase tracking-wider text-amber-400">Paiement à faire</div>
+            <div className="text-base font-black text-white mt-0.5">{formatXOF(toPay.amountAgreed)} · {toPay.serviceLabel || "Intervention"}</div>
+            <div className="text-xs text-slate-400">{paymentShort(toPay)} · Touchez pour payer</div>
+          </button>
         )}
 
         {past.length > 0 && (
@@ -202,7 +232,9 @@ export default function ClientAssistance({
                       <span className="text-xs text-slate-500 shrink-0">{formatDate(r.createdAt)}</span>
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">
-                      {STATUS_SHORT[r.status] || r.status}{proName ? ` · ${proName}` : ""}{r.amountAgreed != null ? ` · ${formatXOF(r.amountAgreed)}` : ""}
+                      {STATUS_SHORT[r.status] || r.status}{proName ? ` · ${proName}` : ""}
+                      {r.amountAgreed ? ` · ${formatXOF(r.amountAgreed)}` : r.tariff != null ? ` · ${tariffText(r.tariff)}` : ""}
+                      {paymentShort(r) ? ` · ${paymentShort(r)}` : ""}
                     </div>
                   </button>
                 );

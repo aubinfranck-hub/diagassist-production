@@ -110,18 +110,20 @@ const NUM_FIELDS: { key: string; label: string; hint?: string }[] = [
   { key: "max_candidates", label: "Nombre max de candidats au total (défaut serveur : 10)" },
   { key: "location_max_age_min", label: "Âge max de la position (min)" },
   { key: "avg_speed_kmh", label: "Vitesse moyenne ETA (km/h)" },
+  { key: "commission_pct", label: "Commission DiagAssist (%)" },
 ];
 
 function SettingsBlock() {
   const { data, loading, error, reload } = useAdminLoad("/settings");
   const { busy, fb, run } = useAction();
   const [vals, setVals] = useState<Record<string, string>>({});
+  const [localErr, setLocalErr] = useState("");
   const [tariffs, setTariffs] = useState<Record<string, { deplacement: string; diagnostic: string; indicatif: string }>>({});
 
   useEffect(() => {
     if (!data) return;
     const s = data.settings || data;
-    setVals(Object.fromEntries(NUM_FIELDS.map((f) => [f.key, s[f.key] == null ? "" : String(s[f.key])])));
+    setVals(Object.fromEntries(NUM_FIELDS.map((f) => [f.key, s[f.key] == null ? (f.key === "commission_pct" ? "10" : "") : String(s[f.key])])));
     const t: Record<string, any> = s.tariffs || {};
     setTariffs(Object.fromEntries(Object.keys(SERVICE_LABELS).map((c) => [c, { deplacement: t[c]?.deplacement == null ? "" : String(t[c].deplacement), diagnostic: t[c]?.diagnostic == null ? "" : String(t[c].diagnostic), indicatif: t[c]?.indicatif == null ? "" : String(t[c].indicatif) }])));
   }, [data]);
@@ -129,6 +131,11 @@ function SettingsBlock() {
   const save = async () => {
     const body: Record<string, any> = {};
     for (const f of NUM_FIELDS) if (vals[f.key] !== "" && !isNaN(Number(vals[f.key]))) body[f.key] = Number(vals[f.key]);
+    if (body.commission_pct != null && (body.commission_pct < 0 || body.commission_pct > 100)) {
+      setLocalErr("La commission doit être comprise entre 0 et 100 %.");
+      return;
+    }
+    setLocalErr("");
     const t: Record<string, Record<string, number>> = {};
     for (const [c, v] of Object.entries(tariffs) as [string, { deplacement: string; diagnostic: string; indicatif: string }][]) {
       const o: Record<string, number> = {};
@@ -146,14 +153,15 @@ function SettingsBlock() {
     <div className={cardCls}>
       <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">Réglages</p>
       <Feedback fb={fb} />
+      {localErr && <Feedback fb={{ ok: false, message: localErr }} />}
       {loading && !data ? <Loading /> : error ? <ErrorBox message={error} onRetry={reload} /> : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
             {NUM_FIELDS.map((f) => (
-              <Field key={f.key} label={f.label}><input className={inputCls} inputMode="decimal" value={vals[f.key] ?? ""} onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))} placeholder="Non configuré" /></Field>
+              <Field key={f.key} label={f.label}><input className={inputCls} inputMode="decimal" value={vals[f.key] ?? ""} onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))} placeholder={f.key === "commission_pct" ? "10" : "Non configuré"} /></Field>
             ))}
           </div>
-          <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider pt-2">Tarifs par service (FCFA)</p>
+          <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider pt-2">Tarifs par service (F CFA)</p>
           <p className="text-[10px] text-slate-500">Aucun tarif par défaut : un champ vide signifie « non configuré ».</p>
           <div className="space-y-1.5">
             {Object.entries(SERVICE_LABELS).map(([c, l]) => (
@@ -161,7 +169,7 @@ function SettingsBlock() {
                 <span className="text-xs text-slate-400">{l}</span>
                 <input className={inputCls} inputMode="numeric" placeholder="Déplacement : non configuré" value={tariffs[c]?.deplacement ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), deplacement: e.target.value } }))} />
                 <input className={inputCls} inputMode="numeric" placeholder="Diagnostic : non configuré" value={tariffs[c]?.diagnostic ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), diagnostic: e.target.value } }))} />
-                <input className={inputCls} inputMode="numeric" placeholder="Montant indicatif (F CFA) : non configuré" title="Montant indicatif (F CFA)" value={tariffs[c]?.indicatif ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), indicatif: e.target.value } }))} />
+                <input className={inputCls} inputMode="numeric" placeholder="Tarif affiché (F CFA) : non configuré" title="Tarif affiché (F CFA)" value={tariffs[c]?.indicatif ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), indicatif: e.target.value } }))} />
               </div>
             ))}
           </div>

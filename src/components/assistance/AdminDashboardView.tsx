@@ -38,8 +38,9 @@ export default function AdminDashboardView() {
   let src: Record<string, any> = rest;
   for (const k of ["dashboard", "stats", "indicators", "indicateurs"]) if (rest[k] && typeof rest[k] === "object") src = rest[k];
 
-  const scalars = Object.entries(src).filter(([, v]) => typeof v === "number" || typeof v === "string");
-  const groups = Object.entries(src).filter(([, v]) => v && typeof v === "object" && !Array.isArray(v)) as [string, Record<string, any>][];
+  const pay = (src.payments && typeof src.payments === "object" ? src.payments : null) as Record<string, number> | null;
+  const scalars = Object.entries(src).filter(([k, v]) => k !== "atelierRequests" && (typeof v === "number" || typeof v === "string"));
+  const groups = Object.entries(src).filter(([k, v]) => k !== "payments" && v && typeof v === "object" && !Array.isArray(v)) as [string, Record<string, any>][];
   const arrays = Object.entries(src).filter(([, v]) => Array.isArray(v)) as [string, any[]][];
   const numericTotal = scalars.reduce((s, [, v]) => s + (typeof v === "number" ? v : 0), 0)
     + groups.reduce((s, [, g]) => s + Object.values(g).reduce((a: number, b: any) => a + (typeof b === "number" ? b : 0), 0), 0);
@@ -52,6 +53,23 @@ export default function AdminDashboardView() {
       ) : (
         <>
           {numericTotal === 0 && <Empty text="Aucune activité enregistrée pour le moment : tous les indicateurs sont à zéro." />}
+          {(pay || typeof src.atelierRequests === "number") && (
+            <div className="space-y-2">
+              <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">Paiements et ateliers{pay?.commissionPct != null ? ` (commission ${pay.commissionPct} %)` : ""}</p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+                {([
+                  ["Encaissé", pay?.collected, true], ["Commissions DiagAssist", pay?.commission, true],
+                  ["À reverser", pay?.toReverse, true], ["Reversé", pay?.reversed, true],
+                  ["Demandes atelier", src.atelierRequests, false],
+                ] as [string, number | undefined, boolean][]).filter(([, v]) => typeof v === "number").map(([l, v, money]) => (
+                  <div key={l} className="bg-slate-950/60 border border-white/[0.06] rounded-xl p-3">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{l}</p>
+                    <p className="text-xl font-extrabold text-white mt-1">{money ? fmtXof(v) : (v as number).toLocaleString("fr-FR")}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {scalars.length > 0 && (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
               {scalars.map(([k, v]) => (

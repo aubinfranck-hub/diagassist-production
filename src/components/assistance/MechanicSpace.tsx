@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, Clock, Loader2, MapPin, ShieldAlert, ShieldCheck, WifiOff, X } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, indicativeText, MSG_ALREADY_TAKEN, MSG_AI_TITLE, MSG_SUBSCRIPTION, STATUS_SHORT, useOnline, usePolling, vehicleLabel,
+  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, MSG_ALREADY_TAKEN, MSG_AI_TITLE, MSG_SUBSCRIPTION, STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
+import MechanicEarnings from "./MechanicEarnings";
 import MechanicMission, { normalizeMission, ProMission } from "./MechanicMission";
 import MechanicProfile, { ProProfile } from "./MechanicProfile";
 import { btnGreen, btnPrimary, btnSecondary, Card, errText, Notice, Spinner, StateBox, useCountdown } from "./ui";
@@ -14,14 +15,16 @@ interface Offer {
   serviceLabel: string;
   vehicle?: any;
   symptoms?: string;
-  approxPosition?: { lat: number; lng: number; radiusM: number };
+  approxPosition?: { lat: number; lng: number; radiusM: number } | null;
   distanceKm?: number;
   expiresAt: number;
   aiAnalysis?: string | null;
   indicativeAmount?: number | null;
+  mode?: "depannage" | "atelier";
+  tariff?: number | null;
 }
 
-type Tab = "mission" | "profil" | "historique";
+type Tab = "mission" | "gains" | "profil" | "historique";
 const LIVE_STATUSES = ["affectee", "en_route", "sur_place", "en_intervention"];
 const LOCATION_EVERY_MS = 20000;
 
@@ -251,8 +254,8 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
       )}
 
       {/* Onglets */}
-      <div className="grid grid-cols-3 gap-2 bg-slate-950/60 p-1 rounded-2xl border border-white/[0.06]" role="tablist">
-        {([["mission", "Missions"], ["profil", "Mon profil"], ["historique", "Historique"]] as const).map(([k, l]) => (
+      <div className="grid grid-cols-4 gap-2 bg-slate-950/60 p-1 rounded-2xl border border-white/[0.06]" role="tablist">
+        {([["mission", "Missions"], ["gains", "Mes gains"], ["profil", "Mon profil"], ["historique", "Historique"]] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
             className={`min-h-[44px] rounded-xl text-sm font-black transition cursor-pointer ${tab === k ? "bg-red-600 text-[#ffffff]" : "text-slate-400"}`}>{l}</button>
         ))}
@@ -261,6 +264,8 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
       {tab === "profil" && <MechanicProfile key={profile?.phone || "new"} profile={profile} status={status} onSaved={loadMe} />}
 
       {tab === "historique" && <History />}
+
+      {tab === "gains" && <MechanicEarnings />}
 
       {tab === "mission" && (
         <>
@@ -292,11 +297,15 @@ function OfferCard({
 }: { offer: Offer; busy: boolean; onAccept: () => void; onDecline: () => void; onExpired: () => void }) {
   const left = useCountdown(offer.expiresAt, onExpired);
   const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
-  const ap = offer.approxPosition;
+  const ap = offer.mode === "atelier" ? null : offer.approxPosition;
+  const atelier = offer.mode === "atelier";
   return (
     <Card className="space-y-3 !border-2 !border-red-500/40">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
+          <span className={`inline-block text-[11px] font-black uppercase tracking-wider rounded-full px-2.5 py-1 mb-1 ${atelier ? "bg-sky-500/15 text-sky-300" : "bg-red-500/15 text-red-300"}`}>
+            {atelier ? "Client vient à votre garage" : "Dépannage chez le client"}
+          </span>
           <div className="text-lg font-black text-white">{offer.serviceLabel}</div>
           <div className="text-sm text-slate-300">{vehicleLabel(offer.vehicle)}</div>
           {offer.symptoms && <div className="text-sm text-slate-400">{offer.symptoms}</div>}
@@ -309,7 +318,7 @@ function OfferCard({
         {offer.distanceKm != null && <span>À environ {offer.distanceKm.toFixed(1)} km</span>}
         {ap && <a className="underline" target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps?q=${ap.lat},${ap.lng}`}>Voir la zone sur la carte</a>}
       </div>
-      <div className="text-sm font-bold text-amber-300">{indicativeText(offer.indicativeAmount)}</div>
+      <div className="text-sm font-bold text-amber-300">{(offer.tariff ?? offer.indicativeAmount) ? `Tarif : ${formatXOF(offer.tariff ?? offer.indicativeAmount)}` : "Montant à convenir avec le mécanicien"}</div>
       {offer.aiAnalysis && (
         <div className="rounded-xl bg-slate-950/60 border border-white/[0.06] p-3">
           <div className="text-[11px] font-black uppercase tracking-wider text-slate-400">{MSG_AI_TITLE}</div>
@@ -317,10 +326,15 @@ function OfferCard({
         </div>
       )}
       <p className="text-xs font-bold text-slate-300">Le premier à accepter prend la mission.</p>
-      <p className="text-xs text-slate-500">Position approximative : l'adresse exacte vous sera donnée si vous acceptez.</p>
+      <p className="text-xs text-slate-500">
+        {atelier
+          ? "Le client doit encore confirmer sa venue. Sa position et son téléphone ne sont pas communiqués."
+          : "Position approximative : l'adresse exacte vous sera donnée si vous acceptez."}
+      </p>
+      <p className="text-xs text-slate-500">Le client paie via DiagAssist ; vous recevez le montant moins la commission.</p>
       <div className="grid grid-cols-2 gap-3">
         <button className={btnSecondary} disabled={busy} onClick={onDecline}><X className="w-5 h-5" /> Refuser</button>
-        <button className={btnGreen} disabled={busy || left === 0} onClick={onAccept}>{busy && <Loader2 className="w-5 h-5 animate-spin" />} Accepter</button>
+        <button className={btnGreen} disabled={busy || left === 0} onClick={onAccept}>{busy && <Loader2 className="w-5 h-5 animate-spin" />} {atelier ? "Je peux le recevoir" : "Accepter"}</button>
       </div>
       {left === 0 && <p className="text-xs text-slate-500 text-center">Offre expirée.</p>}
     </Card>
