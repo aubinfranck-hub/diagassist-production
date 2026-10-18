@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronRight, LifeBuoy, WifiOff, Wrench } from "lucide-react";
+import { AlertTriangle, ChevronRight, LifeBuoy, MapPin, WifiOff, Wrench } from "lucide-react";
 import {
   api, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, RequestSummary,
   STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
 import ClientWizard, { AssistancePrefill } from "./ClientWizard";
 import ClientTracking from "./ClientTracking";
+import { LocationPicker, LatLng } from "./AssistanceMaps";
 import { btnPrimary, btnSecondary, Card, errText, Notice, Spinner, StateBox } from "./ui";
 
 export type { AssistancePrefill } from "./ClientWizard";
@@ -18,11 +19,13 @@ function isActive(r: RequestSummary): boolean {
 }
 
 export default function ClientAssistance({
-  prefill, onPrefillUsed, onOpenMechanicSpace,
+  prefill, onPrefillUsed, onOpenMechanicSpace, driverMode,
 }: {
   prefill?: AssistancePrefill | null;
   onPrefillUsed?: () => void;
   onOpenMechanicSpace?: () => void;
+  /** Mode automobiliste : accueil simplifié avec carte, sans lien vers l'espace mécanicien. */
+  driverMode?: boolean;
 }) {
   const online = useOnline();
   const [status, setStatus] = useState<AssistanceStatus | null>(null);
@@ -32,6 +35,23 @@ export default function ClientAssistance({
   const [view, setView] = useState<View>(prefill ? { name: "wizard" } : { name: "home" });
   const [wizardPrefill, setWizardPrefill] = useState<AssistancePrefill | null>(prefill || null);
   const autoOpened = useRef(!!prefill);
+
+  // Position de l'automobiliste (accueil) : géolocalisation, sinon repli sur l'épingle à déplacer.
+  const [homePos, setHomePos] = useState<LatLng | null>(null);
+  const [homeAcc, setHomeAcc] = useState<number | undefined>();
+  const [geoMsg, setGeoMsg] = useState("");
+  const locate = useCallback(() => {
+    if (!navigator.geolocation) { setGeoMsg("Votre téléphone ne permet pas de vous localiser. Touchez la carte pour placer le point rouge là où vous êtes."); return; }
+    setGeoMsg("Recherche de votre position…");
+    navigator.geolocation.getCurrentPosition(
+      (g) => { setHomePos({ lat: g.coords.latitude, lng: g.coords.longitude }); setHomeAcc(g.coords.accuracy); setGeoMsg(""); },
+      (err) => setGeoMsg(err.code === 1
+        ? "Localisation refusée. Touchez la carte pour placer le point rouge là où vous êtes."
+        : "Position introuvable. Touchez la carte pour placer le point rouge là où vous êtes."),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+    );
+  }, []);
+  useEffect(() => { if (driverMode) locate(); }, [driverMode, locate]);
 
   // Une nouvelle pré-remplissage (depuis un diagnostic) ouvre toujours le parcours.
   useEffect(() => {
@@ -82,6 +102,7 @@ export default function ClientAssistance({
         <ClientWizard
           status={status}
           prefill={wizardPrefill}
+          initialPos={homePos}
           onClose={() => { setWizardPrefill(null); setView({ name: "home" }); }}
           onCreated={(id) => { setWizardPrefill(null); void loadAll(); setView({ name: "track", id }); }}
         />
@@ -106,6 +127,17 @@ export default function ClientAssistance({
     <Wrap>
       {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Vous êtes hors ligne. Reconnectez-vous pour demander de l'aide.</span></Notice>}
       {loadError && online && <Notice tone="warn" action={<button className={btnSecondary} onClick={() => void loadAll()}>Réessayer</button>}>{loadError}</Notice>}
+
+      {driverMode && (
+        <Card className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold text-slate-300 flex items-center gap-2 text-sm"><MapPin className="w-4 h-4 text-red-500" /> Vous êtes ici</span>
+            <button className="text-sm font-bold text-red-400 hover:text-red-300 min-h-[44px] px-2 cursor-pointer" onClick={locate}>Me localiser</button>
+          </div>
+          <LocationPicker value={homePos} accuracy={homeAcc} onChange={(p) => { setHomePos(p); setHomeAcc(undefined); setGeoMsg(""); }} />
+          <p className="text-xs text-slate-500">{geoMsg || (homePos ? "Ce n'est pas le bon endroit ? Faites glisser le point rouge." : "")}</p>
+        </Card>
+      )}
 
       <Card className="space-y-4">
         <div className="flex items-center gap-3">
@@ -166,7 +198,7 @@ export default function ClientAssistance({
         })}
       </div>
 
-      {onOpenMechanicSpace && (
+      {onOpenMechanicSpace && !driverMode && (
         <button onClick={onOpenMechanicSpace} className="w-full min-h-[48px] inline-flex items-center justify-center gap-2 text-sm font-bold text-slate-400 hover:text-white cursor-pointer">
           <Wrench className="w-4 h-4" /> Vous êtes mécanicien ? Espace dépannage
         </button>

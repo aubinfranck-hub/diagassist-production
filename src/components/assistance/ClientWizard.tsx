@@ -35,10 +35,11 @@ interface Attach { blob: Blob; name: string; mime: string; preview?: string; kin
 type GeoState = "idle" | "loading" | "denied" | "unavailable" | "timeout";
 
 export default function ClientWizard({
-  status, prefill, onCreated, onClose,
+  status, prefill, initialPos, onCreated, onClose,
 }: {
   status: AssistanceStatus;
   prefill?: AssistancePrefill | null;
+  initialPos?: LatLng | null;
   onCreated: (id: string) => void;
   onClose: () => void;
 }) {
@@ -60,7 +61,7 @@ export default function ClientWizard({
   const [showMore, setShowMore] = useState(!!(prefill?.faultCodes?.length || prefill?.vehicle?.year || prefill?.vehicle?.engine));
 
   // --- Étape 2 : position ---
-  const [pos, setPos] = useState<LatLng | null>(null);
+  const [pos, setPos] = useState<LatLng | null>(initialPos || null);
   const [accuracy, setAccuracy] = useState<number | undefined>();
   const [source, setSource] = useState<"gps" | "carte" | "adresse">("carte");
   const [geo, setGeo] = useState<GeoState>("idle");
