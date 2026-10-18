@@ -103,8 +103,12 @@ function ServicesBlock() {
   );
 }
 
+type TariffForm = { deplacement: string; diagnostic: string; indicatif: string; min: string; max: string };
+const emptyTariff: TariffForm = { deplacement: "", diagnostic: "", indicatif: "", min: "", max: "" };
+
 const NUM_FIELDS: { key: string; label: string; hint?: string }[] = [
-  { key: "offer_timeout_s", label: "Délai de réponse (secondes)" },
+  { key: "offer_timeout_s", label: "Délai pour faire une offre (secondes)", hint: "Temps laissé à un mécanicien pour proposer son prix après avoir reçu la demande (10 à 600, défaut 120)." },
+  { key: "bid_valid_s", label: "Validité d'une offre (secondes)", hint: "Durée pendant laquelle l'offre d'un mécanicien reste choisissable par le client (30 à 3600, défaut 300)." },
   { key: "search_radius_km", label: "Rayon de recherche (km)" },
   { key: "broadcast_size", label: "Nombre de mécaniciens contactés en même temps (défaut serveur : 5)" },
   { key: "max_candidates", label: "Nombre max de candidats au total (défaut serveur : 10)" },
@@ -118,14 +122,14 @@ function SettingsBlock() {
   const { busy, fb, run } = useAction();
   const [vals, setVals] = useState<Record<string, string>>({});
   const [localErr, setLocalErr] = useState("");
-  const [tariffs, setTariffs] = useState<Record<string, { deplacement: string; diagnostic: string; indicatif: string }>>({});
+  const [tariffs, setTariffs] = useState<Record<string, TariffForm>>({});
 
   useEffect(() => {
     if (!data) return;
     const s = data.settings || data;
     setVals(Object.fromEntries(NUM_FIELDS.map((f) => [f.key, s[f.key] == null ? (f.key === "commission_pct" ? "10" : "") : String(s[f.key])])));
     const t: Record<string, any> = s.tariffs || {};
-    setTariffs(Object.fromEntries(Object.keys(SERVICE_LABELS).map((c) => [c, { deplacement: t[c]?.deplacement == null ? "" : String(t[c].deplacement), diagnostic: t[c]?.diagnostic == null ? "" : String(t[c].diagnostic), indicatif: t[c]?.indicatif == null ? "" : String(t[c].indicatif) }])));
+    setTariffs(Object.fromEntries(Object.keys(SERVICE_LABELS).map((c) => [c, { deplacement: t[c]?.deplacement == null ? "" : String(t[c].deplacement), diagnostic: t[c]?.diagnostic == null ? "" : String(t[c].diagnostic), indicatif: t[c]?.indicatif == null ? "" : String(t[c].indicatif), min: t[c]?.min == null ? "" : String(t[c].min), max: t[c]?.max == null ? "" : String(t[c].max) }])));
   }, [data]);
 
   const save = async () => {
@@ -135,13 +139,21 @@ function SettingsBlock() {
       setLocalErr("La commission doit être comprise entre 0 et 100 %.");
       return;
     }
+    for (const [c, v] of Object.entries(tariffs) as [string, TariffForm][]) {
+      if (v.min !== "" && v.max !== "" && Number(v.min) > Number(v.max)) {
+        setLocalErr(`${SERVICE_LABELS[c] || c} : le minimum ne peut pas dépasser le maximum.`);
+        return;
+      }
+    }
     setLocalErr("");
     const t: Record<string, Record<string, number>> = {};
-    for (const [c, v] of Object.entries(tariffs) as [string, { deplacement: string; diagnostic: string; indicatif: string }][]) {
+    for (const [c, v] of Object.entries(tariffs) as [string, TariffForm][]) {
       const o: Record<string, number> = {};
       if (v.deplacement !== "" && !isNaN(Number(v.deplacement))) o.deplacement = Number(v.deplacement);
       if (v.diagnostic !== "" && !isNaN(Number(v.diagnostic))) o.diagnostic = Number(v.diagnostic);
       if (v.indicatif !== "" && !isNaN(Number(v.indicatif))) o.indicatif = Number(v.indicatif);
+      if (v.min !== "" && !isNaN(Number(v.min))) o.min = Number(v.min);
+      if (v.max !== "" && !isNaN(Number(v.max))) o.max = Number(v.max);
       if (Object.keys(o).length) t[c] = o;
     }
     body.tariffs = t;
@@ -158,20 +170,30 @@ function SettingsBlock() {
         <>
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
             {NUM_FIELDS.map((f) => (
-              <Field key={f.key} label={f.label}><input className={inputCls} inputMode="decimal" value={vals[f.key] ?? ""} onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))} placeholder={f.key === "commission_pct" ? "10" : "Non configuré"} /></Field>
+              <Field key={f.key} label={f.label} hint={f.hint}><input className={inputCls} inputMode="decimal" value={vals[f.key] ?? ""} onChange={(e) => setVals((v) => ({ ...v, [f.key]: e.target.value }))} placeholder={f.key === "commission_pct" ? "10" : "Non configuré"} /></Field>
             ))}
           </div>
           <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider pt-2">Tarifs par service (F CFA)</p>
-          <p className="text-[10px] text-slate-500">Aucun tarif par défaut : un champ vide signifie « non configuré ».</p>
-          <div className="space-y-1.5">
-            {Object.entries(SERVICE_LABELS).map(([c, l]) => (
-              <div key={c} className="grid grid-cols-[7rem_1fr_1fr_1fr] items-center gap-2">
-                <span className="text-xs text-slate-400">{l}</span>
-                <input className={inputCls} inputMode="numeric" placeholder="Déplacement : non configuré" value={tariffs[c]?.deplacement ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), deplacement: e.target.value } }))} />
-                <input className={inputCls} inputMode="numeric" placeholder="Diagnostic : non configuré" value={tariffs[c]?.diagnostic ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), diagnostic: e.target.value } }))} />
-                <input className={inputCls} inputMode="numeric" placeholder="Tarif affiché (F CFA) : non configuré" title="Tarif affiché (F CFA)" value={tariffs[c]?.indicatif ?? ""} onChange={(e) => setTariffs((t) => ({ ...t, [c]: { ...(t[c] || { deplacement: "", diagnostic: "", indicatif: "" }), indicatif: e.target.value } }))} />
-              </div>
-            ))}
+          <p className="text-[10px] text-slate-500">Le tarif de référence est montré aux clients et aux mécaniciens. Le minimum et le maximum limitent le prix qu'un mécanicien peut proposer. Un champ vide signifie « non configuré » (le serveur prend alors 50 % et 150 % du tarif de référence).</p>
+          <div className="space-y-2">
+            {Object.entries(SERVICE_LABELS).map(([c, l]) => {
+              const t = tariffs[c] || emptyTariff;
+              const setT = (k: keyof TariffForm, v: string) => setTariffs((all) => ({ ...all, [c]: { ...(all[c] || emptyTariff), [k]: v } }));
+              const bad = t.min !== "" && t.max !== "" && Number(t.min) > Number(t.max);
+              return (
+                <div key={c} className="bg-slate-900 border border-white/[0.06] rounded-xl p-2 space-y-1.5">
+                  <span className="text-xs font-bold text-white">{l}</span>
+                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+                    <Field label="Tarif de référence"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.indicatif} onChange={(e) => setT("indicatif", e.target.value)} /></Field>
+                    <Field label="Minimum"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.min} onChange={(e) => setT("min", e.target.value)} /></Field>
+                    <Field label="Maximum"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.max} onChange={(e) => setT("max", e.target.value)} /></Field>
+                    <Field label="Déplacement"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.deplacement} onChange={(e) => setT("deplacement", e.target.value)} /></Field>
+                    <Field label="Diagnostic"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.diagnostic} onChange={(e) => setT("diagnostic", e.target.value)} /></Field>
+                  </div>
+                  {bad && <p className="text-[11px] text-rose-400">Le minimum doit être inférieur ou égal au maximum.</p>}
+                </div>
+              );
+            })}
           </div>
           <div><button className={btnPrimary} disabled={busy === "settings"} onClick={save}>{busy === "settings" ? "…" : "Enregistrer les réglages"}</button></div>
         </>

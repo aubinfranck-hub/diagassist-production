@@ -188,13 +188,14 @@ function RequestDetail({ id, onBack }: { id: string; onBack: () => void }) {
         )}
       </Section>
 
-      <Section title="Offres envoyées">
+      <Section title="Offres reçues">
         {offers.length === 0 ? <Empty text="Aucune offre envoyée." /> : (
           <div className="space-y-1">
             {offers.map((o, i) => (
               <p key={o.id ?? i} className="text-xs text-slate-300">
-                {o.proName || o.displayName || o.proPhone || o.phone || "—"} · <Badge status={o.status} label={o.status ? (({ pending: "En attente", accepted: "Acceptée", declined: "Refusée", expired: "Expirée" } as Record<string, string>)[o.status] || statusLabel(o.status)) : "—"} />
-                {o.distanceKm != null ? ` · ${o.distanceKm} km` : ""} · envoyée {fmtDate(o.createdAt || o.sentAt)}{o.expiresAt ? ` · expire ${fmtDate(o.expiresAt)}` : ""}
+                {o.proName || o.displayName || o.proPhone || o.pro_phone || o.phone || "—"} · <Badge status={o.status} label={o.status ? (({ pending: "En attente", accepted: "Retenue", declined: "Refusée", expired: "Expirée" } as Record<string, string>)[o.status] || statusLabel(o.status)) : "—"} />
+                {o.amount != null ? ` · ${fmtXof(o.amount)}` : ""}{o.etaMinutes != null ? ` · arrivée ~${o.etaMinutes} min` : ""}
+                {(o.distanceKm ?? o.distance_km) != null ? ` · ${o.distanceKm ?? o.distance_km} km` : ""} · envoyée {fmtDate(o.createdAt || o.sentAt || o.sent_at)}{(o.expiresAt || o.expires_at) ? ` · expire ${fmtDate(o.expiresAt || o.expires_at)}` : ""}
               </p>
             ))}
           </div>

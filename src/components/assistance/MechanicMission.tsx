@@ -29,6 +29,8 @@ export interface ProMission {
   mode?: "depannage" | "atelier";
   visitStatus?: string;
   tariff?: number | null;
+  amountAgreed?: number | null;
+  amount_due?: number | null;
   allowed?: { enRoute?: boolean; surPlace?: boolean; enIntervention?: boolean; terminer?: boolean; quote?: boolean; release?: boolean };
   payment?: {
     reference?: string; method?: string; amount?: number; status?: string;
@@ -55,7 +57,7 @@ export function normalizeMission(raw: any): ProMission {
 }
 
 const PRO_STATUS: Record<string, string> = {
-  affectee: "Mission acceptée : rendez-vous chez le client",
+  affectee: "Le client vous a choisi : rendez-vous chez lui",
   en_route: "Vous êtes en route",
   sur_place: "Vous êtes sur place",
   en_intervention: "Intervention en cours",
@@ -100,13 +102,13 @@ export default function MechanicMission({
   const setStatus = (to: string) => run(to, () => api(`/pro/missions/${mission.id}/status`, { body: { to } }));
 
   const atelier = mission.mode === "atelier";
-  const awaitingClient = atelier && mission.visitStatus !== "confirmee" && st === "affectee";
+  const awaitingClient = atelier && mission.visitStatus === "proposee" && st === "affectee";
   const al = mission.allowed;
   const can = (k: keyof NonNullable<ProMission["allowed"]>) => (al ? !!al[k] : !awaitingClient);
   const tariff = mission.tariff ?? tariffs[mission.service || ""]?.indicatif ?? null;
   const pos = atelier ? undefined : mission.position;
   const clientPhone = (mission.clientPhone ?? mission.contactPhone) as string | undefined;
-  const hasInitial = mission.quotes.some((q) => q.kind === "initial" && q.status !== "refuse");
+  const agreed = Number(mission.amountAgreed ?? mission.amount_due ?? 0) || 0;
   const canQuote = (st === "sur_place" || st === "en_intervention") && !pending && (al ? al.quote !== false : true);
   const live = !["terminee", "annulee"].includes(st);
 
@@ -121,7 +123,7 @@ export default function MechanicMission({
           {atelier ? "Client vient à votre garage" : "Dépannage chez le client"}
         </span>
         <h2 className="text-xl font-black text-white leading-tight">{awaitingClient ? "En attente de la confirmation du client" : (atelier ? ATELIER_STATUS : PRO_STATUS)[st] || st}</h2>
-        {awaitingClient && <Notice tone="warn">Vous avez accepté de recevoir le client. La mission ne peut pas avancer tant qu'il n'a pas confirmé sa venue. Son téléphone vous sera communiqué à ce moment.</Notice>}
+        {awaitingClient && <Notice tone="warn">DiagAssist vous a affecté ce client. La mission ne peut pas avancer tant qu'il n'a pas confirmé sa venue. Son téléphone vous sera communiqué à ce moment.</Notice>}
         <div className="text-sm text-slate-300 space-y-1">
           <div><span className="text-slate-500">Service :</span> {mission.serviceLabel || mission.service}</div>
           <div><span className="text-slate-500">Véhicule :</span> {vehicleLabel(mission.vehicle)}</div>
@@ -130,7 +132,7 @@ export default function MechanicMission({
           {faultCodesList(mission.faultCodes).length > 0 && <div><span className="text-slate-500">Codes défaut :</span> {faultCodesList(mission.faultCodes).join(", ")}</div>}
         </div>
 
-        <div className="text-sm font-bold text-amber-300">{tariff ? `Tarif : ${formatXOF(tariff)}` : indicativeText(null)}</div>
+        <div className="text-sm font-bold text-amber-300">{agreed > 0 ? `Prix convenu : ${formatXOF(agreed)}` : tariff ? `Tarif : ${formatXOF(tariff)}` : indicativeText(null)}</div>
         {mission.aiAnalysis && (
           <div className="rounded-xl bg-slate-950/60 border border-white/[0.06] p-3">
             <div className="text-[11px] font-black uppercase tracking-wider text-slate-400">{MSG_AI_TITLE}</div>
@@ -153,7 +155,7 @@ export default function MechanicMission({
           {st === "en_intervention" && (
             <>
               <button className={btnGreen} disabled={!!busy || pending || !can("terminer")} onClick={() => setStatus("terminee")}>{busy === "terminee" && <Loader2 className="w-5 h-5 animate-spin" />} {atelier ? "Terminer la réparation" : "Terminer la mission"}</button>
-              {pending && <p className="text-xs text-amber-400">Un devis attend l'accord du client : vous pourrez terminer ensuite.</p>}
+              {pending && <p className="text-xs text-amber-400">Un supplément attend l'accord du client : vous pourrez terminer ensuite.</p>}
             </>
           )}
           {["affectee", "en_route", "sur_place"].includes(st) && (!al || al.release !== false) && (
@@ -235,7 +237,7 @@ export default function MechanicMission({
       {/* Devis déjà émis */}
       {mission.quotes.length > 0 && (
         <Card className="space-y-3">
-          <h3 className="text-base font-black text-white">Devis envoyés</h3>
+          <h3 className="text-base font-black text-white">Devis et suppléments</h3>
           {mission.quotes.map((q) => (
             <div key={q.id} className="rounded-2xl bg-slate-950/60 border border-white/[0.06] p-3 text-sm space-y-1">
               <div className="flex justify-between items-center">
@@ -253,13 +255,11 @@ export default function MechanicMission({
 
       {canQuote && (
         <QuoteBuilder
-          kind={hasInitial ? "supplementaire" : "initial"}
-          defaults={hasInitial ? {} : tariffs[mission.service || ""] || {}}
           busy={busy === "quote"}
-          onSend={(lines, note, kind) => run("quote", () => api(`/pro/missions/${mission.id}/quotes`, { body: { kind, lines, note: note || undefined } }), "Devis envoyé au client.")}
+          onSend={(lines, note) => run("quote", () => api(`/pro/missions/${mission.id}/quotes`, { body: { kind: "supplementaire", lines, note: note || undefined } }), "Demande de supplément envoyée au client.")}
         />
       )}
-      {(st === "sur_place" || st === "en_intervention") && pending && <Notice tone="warn">Devis envoyé : en attente de la réponse du client.</Notice>}
+      {(st === "sur_place" || st === "en_intervention") && pending && <Notice tone="warn">Supplément envoyé : en attente de la réponse du client.</Notice>}
 
       {(st === "terminee" || mission.payment) && (
         <Card className="space-y-2">
@@ -288,45 +288,28 @@ export default function MechanicMission({
 }
 
 function QuoteBuilder({
-  kind, defaults, busy, onSend,
+  busy, onSend,
 }: {
-  kind: "initial" | "supplementaire";
-  defaults: { deplacement?: number; diagnostic?: number; indicatif?: number };
   busy: boolean;
-  onSend: (lines: QuoteLine[], note: string, kind: "initial" | "supplementaire") => void;
+  onSend: (lines: QuoteLine[], note: string) => void;
 }) {
-  const [amounts, setAmounts] = useState<Record<string, string>>({
-    deplacement: defaults.deplacement ? String(defaults.deplacement) : "",
-    diagnostic: defaults.diagnostic ? String(defaults.diagnostic) : "",
-    main_oeuvre: defaults.indicatif ? String(defaults.indicatif) : "", pieces: "",
-  });
+  const [amounts, setAmounts] = useState<Record<string, string>>({ deplacement: "", diagnostic: "", main_oeuvre: "", pieces: "" });
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
-  const [open, setOpen] = useState(kind === "initial");
-
-  // Les tarifs de départ arrivent après le premier rendu : on ne remplace que les champs encore vides.
-  useEffect(() => {
-    setAmounts((a) => ({
-      ...a,
-      deplacement: a.deplacement || (defaults.deplacement ? String(defaults.deplacement) : ""),
-      diagnostic: a.diagnostic || (defaults.diagnostic ? String(defaults.diagnostic) : ""),
-      main_oeuvre: a.main_oeuvre || (defaults.indicatif ? String(defaults.indicatif) : ""),
-    }));
-  }, [defaults.deplacement, defaults.diagnostic, defaults.indicatif]);
+  const [open, setOpen] = useState(false);
 
   const lines: QuoteLine[] = LINE_ORDER
     .map((k) => ({ kind: k, label: labels[k]?.trim() || undefined, amount: Math.round(Number(amounts[k]) || 0) }))
     .filter((l) => l.amount > 0);
   const total = lines.reduce((s, l) => s + l.amount, 0);
-  const extra = kind === "supplementaire";
 
   if (!open) {
-    return <button className={btnSecondary} onClick={() => setOpen(true)}><Plus className="w-5 h-5" /> Ajouter des travaux supplémentaires</button>;
+    return <button className={btnSecondary} onClick={() => setOpen(true)}><Plus className="w-5 h-5" /> Demander un supplément</button>;
   }
   return (
-    <Card className={`space-y-3 ${extra ? "!border-2 !border-amber-500/50" : ""}`}>
-      <h3 className="text-base font-black text-white">{extra ? "Devis pour travaux supplémentaires" : "Mon devis"}</h3>
-      {extra && <Notice tone="warn">Ce devis sera présenté au client comme « travaux supplémentaires ». Il doit l'accepter avant que vous fassiez ces travaux.</Notice>}
+    <Card className="space-y-3 !border-2 !border-amber-500/50">
+      <h3 className="text-base font-black text-white">Demander un supplément</h3>
+      <Notice tone="warn">Le prix convenu ne change pas sans l'accord du client. Il doit accepter ce supplément avant que vous fassiez ces travaux.</Notice>
       {LINE_ORDER.map((k) => (
         <div key={k} className="grid grid-cols-5 gap-2 items-center">
           <div className="col-span-5 text-sm font-bold text-slate-300">{LINE_LABEL[k]}</div>
@@ -335,9 +318,9 @@ function QuoteBuilder({
         </div>
       ))}
       <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Note pour le client (facultatif)" className={inputCls} />
-      <div className="flex justify-between items-baseline"><span className="font-black text-white">Total</span><span className="text-xl font-black text-red-500">{formatXOF(total)}</span></div>
-      <button className={btnPrimary} disabled={busy || total <= 0} onClick={() => onSend(lines, note.trim(), kind)}>
-        {busy && <Loader2 className="w-5 h-5 animate-spin" />} Envoyer le devis au client
+      <div className="flex justify-between items-baseline"><span className="font-black text-white">Supplément</span><span className="text-xl font-black text-red-500">{formatXOF(total)}</span></div>
+      <button className={btnPrimary} disabled={busy || total <= 0} onClick={() => onSend(lines, note.trim())}>
+        {busy && <Loader2 className="w-5 h-5 animate-spin" />} Envoyer la demande au client
       </button>
     </Card>
   );

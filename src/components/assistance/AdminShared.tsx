@@ -63,6 +63,7 @@ export const STATUS_LABELS: Record<string, string> = {
   en_attente: "En attente", paye: "Payé", echoue: "Échoué", annule: "Annulé", a_reverser: "À reverser", reverse: "Reversé",
   aucune: "Aucune", proposee: "Proposée", confirmee: "Confirmée", refusee: "Refusée",
   depannage: "Dépannage", atelier: "Atelier",
+  envoyee: "Envoyée", offre_faite: "Offre faite", acceptee: "Retenue", expiree: "Expirée",
   valide: "Validé", suspendu: "Suspendu", verifiee: "Vérifiée", verifie: "Vérifié", non_verifie: "Non vérifié", non_verifiee: "Non vérifiée",
 };
 export const SERVICE_LABELS: Record<string, string> = {
@@ -81,9 +82,9 @@ const TONES: Record<string, string> = {
 };
 export function toneOf(status?: string): keyof typeof TONES {
   if (!status) return "gray";
-  if (["terminee", "valide", "paye", "verifiee", "verifie", "accepte", "reverse", "confirmee"].includes(status)) return "green";
+  if (["terminee", "valide", "paye", "verifiee", "verifie", "accepte", "reverse", "confirmee", "acceptee"].includes(status)) return "green";
   if (["annulee", "refuse", "suspendu", "echoue", "sans_disponibilite", "non_verifiee", "non_verifie", "refusee", "annule"].includes(status)) return "red";
-  if (["recherche", "en_attente", "a_reverser", "proposee", "propose", "brouillon"].includes(status)) return "amber";
+  if (["recherche", "en_attente", "a_reverser", "proposee", "propose", "brouillon", "envoyee", "offre_faite"].includes(status)) return "amber";
   if (["affectee", "en_route", "sur_place", "en_intervention"].includes(status)) return "blue";
   return "gray";
 }

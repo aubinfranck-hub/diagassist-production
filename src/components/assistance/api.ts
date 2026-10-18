@@ -142,6 +142,26 @@ export interface ProPublic {
   eta?: { minutes: number; distanceKm: number; approximate: true } | null;
 }
 
+export interface Bid {
+  id: string;
+  pro: {
+    displayName?: string;
+    garageName?: string;
+    rating?: { avg: number; count: number } | null;
+    photoUrl?: string | null;
+    specialties?: string[];
+    trainings?: { title: string; issuer?: string }[];
+    location?: { lat: number; lng: number; updatedAt?: number } | null;
+  };
+  amount: number;
+  etaMinutes: number;
+  distanceKm: number;
+  approximate?: boolean;
+  validUntil: number;
+  isRevised?: boolean;
+  sentAt?: number;
+}
+
 export interface RequestDetail {
   request: RequestSummary & {
     faultCodes?: string[] | string;
@@ -150,6 +170,7 @@ export interface RequestDetail {
     contactPhone?: string;
   };
   pro: ProPublic | null;
+  bids?: Bid[];
   quotes: Quote[];
   payment?: PaymentInfo | null;
   timeline: { at: number; label: string; status: string }[];
@@ -158,7 +179,7 @@ export interface RequestDetail {
   allowed: {
     cancel?: boolean; retry?: boolean; manual?: boolean;
     review?: boolean; claim?: boolean; decideQuote?: boolean;
-    pay?: boolean; confirmVisit?: boolean; leaving?: boolean;
+    pay?: boolean; confirmVisit?: boolean; leaving?: boolean; selectBid?: boolean;
   };
 }
 
@@ -297,7 +318,7 @@ export function usePolling(fn: () => Promise<void> | void, ms: number, enabled =
 export const STATUS_LABEL: Record<string, string> = {
   brouillon: "Demande non envoyée",
   recherche: "Nous contactons les mécaniciens près de vous",
-  affectee: "Mécanicien trouvé",
+  affectee: "Mécanicien choisi",
   en_route: "En route",
   sur_place: "Arrivé",
   en_intervention: "Intervention en cours",
@@ -307,7 +328,7 @@ export const STATUS_LABEL: Record<string, string> = {
 };
 
 export const STATUS_SHORT: Record<string, string> = {
-  brouillon: "Brouillon", recherche: "Recherche en cours", affectee: "Mécanicien trouvé",
+  brouillon: "Brouillon", recherche: "Recherche en cours", affectee: "Mécanicien choisi",
   en_route: "En route", sur_place: "Arrivé", en_intervention: "Intervention en cours",
   terminee: "Terminée", sans_disponibilite: "Sans mécanicien", annulee: "Annulée",
 };
@@ -324,6 +345,47 @@ export const LINE_ORDER: QuoteLine["kind"][] = ["deplacement", "diagnostic", "ma
 
 export const MSG_SUBSCRIPTION =
   "Votre abonnement DiagAssist n'est plus à jour : renouvelez-le pour recevoir des assistances.";
+export const BID_ERROR_MSG: Record<string, string> = {
+  NOT_SEARCHING: "Cette demande n'est plus en recherche : un choix a déjà été fait ou la demande est close.",
+  BID_EXPIRED: "Cette offre a expiré. Choisissez-en une autre ou attendez de nouvelles offres.",
+  SUBSCRIPTION_REQUIRED: "Ce mécanicien n'est plus disponible pour le moment. Choisissez une autre offre.",
+  PRO_UNAVAILABLE: "Ce mécanicien n'est plus disponible. Choisissez une autre offre.",
+  PRO_BUSY: "Ce mécanicien vient de prendre une autre mission. Choisissez une autre offre.",
+  PRO_NOT_VALIDATED: "Ce mécanicien n'est plus disponible. Choisissez une autre offre.",
+};
+
+/** Message clair pour une erreur du choix d'offre. */
+export function bidErrorMessage(e: unknown): string {
+  if (e instanceof AssistanceError) {
+    if (e.code && BID_ERROR_MSG[e.code]) return BID_ERROR_MSG[e.code];
+    return e.message;
+  }
+  return "Une erreur est survenue. Réessayez dans un instant.";
+}
+
+/** Meilleure offre (meilleur rapport prix / délai) : score = prix normalisé + délai normalisé (le prix pèse plus). */
+export function bestBidId(bids: Bid[]): string | null {
+  if (bids.length < 2) return null;
+  const minP = Math.min(...bids.map((b) => b.amount)), maxP = Math.max(...bids.map((b) => b.amount));
+  const minE = Math.min(...bids.map((b) => b.etaMinutes)), maxE = Math.max(...bids.map((b) => b.etaMinutes));
+  const norm = (v: number, lo: number, hi: number) => (hi > lo ? (v - lo) / (hi - lo) : 0);
+  let best = bids[0], bs = Infinity;
+  for (const b of bids) {
+    const sc = 0.6 * norm(b.amount, minP, maxP) + 0.4 * norm(b.etaMinutes, minE, maxE);
+    if (sc < bs) { bs = sc; best = b; }
+  }
+  return best.id;
+}
+
+/** Prix à afficher pour une demande : prix convenu après choix, sinon référence. */
+export function agreedPriceText(r: { status?: string; amountAgreed?: number | null; tariff?: number | null }): string {
+  const searching = r.status === "recherche" || r.status === "brouillon";
+  if (!searching && Number(r.amountAgreed) > 0) return `Prix convenu : ${formatXOF(r.amountAgreed)}`;
+  if (searching) return "Offres des mécaniciens à comparer";
+  if (r.status === "sans_disponibilite" || r.status === "annulee") return "";
+  return "Prix à convenir";
+}
+
 export const MSG_ALREADY_TAKEN = "Un autre mécanicien a déjà pris cette mission.";
 export const MSG_AI_TITLE = "Analyse DiagAssist — pistes à vérifier";
 
@@ -332,6 +394,14 @@ export function indicativeText(n?: number | null): string {
   return typeof n === "number" && n > 0
     ? `Tarif : ${Math.round(n).toLocaleString("fr-FR")} F CFA`
     : "Tarif à confirmer avec le client";
+}
+
+/** Tarif de référence du wizard (jamais un prix imposé), avec fourchette si connue. */
+export function referenceTariffText(n?: number | null, min?: number | null, max?: number | null): string {
+  const base = typeof n === "number" && n > 0 ? `Tarif de référence : ${Math.round(n).toLocaleString("fr-FR")} F CFA` : "Tarif de référence : à confirmer";
+  return min && max && max >= min
+    ? `${base} (entre ${Math.round(min).toLocaleString("fr-FR")} et ${Math.round(max).toLocaleString("fr-FR")} F CFA)`
+    : base;
 }
 
 /** Tarif affiché (jamais un prix inventé : null = à confirmer). */

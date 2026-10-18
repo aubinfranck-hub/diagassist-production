@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, Clock, Loader2, MapPin, ShieldAlert, ShieldCheck, WifiOff, X } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, MSG_ALREADY_TAKEN, MSG_AI_TITLE, MSG_SUBSCRIPTION, STATUS_SHORT, useOnline, usePolling, vehicleLabel,
+  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, MSG_AI_TITLE, MSG_SUBSCRIPTION, STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
+import BidForm, { BidRange } from "./BidForm";
 import MechanicEarnings from "./MechanicEarnings";
 import MechanicMission, { normalizeMission, ProMission } from "./MechanicMission";
 import MechanicProfile, { ProProfile } from "./MechanicProfile";
@@ -22,6 +23,10 @@ interface Offer {
   indicativeAmount?: number | null;
   mode?: "depannage" | "atelier";
   tariff?: number | null;
+  status?: "ouverte" | "offre_envoyee" | "retenue" | "non_retenue";
+  canBid?: boolean;
+  range?: BidRange | null;
+  myBid?: { amount: number; etaMinutes?: number | null; validUntil: number } | null;
 }
 
 type Tab = "mission" | "gains" | "profil" | "historique";
@@ -163,17 +168,22 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
     );
   };
 
-  const accept = async (o: Offer) => {
+  const bid = async (o: Offer, amount: number, etaMinutes?: number): Promise<boolean> => {
     setBusy(`o${o.id}`); setOfferMsg(""); setError("");
     try {
-      await api(`/pro/offers/${o.id}/accept`, { body: {} });
-      setOffers([]);
-      await refreshAll();
+      const d = await api<{ offer?: Offer }>(`/pro/offers/${o.id}/bid`, { body: etaMinutes ? { amount, etaMinutes } : { amount } });
+      if (d?.offer) setOffers((p) => p.map((x) => (x.id === o.id ? { ...x, ...d.offer } : x)));
+      await loadOffers();
+      return true;
     } catch (e) {
-      if (e instanceof AssistanceError && (e.code === "ALREADY_TAKEN" || e.status === 409)) setOfferMsg(MSG_ALREADY_TAKEN);
-      else if (e instanceof AssistanceError && e.code === "SUBSCRIPTION_REQUIRED") setOfferMsg(MSG_SUBSCRIPTION);
+      const code = e instanceof AssistanceError ? e.code : "";
+      if (code === "SUBSCRIPTION_REQUIRED") setOfferMsg(MSG_SUBSCRIPTION);
+      else if (code === "ALREADY_TAKEN") setOfferMsg("Le client a déjà choisi un autre mécanicien.");
+      else if (code === "OFFER_EXPIRED") setOfferMsg("Cette demande a expiré : le délai pour faire une offre est dépassé.");
+      else if (code === "BID_OUT_OF_RANGE") setOfferMsg(o.range ? `Votre prix doit être compris entre ${formatXOF(o.range.min)} et ${formatXOF(o.range.max)}.` : errText(e));
       else setOfferMsg(errText(e));
       await loadOffers();
+      return false;
     } finally { setBusy(""); }
   };
   const decline = async (o: Offer) => {
@@ -274,14 +284,15 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
 
           {!activeId && profile && (
             <div className="space-y-3">
-              <h3 className="text-sm font-black uppercase tracking-wider text-slate-500">Offres</h3>
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-500">Demandes</h3>
+              <p className="text-xs font-bold text-slate-300">Faites votre meilleure offre : le client choisit.</p>
               {offerMsg && <Notice tone="warn" action={offerMsg === MSG_SUBSCRIPTION && onUpgrade ? <button className={btnPrimary} onClick={onUpgrade}>Voir les forfaits</button> : undefined}>{offerMsg}</Notice>}
               {!profile.available && <p className="text-sm text-slate-500 py-3">Passez « Disponible » pour recevoir des offres de clients proches.</p>}
               {profile.available && offers.length === 0 && (
                 <p className="text-sm text-slate-500 py-3 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Aucune offre pour le moment. Nous vous prévenons ici dès qu'un client a besoin de vous.</p>
               )}
               {offers.map((o) => (
-                <OfferCard key={o.id} offer={o} busy={busy === `o${o.id}`} onAccept={() => accept(o)} onDecline={() => decline(o)}
+                <OfferCard key={o.id} offer={o} busy={busy === `o${o.id}`} onBid={(a, e) => bid(o, a, e)} onDecline={() => decline(o)} onOpenMission={() => void refreshAll()}
                   onExpired={() => setOffers((p) => p.filter((x) => x.id !== o.id))} />
               ))}
             </div>
@@ -293,14 +304,22 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
 }
 
 function OfferCard({
-  offer, busy, onAccept, onDecline, onExpired,
-}: { offer: Offer; busy: boolean; onAccept: () => void; onDecline: () => void; onExpired: () => void }) {
-  const left = useCountdown(offer.expiresAt, onExpired);
+  offer, busy, onBid, onDecline, onExpired, onOpenMission,
+}: { offer: Offer; busy: boolean; onBid: (amount: number, eta?: number) => Promise<boolean>; onDecline: () => void; onExpired: () => void; onOpenMission: () => void }) {
+  const st = offer.status || "ouverte";
+  const until = st === "offre_envoyee" && offer.myBid?.validUntil ? offer.myBid.validUntil : offer.expiresAt;
+  const live = st === "ouverte" || st === "offre_envoyee";
+  const left = useCountdown(until, live ? onExpired : undefined);
+  const [editing, setEditing] = useState(false);
   const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
   const ap = offer.mode === "atelier" ? null : offer.approxPosition;
   const atelier = offer.mode === "atelier";
+  const ref = offer.tariff ?? offer.indicativeAmount ?? null;
+  const lost = st === "non_retenue";
+  const won = st === "retenue";
+  const canBid = offer.canBid !== false && live;
   return (
-    <Card className="space-y-3 !border-2 !border-red-500/40">
+    <Card className={`space-y-3 !border-2 ${lost ? "!border-white/10 opacity-60" : won ? "!border-emerald-500/50" : "!border-red-500/40"}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <span className={`inline-block text-[11px] font-black uppercase tracking-wider rounded-full px-2.5 py-1 mb-1 ${atelier ? "bg-sky-500/15 text-sky-300" : "bg-red-500/15 text-red-300"}`}>
@@ -310,33 +329,65 @@ function OfferCard({
           <div className="text-sm text-slate-300">{vehicleLabel(offer.vehicle)}</div>
           {offer.symptoms && <div className="text-sm text-slate-400">{offer.symptoms}</div>}
         </div>
-        <div className={`shrink-0 inline-flex items-center gap-1.5 font-black text-lg ${left <= 10 ? "text-red-500" : "text-amber-400"}`} aria-live="off">
-          <Clock className="w-5 h-5" /> {mm}:{ss}
-        </div>
+        {live && (
+          <div className={`shrink-0 inline-flex items-center gap-1.5 font-black text-lg ${left <= 10 ? "text-red-500" : "text-amber-400"}`} aria-live="off">
+            <Clock className="w-5 h-5" /> {mm}:{ss}
+          </div>
+        )}
       </div>
       <div className="text-sm text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
         {offer.distanceKm != null && <span>À environ {offer.distanceKm.toFixed(1)} km</span>}
-        {ap && <a className="underline" target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps?q=${ap.lat},${ap.lng}`}>Voir la zone sur la carte</a>}
+        {ap && !lost && <a className="underline" target="_blank" rel="noopener noreferrer" href={`https://www.google.com/maps?q=${ap.lat},${ap.lng}`}>Voir la zone sur la carte</a>}
       </div>
-      <div className="text-sm font-bold text-amber-300">{(offer.tariff ?? offer.indicativeAmount) ? `Tarif : ${formatXOF(offer.tariff ?? offer.indicativeAmount)}` : "Montant à convenir avec le mécanicien"}</div>
-      {offer.aiAnalysis && (
+      {offer.aiAnalysis && !lost && (
         <div className="rounded-xl bg-slate-950/60 border border-white/[0.06] p-3">
           <div className="text-[11px] font-black uppercase tracking-wider text-slate-400">{MSG_AI_TITLE}</div>
           <p className="text-sm text-slate-300 whitespace-pre-line mt-1">{offer.aiAnalysis}</p>
         </div>
       )}
-      <p className="text-xs font-bold text-slate-300">Le premier à accepter prend la mission.</p>
-      <p className="text-xs text-slate-500">
-        {atelier
-          ? "Le client doit encore confirmer sa venue. Sa position et son téléphone ne sont pas communiqués."
-          : "Position approximative : l'adresse exacte vous sera donnée si vous acceptez."}
-      </p>
-      <p className="text-xs text-slate-500">Le client paie via DiagAssist ; vous recevez le montant moins la commission.</p>
-      <div className="grid grid-cols-2 gap-3">
-        <button className={btnSecondary} disabled={busy} onClick={onDecline}><X className="w-5 h-5" /> Refuser</button>
-        <button className={btnGreen} disabled={busy || left === 0} onClick={onAccept}>{busy && <Loader2 className="w-5 h-5 animate-spin" />} {atelier ? "Je peux le recevoir" : "Accepter"}</button>
-      </div>
-      {left === 0 && <p className="text-xs text-slate-500 text-center">Offre expirée.</p>}
+
+      {lost && <p className="text-sm font-bold text-slate-400">Non retenue : le client a choisi un autre mécanicien.</p>}
+      {won && (
+        <div className="space-y-2">
+          <p className="text-sm font-black text-emerald-400">Retenue : le client vous a choisi{offer.myBid ? ` pour ${formatXOF(offer.myBid.amount)}` : ""}.</p>
+          <button className={btnGreen} onClick={onOpenMission}>Ouvrir la mission</button>
+        </div>
+      )}
+
+      {live && st === "ouverte" && (
+        <>
+          <p className="text-xs font-bold text-slate-300">Faites votre meilleure offre : le client choisit.</p>
+          <p className="text-xs text-slate-500">
+            {atelier ? "Sa position et son téléphone ne sont pas communiqués avant son choix." : "Position approximative : l'adresse exacte vous sera donnée si le client vous choisit."}
+          </p>
+          <p className="text-xs text-slate-500">Le client paie via DiagAssist ; vous recevez le montant moins la commission.</p>
+          {canBid && (
+            <BidForm range={offer.range} tariff={ref} busy={busy} submitLabel="Proposer mon prix" onSubmit={(a, e) => void onBid(a, e)} />
+          )}
+          <button className={btnSecondary} disabled={busy} onClick={onDecline}><X className="w-5 h-5" /> Refuser</button>
+        </>
+      )}
+
+      {live && st === "offre_envoyee" && (
+        <div className="space-y-3">
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 space-y-1">
+            <p className="text-sm font-black text-amber-300">Offre envoyée : {formatXOF(offer.myBid?.amount)} — en attente du choix du client</p>
+            {offer.myBid?.etaMinutes ? <p className="text-xs text-slate-300">Arrivée annoncée : environ {offer.myBid.etaMinutes} min</p> : null}
+            <p className="text-xs text-slate-400">Valable encore {mm}:{ss}</p>
+          </div>
+          {editing ? (
+            <BidForm range={offer.range} tariff={ref} initialAmount={offer.myBid?.amount} initialEta={offer.myBid?.etaMinutes} busy={busy}
+              submitLabel="Réviser mon offre" onCancel={() => setEditing(false)}
+              onSubmit={async (a, e) => { if (await onBid(a, e)) setEditing(false); }} />
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <button className={btnSecondary} disabled={busy} onClick={() => setEditing(true)}>Réviser mon offre</button>
+              <button className={btnSecondary} disabled={busy} onClick={onDecline}><X className="w-5 h-5" /> Retirer mon offre</button>
+            </div>
+          )}
+        </div>
+      )}
+      {live && left === 0 && <p className="text-xs text-slate-500 text-center">Délai dépassé.</p>}
     </Card>
   );
 }

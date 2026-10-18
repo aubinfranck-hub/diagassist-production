@@ -17,6 +17,8 @@ const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const ATTR = "&copy; OpenStreetMap";
 
 export interface LatLng { lat: number; lng: number }
+/** Marqueur d'offre : mécanicien (ou garage) avec son prix. */
+export interface PriceMarker { id: string; lat: number; lng: number; label: string }
 
 /** Carte de sélection : toucher la carte ou faire glisser le point rouge. */
 export function LocationPicker({
@@ -157,7 +159,16 @@ const proIcon = () =>
     iconAnchor: [17, 17],
   });
 
+const priceIcon = (label: string) =>
+  L.divIcon({
+    className: "dm-price",
+    html: `<div class="dm-price-tag">${label.replace(/[<>&"]/g, "")}</div>`,
+    iconSize: [80, 30],
+    iconAnchor: [40, 15],
+  });
+
 const MAP_CSS = `
+.dm-price-tag{width:80px;height:30px;line-height:24px;text-align:center;border-radius:15px;background:#059669;color:#fff;font:800 12px system-ui,sans-serif;border:3px solid #fff;box-shadow:0 2px 10px rgba(0,0,0,.55);box-sizing:border-box;white-space:nowrap}
 .dm-wrap{position:relative;width:24px;height:24px}
 .dm-dot{position:absolute;inset:2px;border-radius:50%;background:#dc2626;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.5)}
 .dm-ring{position:absolute;left:50%;top:50%;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:rgba(220,38,38,.35);border:2px solid rgba(220,38,38,.7);animation:dm-pulse 2.4s ease-out infinite;pointer-events:none}
@@ -168,11 +179,13 @@ const MAP_CSS = `
 `;
 
 function FullMap({
-  client, pro, accuracy, editable, onChange, pulse, bottomInset,
+  client, pro, accuracy, editable, onChange, pulse, bottomInset, markers,
 }: {
   client?: LatLng | null; pro?: LatLng | null; accuracy?: number; editable?: boolean;
-  onChange?: (p: LatLng) => void; pulse?: boolean; bottomInset: number;
+  onChange?: (p: LatLng) => void; pulse?: boolean; bottomInset: number; markers?: PriceMarker[];
 }) {
+  const mLayer = useRef<L.LayerGroup | null>(null);
+  const markersKey = (markers || []).map((m) => `${m.id}:${m.lat},${m.lng}:${m.label}`).join("|");
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const cMarker = useRef<L.Marker | null>(null);
@@ -200,7 +213,7 @@ function FullMap({
     });
     map.current = m;
     const t = window.setTimeout(() => m.invalidateSize(), 150);
-    return () => { window.clearTimeout(t); m.remove(); map.current = null; cMarker.current = null; pMarker.current = null; circle.current = null; };
+    return () => { window.clearTimeout(t); m.remove(); map.current = null; mLayer.current = null; cMarker.current = null; pMarker.current = null; circle.current = null; };
   }, []);
 
   // Marqueur du client
@@ -244,6 +257,24 @@ function FullMap({
     else pMarker.current.setLatLng(ll);
   }, [pro?.lat, pro?.lng]);
 
+  // Marqueurs d'offres (prix), sans toucher aux autres marqueurs
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    if (!mLayer.current) mLayer.current = L.layerGroup().addTo(m);
+    const g = mLayer.current;
+    g.clearLayers();
+    const pts: L.LatLngTuple[] = [];
+    for (const mk of markers || []) {
+      L.marker([mk.lat, mk.lng], { icon: priceIcon(mk.label), zIndexOffset: 300, interactive: false }).addTo(g);
+      pts.push([mk.lat, mk.lng]);
+    }
+    if (pts.length) {
+      if (client) pts.push([client.lat, client.lng]);
+      m.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [40, 70], paddingBottomRight: [40, inset.current + 24], maxZoom: 16 });
+    }
+  }, [markersKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Cadrage
   useEffect(() => {
     const m = map.current;
@@ -267,8 +298,9 @@ function FullMap({
 
 /** Écran carte plein cadre avec panneau du bas. `children` = contenu défilant, `footer` = zone fixe (bouton principal). */
 export function MapScreen({
-  client, pro, accuracy, editable, onChange, pulse, onBack, backLabel = "Retour", topRight, children, footer,
+  client, pro, accuracy, editable, onChange, pulse, onBack, backLabel = "Retour", topRight, children, footer, markers,
 }: {
+  markers?: PriceMarker[];
   client?: LatLng | null; pro?: LatLng | null; accuracy?: number; editable?: boolean;
   onChange?: (p: LatLng) => void; pulse?: boolean; onBack?: () => void; backLabel?: string;
   topRight?: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode;
@@ -289,7 +321,7 @@ export function MapScreen({
   return (
     <div className="relative isolate w-full overflow-hidden rounded-3xl border border-white/[0.08] bg-slate-900 h-[calc(100dvh-11.5rem)] lg:h-[calc(100dvh-8rem)] min-h-[560px] animate-fade-in">
       <style>{MAP_CSS}</style>
-      <FullMap client={client} pro={pro} accuracy={accuracy} editable={editable} onChange={onChange} pulse={pulse} bottomInset={inset} />
+      <FullMap client={client} pro={pro} accuracy={accuracy} editable={editable} onChange={onChange} pulse={pulse} bottomInset={inset} markers={markers} />
       {onBack && (
         <button onClick={onBack} aria-label={backLabel} className="absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 min-h-[44px] pl-3 pr-4 rounded-full bg-slate-900/90 backdrop-blur border border-white/[0.12] text-sm font-bold text-slate-100 shadow-lg cursor-pointer">
           <ArrowLeft className="w-4 h-4" /> {backLabel}

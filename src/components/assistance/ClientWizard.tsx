@@ -4,7 +4,7 @@ import {
   LocateFixed, MapPin, Camera, Video, X, ChevronDown, Loader2, ShieldCheck, Car, Wrench,
 } from "lucide-react";
 import {
-  api, authToken, AssistanceError, AssistanceStatus, compressImage, tariffText, knownPhone, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
+  api, authToken, AssistanceError, AssistanceStatus, compressImage, referenceTariffText, knownPhone, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
 } from "./api";
 import { LatLng, MapScreen, useAddress } from "./AssistanceMaps";
 import { enqueueRequest, isOfflineError } from "./offlineQueue";
@@ -221,6 +221,13 @@ export default function ClientWizard({
     }
   };
 
+  const [tariffs, setTariffs] = useState<Record<string, { min?: number; max?: number }>>({});
+  useEffect(() => {
+    let off = false;
+    api<{ tariffs?: Record<string, { min?: number; max?: number }> }>("/tariffs").then((d) => { if (!off && d.tariffs) setTariffs(d.tariffs); }).catch(() => {});
+    return () => { off = true; };
+  }, []);
+  const range = tariffs[serviceCode];
   const tariff = serviceInfo ? (serviceInfo.tariff ?? serviceInfo.indicativeAmount ?? null) : null;
 
   return (
@@ -332,11 +339,12 @@ export default function ClientWizard({
       {/* Tarif connu à l'avance */}
       {serviceInfo && (
         <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm">
-          <div className="font-black text-amber-300">{tariffText(tariff)}</div>
+          <div className="font-black text-amber-300">{referenceTariffText(tariff, range?.min, range?.max)}</div>
           <div className="text-xs text-slate-400 mt-0.5">
+            Plusieurs mécaniciens vous feront une offre, vous choisissez.{" "}
             {atelier
-              ? "Un garage proche accepte de vous recevoir, vous confirmez, puis vous vous y rendez. "
-              : "Un mécanicien proche vient jusqu'à votre véhicule. "}
+              ? "Vous vous rendez ensuite au garage choisi. "
+              : "Le mécanicien choisi vient jusqu'à votre véhicule. "}
             Vous réglez le mécanicien dans l'appli après l'intervention. DiagAssist ne vous facture rien en plus.
           </div>
         </div>
@@ -407,13 +415,13 @@ export default function ClientWizard({
           <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} className="mt-1 w-6 h-6 accent-red-600 shrink-0" />
           <span className="text-sm text-slate-300 leading-snug">
             <strong className="block text-base text-white">Transmettre mon diagnostic au mécanicien</strong>
-            Les pistes à vérifier de DiagAssist seront visibles par le mécanicien qui accepte. Sans votre accord, rien n'est transmis.
+            Les pistes à vérifier de DiagAssist seront visibles par les mécaniciens qui font une offre. Sans votre accord, rien n'est transmis.
           </span>
         </label>
       )}
 
       <p className="text-xs text-slate-500 flex items-start gap-2"><ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
-        DiagAssist analysera votre description et vos photos pour aider le mécanicien. {atelier ? "Un garage proche qui accepte de vous recevoir vous est proposé." : "Le premier mécanicien proche qui accepte prend votre demande."}</p>
+        DiagAssist analysera votre description et vos photos pour aider le mécanicien. Plusieurs mécaniciens proches vous feront une offre, vous choisissez.</p>
       </>)}
     </MapScreen>
   );

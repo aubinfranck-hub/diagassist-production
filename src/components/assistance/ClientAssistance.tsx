@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronRight, LifeBuoy, LocateFixed, MapPin, WifiOff, Wrench } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, paymentShort, tariffText, RequestSummary,
+  api, agreedPriceText, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, paymentShort, RequestSummary,
   STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
 import ClientWizard, { AssistancePrefill } from "./ClientWizard";
@@ -207,7 +207,7 @@ export default function ClientAssistance({
             <div className="text-xs font-black uppercase tracking-wider text-red-500">Demande en cours</div>
             <div className="text-base font-black text-white mt-0.5">{STATUS_SHORT[active.status] || active.status}</div>
             <div className="text-sm text-slate-400 truncate">{vehicleLabel(active.vehicle)}{active.symptoms ? ` · ${active.symptoms}` : ""}</div>
-            <div className="text-xs text-slate-500 mt-0.5">{active.statusLabel || ""}{active.statusLabel ? " · " : ""}{active.amountAgreed ? formatXOF(active.amountAgreed) : tariffText(active.tariff)}</div>
+            <div className="text-xs text-slate-500 mt-0.5">{active.statusLabel || ""}{active.statusLabel ? " · " : ""}{agreedPriceText(active)}</div>
           </div>
         )}
 
@@ -233,7 +233,7 @@ export default function ClientAssistance({
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">
                       {STATUS_SHORT[r.status] || r.status}{proName ? ` · ${proName}` : ""}
-                      {r.amountAgreed ? ` · ${formatXOF(r.amountAgreed)}` : r.tariff != null ? ` · ${tariffText(r.tariff)}` : ""}
+                      {agreedPriceText(r) ? ` · ${agreedPriceText(r)}` : ""}
                       {paymentShort(r) ? ` · ${paymentShort(r)}` : ""}
                     </div>
                   </button>

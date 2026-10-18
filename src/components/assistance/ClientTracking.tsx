@@ -3,11 +3,12 @@ import {
   Phone, MessageCircle, Clock, CheckCircle2, Loader2, Flag, WifiOff, AlertTriangle, Star, Check, X, Navigation, Wallet,
 } from "lucide-react";
 import {
-  api, AssistanceError, AssistanceStatus, faultCodesList, formatDate, formatXOF, LINE_LABEL, LINE_ORDER, mapsDirections, PAY_METHODS, PayMethod, tariffText,
+  api, agreedPriceText, AssistanceError, AssistanceStatus, Bid, bidErrorMessage, faultCodesList, formatDate, formatXOF, LINE_LABEL, LINE_ORDER, mapsDirections, PAY_METHODS, PayMethod,
   MSG_AI_TITLE, mediaUrl, Quote, quoteTotal, RequestDetail, STATUS_LABEL,
   telHref, useOnline, usePolling, vehicleLabel,
 } from "./api";
-import { MapScreen } from "./AssistanceMaps";
+import { MapScreen, PriceMarker } from "./AssistanceMaps";
+import BidList from "./BidList";
 import {
   btnGreen, btnPrimary, btnSecondary, Card, ChatPanel, errText, inputCls, Notice, Spinner, StateBox, Stars,
 } from "./ui";
@@ -69,7 +70,9 @@ export default function ClientTracking({
   }, [requestId]);
 
   const status0 = detail?.request.status;
-  usePolling(load, 6000, status0 !== "annulee", requestId);
+  usePolling(load, status0 === "recherche" ? 4000 : 6000, status0 !== "annulee", requestId);
+  const [bidBusy, setBidBusy] = useState("");
+  const [bidError, setBidError] = useState("");
 
   // Paiement : on interroge le serveur tant que le règlement n'est pas confirmé (webhook Jèko / réconciliation).
   const payWatchStart = useRef(Date.now());
@@ -91,6 +94,19 @@ export default function ClientTracking({
       setActionError(errText(e));
     } finally {
       setBusy("");
+    }
+  };
+
+  const selectBid = async (b: Bid) => {
+    setBidBusy(b.id); setBidError(""); setNotice("");
+    try {
+      await api(`/requests/${requestId}/bids/${encodeURIComponent(b.id)}/select`, { body: {} });
+      await load();
+    } catch (e) {
+      setBidError(bidErrorMessage(e));
+      await load();
+    } finally {
+      setBidBusy("");
     }
   };
 
@@ -160,27 +176,30 @@ export default function ClientTracking({
     </>
   );
 
-  // ===================== Recherche en cours =====================
+  // ===================== Recherche en cours : offres des mécaniciens =====================
   if (searching) {
+    const bids = detail.bids || [];
+    const markers: PriceMarker[] = bids
+      .filter((b) => b.pro.location)
+      .map((b) => ({ id: b.id, lat: b.pro.location!.lat, lng: b.pro.location!.lng, label: `${Math.round(b.amount).toLocaleString("fr-FR")} F` }));
     return (
-      <MapScreen client={clientPos} pulse onBack={onBack} backLabel="Accueil" footer={cancelBtn}>
+      <MapScreen client={clientPos} pulse onBack={onBack} backLabel="Accueil" footer={cancelBtn} markers={markers}>
         {banners}
-        <div className="text-center space-y-2 py-2">
-          <Loader2 className="w-7 h-7 text-red-500 animate-spin mx-auto" />
-          <h2 className="text-xl font-black text-white">{atelier ? "Nous cherchons un mécanicien près de vous" : "Nous contactons les mécaniciens près de vous"}</h2>
+        <div className="text-center space-y-2 py-1">
+          <Loader2 className="w-6 h-6 text-red-500 animate-spin mx-auto" />
+          <h2 className="text-lg font-black text-white">{atelier ? "Nous contactons les garages près de vous" : "Nous contactons les mécaniciens près de vous"}</h2>
           <div className="flex justify-center gap-1.5" aria-hidden="true">
             {[0, 1, 2].map((i) => <span key={i} className="w-2.5 h-2.5 rounded-full bg-red-500 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />)}
           </div>
           <p className="text-sm text-slate-400">
-            {atelier
-              ? "Dès qu'un garage accepte de vous recevoir, nous vous le proposons et vous confirmez. Vous pouvez quitter cet écran : nous gardons votre demande."
-              : "Le premier qui accepte prend votre demande. Cela peut prendre quelques minutes, vous pouvez quitter cet écran : nous gardons votre demande."}
+            Plusieurs mécaniciens vous font une offre de prix, vous comparez et choisissez. Vous pouvez quitter cet écran : nous gardons votre demande.
           </p>
           <p className="text-xs text-slate-500">{r.serviceLabel || "Assistance"} · {vehicleLabel(r.vehicle)}{r.symptoms ? ` · ${r.symptoms}` : ""}</p>
-          <p className="text-xs font-bold text-amber-300">{r.amountAgreed ? formatXOF(r.amountAgreed) : tariffText(r.tariff)}</p>
         </div>
-        {st === "brouillon" && (
+        {st === "brouillon" ? (
           <button className={btnPrimary} disabled={!!busy} onClick={() => act("submit", () => api(`/requests/${requestId}/submit`, { body: {} }))}>Envoyer la demande</button>
+        ) : (
+          <BidList bids={bids} atelier={atelier} busyId={bidBusy} error={bidError} onSelect={selectBid} onExpire={() => { void load(); }} />
         )}
       </MapScreen>
     );
@@ -211,7 +230,7 @@ export default function ClientTracking({
   // ===================== Mécanicien trouvé / suivi / fin =====================
   const title = st === "terminee" ? "Intervention terminée"
     : r.statusLabel ? r.statusLabel
-    : st === "affectee" ? "Mécanicien trouvé" : STATUS_LABEL[st] || st;
+    : st === "affectee" ? (atelier ? "Garage choisi" : "Mécanicien choisi") : STATUS_LABEL[st] || st;
   const garagePos = pro?.location ? { lat: pro.location.lat, lng: pro.location.lng } : null;
   const etaLine = pro?.eta ? (
     <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 flex items-center gap-3">
@@ -254,9 +273,9 @@ export default function ClientTracking({
             ) : <div className="text-xs text-slate-500">Pas encore d'avis</div>}
           </div>
         </div>
-        <Notice tone="ok">Le mécanicien a accepté de vous recevoir.</Notice>
+        <Notice tone="ok">Le garage a été désigné par l'équipe DiagAssist. Confirmez pour y aller.</Notice>
         {etaLine}
-        <div className="text-sm text-amber-300 font-bold">{amountAgreed > 0 ? formatXOF(amountAgreed) : tariffText(r.tariff)}</div>
+        <div className="text-sm text-amber-300 font-bold">{agreedPriceText(r)}</div>
         {!allowed.confirmVisit && <p className="text-sm text-slate-400">Votre confirmation est en cours de prise en compte…</p>}
         {cancelBtn}
       </MapScreen>
@@ -306,6 +325,13 @@ export default function ClientTracking({
               <div className="text-sm text-amber-400 flex items-center gap-1 font-bold"><Star className="w-4 h-4 fill-amber-400" /> {pro.rating.avg.toFixed(1)} <span className="text-slate-500 font-normal">({pro.rating.count} avis)</span></div>
             ) : <div className="text-xs text-slate-500">Pas encore d'avis</div>}
           </div>
+        </div>
+      )}
+
+      {assigned && st !== "terminee" && amountAgreed > 0 && (
+        <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 px-4 py-2.5 flex items-center justify-between gap-3">
+          <span className="text-sm font-bold text-amber-300">Prix convenu</span>
+          <span className="text-xl font-black text-white">{formatXOF(amountAgreed)}</span>
         </div>
       )}
 
