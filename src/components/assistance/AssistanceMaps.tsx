@@ -271,7 +271,7 @@ function FullMap({
     }
     if (pts.length) {
       if (client) pts.push([client.lat, client.lng]);
-      m.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [40, 70], paddingBottomRight: [40, inset.current + 24], maxZoom: 16 });
+      m.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [40, 70], paddingBottomRight: [40, Math.min(inset.current + 24, Math.max(60, m.getSize().y - 130))], maxZoom: 16 });
     }
   }, [markersKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -282,6 +282,8 @@ function FullMap({
     const pts: L.LatLngTuple[] = [];
     if (client) pts.push([client.lat, client.lng]);
     if (pro) pts.push([pro.lat, pro.lng]);
+    // Offres de prix (garages) : elles restent dans le cadre quand la taille de la feuille change.
+    for (const mk of markers || []) pts.push([mk.lat, mk.lng]);
     const proAppeared = !!pro && !hadPro.current;
     hadPro.current = !!pro;
     if (!pts.length) return;
@@ -289,17 +291,19 @@ function FullMap({
     const le = lastEmit.current;
     if (le && client && le.lat === client.lat && le.lng === client.lng && !proAppeared) return;
     if (pro && !proAppeared && m.getBounds().pad(-0.1).contains([pro.lat, pro.lng]) && client && m.getBounds().contains([client.lat, client.lng])) return;
-    const pad = { paddingTopLeft: [40, 70] as L.PointTuple, paddingBottomRight: [40, inset.current + 24] as L.PointTuple, maxZoom: pts.length > 1 ? 17 : 17 };
+    const pad = { paddingTopLeft: [40, 70] as L.PointTuple, paddingBottomRight: [40, Math.min(inset.current + 24, Math.max(60, m.getSize().y - 130))] as L.PointTuple, maxZoom: pts.length > 1 ? 17 : 17 };
     m.fitBounds(L.latLngBounds(pts), pad);
-  }, [client?.lat, client?.lng, pro?.lat, pro?.lng, bottomInset]);
+  }, [client?.lat, client?.lng, pro?.lat, pro?.lng, bottomInset, markersKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <div ref={el} className="dm-map absolute inset-0 z-0" />;
 }
 
 /** Écran carte plein cadre avec panneau du bas. `children` = contenu défilant, `footer` = zone fixe (bouton principal). */
 export function MapScreen({
-  client, pro, accuracy, editable, onChange, pulse, onBack, backLabel = "Retour", topRight, children, footer, markers,
+  client, pro, accuracy, editable, onChange, pulse, onBack, backLabel = "Retour", topRight, children, footer, markers, tall,
 }: {
+  /** Feuille plus haute (comparaison d'offres) : la liste prime sur la carte. */
+  tall?: boolean;
   markers?: PriceMarker[];
   client?: LatLng | null; pro?: LatLng | null; accuracy?: number; editable?: boolean;
   onChange?: (p: LatLng) => void; pulse?: boolean; onBack?: () => void; backLabel?: string;
@@ -328,10 +332,10 @@ export function MapScreen({
         </button>
       )}
       {topRight && <div className="absolute top-3 right-3 z-10">{topRight}</div>}
-      <div ref={sheet} className="absolute inset-x-0 bottom-0 z-10 flex flex-col max-h-[78%] bg-slate-900/95 backdrop-blur-md border-t border-white/[0.1] rounded-t-3xl shadow-[0_-12px_40px_rgba(0,0,0,0.5)]">
+      <div ref={sheet} className={`absolute inset-x-0 bottom-0 z-10 flex flex-col ${tall ? "max-h-[74%]" : "max-h-[64%]"} bg-slate-900/95 backdrop-blur-md border-t border-white/[0.1] rounded-t-3xl shadow-[0_-12px_40px_rgba(0,0,0,0.5)]`}>
         <div className="pt-2.5 pb-1 flex justify-center shrink-0"><span className="w-10 h-1.5 rounded-full bg-slate-700" /></div>
         <div className="overflow-y-auto px-5 pb-4 pt-1 space-y-4 min-h-0">{children}</div>
-        {footer && <div className="shrink-0 px-5 pb-5 pt-3 border-t border-white/[0.06] space-y-2">{footer}</div>}
+        {footer && <div className="shrink-0 px-5 pb-3 pt-2 border-t border-white/[0.06] space-y-2">{footer}</div>}
       </div>
     </div>
   );

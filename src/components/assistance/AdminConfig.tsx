@@ -183,12 +183,12 @@ function SettingsBlock() {
               return (
                 <div key={c} className="bg-slate-900 border border-white/[0.06] rounded-xl p-2 space-y-1.5">
                   <span className="text-xs font-bold text-white">{l}</span>
-                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
-                    <Field label="Tarif de référence"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.indicatif} onChange={(e) => setT("indicatif", e.target.value)} /></Field>
-                    <Field label="Minimum"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.min} onChange={(e) => setT("min", e.target.value)} /></Field>
-                    <Field label="Maximum"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.max} onChange={(e) => setT("max", e.target.value)} /></Field>
-                    <Field label="Déplacement"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.deplacement} onChange={(e) => setT("deplacement", e.target.value)} /></Field>
-                    <Field label="Diagnostic"><input className={inputCls} inputMode="numeric" placeholder="Non configuré" value={t.diagnostic} onChange={(e) => setT("diagnostic", e.target.value)} /></Field>
+                  <div className="grid grid-cols-3 lg:grid-cols-5 gap-2">
+                    <Field label="Référence"><input className={inputCls} inputMode="numeric" placeholder="—" value={t.indicatif} onChange={(e) => setT("indicatif", e.target.value)} /></Field>
+                    <Field label="Minimum"><input className={inputCls} inputMode="numeric" placeholder="—" value={t.min} onChange={(e) => setT("min", e.target.value)} /></Field>
+                    <Field label="Maximum"><input className={inputCls} inputMode="numeric" placeholder="—" value={t.max} onChange={(e) => setT("max", e.target.value)} /></Field>
+                    <Field label="Déplacement"><input className={inputCls} inputMode="numeric" placeholder="—" value={t.deplacement} onChange={(e) => setT("deplacement", e.target.value)} /></Field>
+                    <Field label="Diagnostic"><input className={inputCls} inputMode="numeric" placeholder="—" value={t.diagnostic} onChange={(e) => setT("diagnostic", e.target.value)} /></Field>
                   </div>
                   {bad && <p className="text-[11px] text-rose-400">Le minimum doit être inférieur ou égal au maximum.</p>}
                 </div>

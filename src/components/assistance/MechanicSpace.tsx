@@ -231,9 +231,11 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
           <strong>{MSG_SUBSCRIPTION}</strong>
         </Notice>
       )}
-      {profile && vs === "valide" && profile.blockers && profile.blockers.length > 0 && (
-        <Notice tone="warn"><ul className="list-disc pl-5 space-y-0.5">{profile.blockers.filter((b) => !(profile.subscribed === false && /abonnement/i.test(b))).map((b, i) => <li key={i}>{b}</li>)}</ul></Notice>
-      )}
+      {profile && vs === "valide" && (() => {
+        // L'abonnement a déjà sa propre bannière : on ne garde ici que les autres blocages (jamais de cadre vide).
+        const others = (profile.blockers || []).filter((b) => !(profile.subscribed === false && /abonnement/i.test(b)));
+        return others.length > 0 ? <Notice tone="warn"><ul className="list-disc pl-5 space-y-0.5">{others.map((b, i) => <li key={i}>{b}</li>)}</ul></Notice> : null;
+      })()}
 
       {/* Disponibilité */}
       {profile && (
@@ -287,7 +289,7 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
               <h3 className="text-sm font-black uppercase tracking-wider text-slate-500">Demandes</h3>
               <p className="text-xs font-bold text-slate-300">Faites votre meilleure offre : le client choisit.</p>
               {offerMsg && <Notice tone="warn" action={offerMsg === MSG_SUBSCRIPTION && onUpgrade ? <button className={btnPrimary} onClick={onUpgrade}>Voir les forfaits</button> : undefined}>{offerMsg}</Notice>}
-              {!profile.available && <p className="text-sm text-slate-500 py-3">Passez « Disponible » pour recevoir des offres de clients proches.</p>}
+              {!profile.available && <p className="text-sm text-slate-500 py-3">{profile.subscribed === false ? "Renouvelez votre abonnement pour pouvoir passer « Disponible » et recevoir des offres." : "Passez « Disponible » pour recevoir des offres de clients proches."}</p>}
               {profile.available && offers.length === 0 && (
                 <p className="text-sm text-slate-500 py-3 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Aucune offre pour le moment. Nous vous prévenons ici dès qu'un client a besoin de vous.</p>
               )}
@@ -319,7 +321,7 @@ function OfferCard({
   const won = st === "retenue";
   const canBid = offer.canBid !== false && live;
   return (
-    <Card className={`space-y-3 !border-2 ${lost ? "!border-white/10 opacity-60" : won ? "!border-emerald-500/50" : "!border-red-500/40"}`}>
+    <Card className={`space-y-3 !border-2 ${lost ? "!border-white/10 opacity-80" : won ? "!border-emerald-500/50" : "!border-red-500/40"}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <span className={`inline-block text-[11px] font-black uppercase tracking-wider rounded-full px-2.5 py-1 mb-1 ${atelier ? "bg-sky-500/15 text-sky-300" : "bg-red-500/15 text-red-300"}`}>
@@ -346,7 +348,7 @@ function OfferCard({
         </div>
       )}
 
-      {lost && <p className="text-sm font-bold text-slate-400">Non retenue : le client a choisi un autre mécanicien.</p>}
+      {lost && <Notice tone="info">Non retenue : le client a choisi un autre mécanicien. Vos prochaines demandes vous attendent ici.</Notice>}
       {won && (
         <div className="space-y-2">
           <p className="text-sm font-black text-emerald-400">Retenue : le client vous a choisi{offer.myBid ? ` pour ${formatXOF(offer.myBid.amount)}` : ""}.</p>

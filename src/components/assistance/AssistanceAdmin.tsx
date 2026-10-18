@@ -33,7 +33,7 @@ export default function AssistanceAdmin() {
         <>
           <div className="flex flex-wrap gap-1.5">
             {VIEWS.map((v) => (
-              <button key={v.id} onClick={() => setView(v.id)} className={`text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition ${view === v.id ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}>{v.label}</button>
+              <button key={v.id} onClick={() => setView(v.id)} className={`text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition ${view === v.id ? "bg-emerald-600 text-[#ffffff]" : "bg-slate-950/60 text-slate-300 hover:bg-slate-950/80 border border-white/[0.08]"}`}>{v.label}</button>
             ))}
           </div>
           {view === "dashboard" && <AdminDashboardView />}

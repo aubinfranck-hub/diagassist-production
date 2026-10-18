@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Ambulance, Flame, Loader2, MessageCircle, Phone, Send, ShieldAlert, Siren, X } from "lucide-react";
 import { digitsPhone } from "./api";
 import { btnPrimary, btnSecondary, inputCls, Notice } from "./ui";
@@ -34,7 +35,8 @@ export function SosButton({ className = "" }: { className?: string }) {
       >
         <Siren className="w-4 h-4" /> SOS
       </button>
-      {open && <SosSheet onClose={() => setOpen(false)} />}
+      {/* Portail : sinon la feuille reste prisonnière de la carte (overflow caché + animation = « fixed » relatif à la carte). */}
+      {open && createPortal(<SosSheet onClose={() => setOpen(false)} />, document.body)}
     </>
   );
 }

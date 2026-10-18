@@ -24,10 +24,10 @@ export default function MechanicEarnings() {
       <Notice tone="info">
         Le client paie via DiagAssist ; vous recevez le montant moins la commission de {data.commissionPct ?? 10} %.
       </Notice>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Card className="!p-4"><div className="text-[11px] font-black uppercase tracking-wider text-slate-500">Total payé (net)</div><div className="text-xl font-black text-white mt-1">{formatXOF(data.paid)}</div></Card>
-        <Card className="!p-4"><div className="text-[11px] font-black uppercase tracking-wider text-slate-500">À recevoir</div><div className="text-xl font-black text-amber-300 mt-1">{formatXOF(data.toReceive)}</div></Card>
-        <Card className="!p-4"><div className="text-[11px] font-black uppercase tracking-wider text-slate-500">Déjà reçu</div><div className="text-xl font-black text-emerald-400 mt-1">{formatXOF(data.received)}</div></Card>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Card className="!p-4 col-span-2 sm:col-span-1"><div className="text-[11px] font-black uppercase tracking-wider text-slate-500">Total payé (net)</div><div className="text-xl font-black text-white mt-1">{formatXOF(data.paid)}</div></Card>
+        <Card className="!p-4"><div className="text-[11px] font-black uppercase tracking-wider text-slate-500">À recevoir</div><div className="text-lg font-black text-amber-300 mt-1">{formatXOF(data.toReceive)}</div></Card>
+        <Card className="!p-4"><div className="text-[11px] font-black uppercase tracking-wider text-slate-500">Déjà reçu</div><div className="text-lg font-black text-emerald-400 mt-1">{formatXOF(data.received)}</div></Card>
       </div>
       <div className="text-xs text-slate-500">Commission DiagAssist appliquée : {data.commissionPct ?? 10} %</div>
       <section className="space-y-2">

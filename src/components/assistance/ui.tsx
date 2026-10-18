@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AlertTriangle, WifiOff, Loader2, Send, Star, MessageCircle } from "lucide-react";
 import { api, AssistanceError, ChatMsg, usePolling } from "./api";
+import "./assistance.css";
 
 // Petits blocs d'interface partagés (style de l'app : fond sombre, rouge DiagAssist, thème clair géré par index.css)
 
@@ -67,7 +68,7 @@ export function StateBox({
 }: { icon: React.ReactNode; title: string; text?: string; children?: React.ReactNode }) {
   return (
     <Card className="text-center space-y-3 py-10">
-      <div className="mx-auto w-14 h-14 rounded-2xl bg-slate-950/70 border border-white/[0.06] flex items-center justify-center text-slate-400">{icon}</div>
+      <div className="mx-auto w-14 h-14 rounded-2xl bg-slate-950/60 border border-white/[0.06] flex items-center justify-center text-slate-400">{icon}</div>
       <h3 className="text-lg font-black text-white">{title}</h3>
       {text && <p className="text-sm text-slate-400 max-w-md mx-auto leading-relaxed">{text}</p>}
       {children && <div className="max-w-xs mx-auto pt-2 space-y-2">{children}</div>}

@@ -94,8 +94,8 @@ export function Badge({ status, label }: { status?: string; label?: string }) {
 
 export const inputCls = "w-full bg-slate-950 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500";
 export const btnCls = "text-xs font-bold px-3 py-2 rounded-xl transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed";
-export const btnPrimary = `${btnCls} bg-emerald-600 hover:bg-emerald-700 text-white`;
-export const btnGhost = `${btnCls} bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/[0.08]`;
+export const btnPrimary = `${btnCls} bg-emerald-600 hover:bg-emerald-700 text-[#ffffff]`;
+export const btnGhost = `${btnCls} bg-slate-950/60 hover:bg-slate-950/80 text-slate-200 border border-white/[0.08]`;
 export const btnDanger = `${btnCls} bg-rose-600/80 hover:bg-rose-600 text-white`;
 export const cardCls = "bg-slate-950/60 border border-white/[0.06] rounded-xl p-4 space-y-3";
 

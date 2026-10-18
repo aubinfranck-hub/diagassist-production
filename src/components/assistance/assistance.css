@@ -1,0 +1,11 @@
+/* Assistance : contrastes lisibles en thème clair (index.css ne couvre pas les teintes ambre/vert/bleu/rouge clair
+   utilisées pour le texte d'état, pensées pour le fond sombre). Le thème sombre n'est pas touché. */
+.light .text-amber-200 { color: #78350f !important; }
+.light .text-amber-300, .light .text-amber-400, .light .text-amber-500 { color: #b45309 !important; }
+.light .text-emerald-300, .light .text-emerald-400, .light .text-emerald-500 { color: #047857 !important; }
+.light .text-sky-300 { color: #0369a1 !important; }
+.light .text-red-300, .light .text-red-400 { color: #b91c1c !important; }
+.light .bg-red-500\/15.text-red-300 { background-color: rgba(220, 38, 38, 0.12) !important; }
+.light .text-orange-400 { color: #c2410c !important; }
+.light .text-rose-300, .light .text-rose-400 { color: #be123c !important; }
+.light .text-rose-300\/80 { color: #be123c !important; }

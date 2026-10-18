@@ -284,7 +284,7 @@ export default function ClientWizard({
             return (
               <button
                 key={String(o.v)} type="button" onClick={() => { setImmobilised(o.v); setTileId(""); }} aria-pressed={sel}
-                className={`text-left rounded-2xl border-2 p-4 min-h-[76px] flex items-center gap-3.5 transition cursor-pointer ${sel ? "border-red-500 bg-red-600/15" : "border-white/[0.08] bg-slate-950/50 hover:border-red-500/40"}`}
+                className={`text-left rounded-2xl border-2 p-4 min-h-[76px] flex items-center gap-3.5 transition cursor-pointer ${sel ? "border-red-500 bg-red-600/15" : "border-white/[0.08] bg-slate-950/60 hover:border-red-500/40"}`}
               >
                 <span className={sel ? "text-red-500" : "text-slate-400"}>{o.icon}</span>
                 <span>
@@ -314,7 +314,7 @@ export default function ClientWizard({
                 className={`text-left rounded-2xl border-2 p-3.5 min-h-[88px] flex flex-col justify-between gap-2 transition cursor-pointer ${
                   !ok ? "opacity-50 cursor-not-allowed border-white/[0.06] bg-slate-950/40"
                     : sel ? "border-red-500 bg-red-600/15"
-                    : "border-white/[0.08] bg-slate-950/50 hover:border-red-500/40"
+                    : "border-white/[0.08] bg-slate-950/60 hover:border-red-500/40"
                 }`}
               >
                 <span className={sel ? "text-red-500" : "text-slate-400"}>{t.icon}</span>
@@ -411,7 +411,7 @@ export default function ClientWizard({
       </div>
 
       {prefill?.summary && (
-        <label className={`flex items-start gap-3 rounded-2xl border-2 p-4 cursor-pointer ${share ? "border-red-500 bg-red-600/10" : "border-white/[0.1] bg-slate-950/50"}`}>
+        <label className={`flex items-start gap-3 rounded-2xl border-2 p-4 cursor-pointer ${share ? "border-red-500 bg-red-600/10" : "border-white/[0.1] bg-slate-950/60"}`}>
           <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} className="mt-1 w-6 h-6 accent-red-600 shrink-0" />
           <span className="text-sm text-slate-300 leading-snug">
             <strong className="block text-base text-white">Transmettre mon diagnostic au mécanicien</strong>

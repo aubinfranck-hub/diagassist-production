@@ -155,7 +155,7 @@ export default function ClientTracking({
 
   const cancelBtn = allowed.cancel ? (
     <button
-      className="w-full min-h-[48px] text-sm font-bold text-red-400 hover:text-red-300 underline underline-offset-4 cursor-pointer"
+      className="w-full min-h-[44px] text-sm font-bold text-red-400 hover:text-red-300 underline underline-offset-4 cursor-pointer"
       disabled={!!busy}
       onClick={() => {
         if (window.confirm("Voulez-vous vraiment annuler cette demande ?")) {
@@ -183,19 +183,26 @@ export default function ClientTracking({
       .filter((b) => b.pro.location)
       .map((b) => ({ id: b.id, lat: b.pro.location!.lat, lng: b.pro.location!.lng, label: `${Math.round(b.amount).toLocaleString("fr-FR")} F` }));
     return (
-      <MapScreen client={clientPos} pulse onBack={onBack} backLabel="Accueil" footer={cancelBtn} markers={markers}>
+      <MapScreen client={clientPos} pulse onBack={onBack} backLabel="Accueil" footer={cancelBtn} markers={markers} tall={bids.length > 0 && st !== "brouillon"}>
         {banners}
-        <div className="text-center space-y-2 py-1">
-          <Loader2 className="w-6 h-6 text-red-500 animate-spin mx-auto" />
-          <h2 className="text-lg font-black text-white">{atelier ? "Nous contactons les garages près de vous" : "Nous contactons les mécaniciens près de vous"}</h2>
-          <div className="flex justify-center gap-1.5" aria-hidden="true">
-            {[0, 1, 2].map((i) => <span key={i} className="w-2.5 h-2.5 rounded-full bg-red-500 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />)}
+        {bids.length > 0 && st !== "brouillon" ? (
+          // Des offres sont arrivées : en-tête compact pour laisser la place à la comparaison.
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+            <Loader2 className="w-4 h-4 text-red-500 animate-spin shrink-0" /> D'autres offres peuvent encore arriver.
           </div>
-          <p className="text-sm text-slate-400">
-            Plusieurs mécaniciens vous font une offre de prix, vous comparez et choisissez. Vous pouvez quitter cet écran : nous gardons votre demande.
-          </p>
-          <p className="text-xs text-slate-500">{r.serviceLabel || "Assistance"} · {vehicleLabel(r.vehicle)}{r.symptoms ? ` · ${r.symptoms}` : ""}</p>
-        </div>
+        ) : (
+          <div className="text-center space-y-2 py-1">
+            <Loader2 className="w-6 h-6 text-red-500 animate-spin mx-auto" />
+            <h2 className="text-lg font-black text-white">{atelier ? "Nous contactons les garages près de vous" : "Nous contactons les mécaniciens près de vous"}</h2>
+            <div className="flex justify-center gap-1.5" aria-hidden="true">
+              {[0, 1, 2].map((i) => <span key={i} className="w-2.5 h-2.5 rounded-full bg-red-500 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />)}
+            </div>
+            <p className="text-sm text-slate-400">
+              Plusieurs mécaniciens vous font une offre de prix, vous comparez et choisissez. Vous pouvez quitter cet écran : nous gardons votre demande.
+            </p>
+            <p className="text-xs text-slate-500">{r.serviceLabel || "Assistance"} · {vehicleLabel(r.vehicle)}{r.symptoms ? ` · ${r.symptoms}` : ""}</p>
+          </div>
+        )}
         {st === "brouillon" ? (
           <button className={btnPrimary} disabled={!!busy} onClick={() => act("submit", () => api(`/requests/${requestId}/submit`, { body: {} }))}>Envoyer la demande</button>
         ) : (
@@ -236,7 +243,7 @@ export default function ClientTracking({
     <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 flex items-center gap-3">
       <Clock className="w-7 h-7 text-emerald-400 shrink-0" />
       <div>
-        <div className="text-2xl font-black text-white leading-tight">Trajet estimé : ~{Math.max(1, Math.round(pro.eta.minutes))} min</div>
+        <div className="text-xl font-black text-white leading-tight">Trajet estimé : ~{Math.max(1, Math.round(pro.eta.minutes))} min</div>
         <div className="text-xs text-slate-400">Environ {pro.eta.distanceKm.toFixed(1)} km jusqu'au garage. Estimation, elle peut varier avec la circulation.</div>
       </div>
     </div>
@@ -295,12 +302,20 @@ export default function ClientTracking({
               {busy === "leaving" ? <Loader2 className="w-5 h-5 animate-spin" /> : <Navigation className="w-5 h-5" />} Je pars
             </button>
           )}
-          {atelier && garagePos && (
-            <a href={mapsDirections(garagePos.lat, garagePos.lng)} target="_blank" rel="noopener noreferrer" className={btnSecondary}>
-              <Navigation className="w-5 h-5" /> Itinéraire vers le garage
-            </a>
-          )}
-          {pro?.phone && (
+          {atelier && garagePos ? (
+            // Atelier : trois actions compactes sur une ligne pour laisser la place à l'ETA au-dessus.
+            <div className="grid grid-cols-3 gap-2">
+              <a href={mapsDirections(garagePos.lat, garagePos.lng)} target="_blank" rel="noopener noreferrer" className={`${btnSecondary} !min-h-[48px] !px-2 !py-2 !text-sm !rounded-xl flex-col !gap-0.5`}>
+                <Navigation className="w-4 h-4" /> Itinéraire
+              </a>
+              {pro?.phone ? <a href={telHref(pro.phone)} className={`${btnGreen} !min-h-[48px] !px-2 !py-2 !text-sm !rounded-xl flex-col !gap-0.5`}><Phone className="w-4 h-4" /> Appeler</a> : <span />}
+              {pro?.phone ? (
+                <button className={`${btnSecondary} !min-h-[48px] !px-2 !py-2 !text-sm !rounded-xl flex-col !gap-0.5`} onClick={() => setChatOpen((v) => !v)} aria-expanded={chatOpen}>
+                  <MessageCircle className="w-4 h-4" /> Message
+                </button>
+              ) : <span />}
+            </div>
+          ) : pro?.phone && (
             <div className="grid grid-cols-2 gap-3">
               <a href={telHref(pro.phone)} className={btnGreen}><Phone className="w-5 h-5" /> Appeler</a>
               <button className={btnSecondary} onClick={() => setChatOpen((v) => !v)} aria-expanded={chatOpen}>
@@ -341,7 +356,7 @@ export default function ClientTracking({
         <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 flex items-center gap-3">
           <Clock className="w-7 h-7 text-emerald-400 shrink-0" />
           <div>
-            <div className="text-2xl font-black text-white leading-tight">Arrive dans ~{etaMin} min</div>
+            <div className="text-xl font-black text-white leading-tight">Arrive dans ~{etaMin} min</div>
             <div className="text-xs text-slate-400">À environ {pro.eta.distanceKm.toFixed(1)} km de vous. Estimation, elle peut varier avec la circulation.</div>
           </div>
         </div>
@@ -582,6 +597,7 @@ function PaymentPanel({
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [changing, setChanging] = useState(false);
 
   // « Payé » uniquement quand le serveur l'a confirmé (webhook signé ou réconciliation).
   if (paymentStatus === "paye") {
@@ -642,7 +658,10 @@ function PaymentPanel({
       {paymentStatus === "echoue" && <Notice tone="error">Le paiement n'a pas abouti. Vous pouvez réessayer.</Notice>}
       {notConfigured && <Notice tone="warn">Le paiement en ligne n'est pas encore activé.</Notice>}
 
-      {!notConfigured && canPay && (
+      {!notConfigured && canPay && paymentStatus === "en_attente" && !changing && (
+        <button type="button" className="w-full min-h-[44px] text-sm font-bold text-slate-400 underline underline-offset-4 cursor-pointer" onClick={() => setChanging(true)}>Choisir un autre moyen de paiement</button>
+      )}
+      {!notConfigured && canPay && (paymentStatus !== "en_attente" || changing) && (
         <>
           <div className="text-sm font-bold text-slate-300">Choisissez comment payer</div>
           <div className="grid grid-cols-2 gap-2.5">
@@ -651,7 +670,7 @@ function PaymentPanel({
               return (
                 <button
                   key={m.code} type="button" aria-pressed={sel} onClick={() => setMethod(m.code)}
-                  className={`rounded-2xl border-2 min-h-[72px] px-3 flex items-center justify-center gap-2 text-base font-black text-white transition cursor-pointer ${sel ? "border-red-500 bg-red-600/15" : "border-white/[0.1] bg-slate-950/50 hover:border-red-500/40"}`}
+                  className={`rounded-2xl border-2 min-h-[56px] px-2 flex items-center justify-center gap-2 text-[15px] leading-tight font-black text-white transition cursor-pointer ${sel ? "border-red-500 bg-red-600/15" : "border-white/[0.1] bg-slate-950/60 hover:border-red-500/40"}`}
                 >
                   <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ background: m.color }} aria-hidden="true" />
                   {m.label}
@@ -661,7 +680,7 @@ function PaymentPanel({
           </div>
           <input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Numéro qui paie (facultatif)" aria-label="Numéro qui paie" className={inputCls} />
           {error && <Notice tone="error">{error}</Notice>}
-          <button className={`${btnPrimary} !min-h-[58px] !text-lg`} disabled={!method || busy} onClick={pay}>
+          <button className={`${btnPrimary} !min-h-[56px] !text-lg sticky bottom-1 z-[1]`} disabled={!method || busy} onClick={pay}>
             {busy ? <><Loader2 className="w-5 h-5 animate-spin" /> Ouverture du paiement…</> : <>Payer {formatXOF(amount)}</>}
           </button>
         </>

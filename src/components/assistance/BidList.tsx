@@ -24,7 +24,7 @@ function BidAvatar({ name, photo }: { name?: string; photo?: string | null }) {
 function Countdown({ until, onEnd }: { until: number; onEnd: () => void }) {
   const s = useCountdown(until, onEnd);
   const mm = Math.floor(s / 60), ss = String(s % 60).padStart(2, "0");
-  return <span className={s <= 30 ? "text-amber-400 font-bold" : ""}>Valable encore {mm}:{ss}</span>;
+  return <span className={s <= 30 ? "text-amber-400 font-bold" : ""}>Valable {mm}:{ss}</span>;
 }
 
 function BidCard({
@@ -36,7 +36,7 @@ function BidCard({
   const p = bid.pro;
   const name = p.displayName || "Un mécanicien";
   return (
-    <li className={`rounded-2xl border p-3.5 space-y-3 ${best ? "border-emerald-500/50 bg-emerald-500/[0.06]" : "border-white/[0.1] bg-slate-950/40"}`}>
+    <li className={`rounded-2xl border p-3 space-y-2.5 ${best ? "border-emerald-500/50 bg-emerald-500/[0.06]" : "border-white/[0.1] bg-slate-950/40"}`}>
       <div className="flex items-start gap-3">
         <BidAvatar name={name} photo={p.photoUrl} />
         <div className="min-w-0 flex-1">
@@ -45,10 +45,12 @@ function BidCard({
             {best && <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full"><Sparkles className="w-3 h-3" /> Meilleur rapport</span>}
             {bid.isRevised && <span className="text-[11px] font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">Offre révisée</span>}
           </div>
-          {p.garageName && <div className="text-sm text-slate-400 truncate">{p.garageName}</div>}
-          {p.rating ? (
-            <div className="text-sm text-amber-400 flex items-center gap-1 font-bold"><Star className="w-3.5 h-3.5 fill-amber-400" /> {p.rating.avg.toFixed(1)} <span className="text-slate-500 font-normal">({p.rating.count} avis)</span></div>
-          ) : <div className="text-xs text-slate-500">Pas encore d'avis</div>}
+          <div className="text-sm text-slate-400 flex items-center gap-x-2 flex-wrap">
+            {p.garageName && <span className="truncate max-w-full">{p.garageName}</span>}
+            {p.rating ? (
+              <span className="text-amber-400 inline-flex items-center gap-1 font-bold"><Star className="w-3.5 h-3.5 fill-amber-400" /> {p.rating.avg.toFixed(1)} <span className="text-slate-500 font-normal">({p.rating.count} avis)</span></span>
+            ) : <span className="text-xs text-slate-500">Pas encore d'avis</span>}
+          </div>
         </div>
         <div className="text-right shrink-0">
           <div className="text-2xl font-black text-white leading-none">{Math.round(bid.amount).toLocaleString("fr-FR")}</div>
@@ -57,18 +59,18 @@ function BidCard({
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-300">
         <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4 text-emerald-400" />
-          {atelier ? "Trajet ~" : "Arrive dans ~"}{Math.max(1, Math.round(bid.etaMinutes))} min <span className="text-xs text-slate-500">(approximatif)</span></span>
+          {atelier ? "Trajet ~" : "Arrive dans ~"}{Math.max(1, Math.round(bid.etaMinutes))} min <span className="text-xs text-slate-500">(approx.)</span></span>
         <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4 text-slate-400" />{Number(bid.distanceKm).toFixed(1)} km</span>
       </div>
       {p.trainings && p.trainings.length > 0 && (
         <div className="text-xs text-slate-500 truncate">Formations : {p.trainings.map((t) => t.title).join(", ")}</div>
       )}
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-slate-500"><Countdown until={bid.validUntil} onEnd={onExpire} /></span>
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-slate-500 shrink-0 w-[4.5rem] leading-tight"><Countdown until={bid.validUntil} onEnd={onExpire} /></span>
+        <button className={`${btnPrimary} !min-h-[48px] !py-2.5 flex-1`} disabled={disabled} onClick={() => onChoose(bid)}>
+          {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : null} Choisir cette offre
+        </button>
       </div>
-      <button className={`${btnPrimary} !min-h-[52px]`} disabled={disabled} onClick={() => onChoose(bid)}>
-        {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : null} Choisir cette offre
-      </button>
     </li>
   );
 }
@@ -123,8 +125,8 @@ export default function BidList({
               {atelier ? "Votre visite sera confirmée avec ce garage." : "Les autres offres seront annulées."}
             </p>
             <div className="grid grid-cols-2 gap-3">
-              <button className={btnSecondary} disabled={!!busyId} onClick={() => setConfirm(null)}>Retour</button>
-              <button className={btnPrimary} disabled={!!busyId} onClick={() => { onSelect(conf); setConfirm(null); }}>Oui, choisir</button>
+              <button className={`${btnSecondary} !px-3`} disabled={!!busyId} onClick={() => setConfirm(null)}>Retour</button>
+              <button className={`${btnPrimary} !px-3`} disabled={!!busyId} onClick={() => { onSelect(conf); setConfirm(null); }}>Oui, choisir</button>
             </div>
           </div>
         </div>
