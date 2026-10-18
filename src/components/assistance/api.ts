@@ -13,6 +13,46 @@ export type RequestStatus =
 
 export type QuoteStatus = "aucun" | "propose" | "accepte" | "refuse";
 
+export type PayMethod = "wave" | "orange" | "mtn" | "moov";
+export type AssistanceMode = "depannage" | "atelier";
+export type VisitStatus = "aucune" | "proposee" | "confirmee" | "refusee";
+export type PaymentStatus = "aucun" | "en_attente" | "paye" | "echoue";
+
+export interface ProEarnings {
+  paid: number;
+  toReceive: number;
+  received: number;
+  commissionPct: number;
+  payments: {
+    reference: string;
+    requestId: string;
+    service: string;
+    serviceLabel: string;
+    method: PayMethod | string;
+    status: string;
+    grossAmount: number;
+    amount: number;
+    commissionAmount: number;
+    proAmount: number;
+    payoutStatus: "a_reverser" | "reverse" | string;
+    payoutAt?: number | null;
+    createdAt: number;
+  }[];
+}
+
+export interface PaymentInfo {
+  reference: string;
+  method: PayMethod | string;
+  amount: number;
+  status: string;
+  redirectUrl?: string | null;
+  updatedAt?: number;
+  commissionAmount?: number;
+  proAmount?: number;
+  payoutStatus?: string;
+  payoutAt?: number | null;
+}
+
 export interface ServiceInfo {
   code: ServiceCode | string;
   label: string;
@@ -20,12 +60,18 @@ export interface ServiceInfo {
   available: boolean;
   proCount?: number;
   availableNow?: number | boolean;
+  atelierAvailable?: boolean;
+  atelierProCount?: number;
+  atelierAvailableNow?: number | boolean;
+  tariff?: number | null;
   indicativeAmount?: number | null;
 }
 
 export interface AssistanceStatus {
   enabled: boolean;
   dbConfigured: boolean;
+  paymentConfigured?: boolean;
+  paymentMethods?: PayMethod[];
   whatsappConfigured: boolean;
   services: ServiceInfo[];
   zones: { id: number; name: string }[];
@@ -65,6 +111,12 @@ export interface RequestSummary {
   serviceLabel?: string;
   status: RequestStatus;
   quoteStatus?: QuoteStatus;
+  mode?: AssistanceMode;
+  immobilised?: boolean;
+  visitStatus?: VisitStatus;
+  tariff?: number | null;
+  paymentStatus?: PaymentStatus;
+  statusLabel?: string;
   vehicle?: VehicleInfo | string | null;
   symptoms?: string;
   proName?: string | null;
@@ -99,12 +151,14 @@ export interface RequestDetail {
   };
   pro: ProPublic | null;
   quotes: Quote[];
+  payment?: PaymentInfo | null;
   timeline: { at: number; label: string; status: string }[];
   media: MediaItem[];
   review: { rating: number; comment?: string } | null;
   allowed: {
     cancel?: boolean; retry?: boolean; manual?: boolean;
     review?: boolean; claim?: boolean; decideQuote?: boolean;
+    pay?: boolean; confirmVisit?: boolean; leaving?: boolean;
   };
 }
 
