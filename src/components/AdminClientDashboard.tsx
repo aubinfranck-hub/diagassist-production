@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight, Wrench, Upload, Car, Cpu, CheckCircle2, XCircle } from "lucide-react";
+import AssistanceAdmin from "./assistance/AssistanceAdmin";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -1587,6 +1588,9 @@ export default function AdminClientDashboard() {
           ))}
         </div>
       </div>
+
+      {/* Assistance automobile */}
+      <AssistanceAdmin />
 
       {/* Fenêtre modale : carte avec point exact */}
       {mapModalLocation && (

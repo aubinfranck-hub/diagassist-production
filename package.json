@@ -9,6 +9,7 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "test:assistance": "tsx src/modules/assistance/assistance.test.ts",
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "npm run lint && npm test && npm run build"
   },

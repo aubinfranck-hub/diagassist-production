@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence } from "motion/react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText,
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench, Chrome,
-  Sun, Moon, Monitor, Users, ShoppingBag
+  Sun, Moon, Monitor, Users, ShoppingBag, LifeBuoy, Car
 } from "lucide-react";
 
 import DiagnosticForm from "./components/DiagnosticForm";
@@ -21,6 +21,9 @@ import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
 import AutoQuestioningLoop from "./components/AutoQuestioningLoop";
 import ScreeningV2Panel from "./components/ScreeningV2Panel";
+import ClientAssistance, { AssistancePrefill } from "./components/assistance/ClientAssistance";
+import MechanicSpace from "./components/assistance/MechanicSpace";
+import { ModeSelect, readUserMode, saveUserMode, UserMode } from "./components/assistance/UserMode";
 
 import { Diagnosis, ApiUsage, ChatMessage, SubscriptionPlan } from "./types";
 
@@ -105,6 +108,8 @@ interface AdminLogEntry {
 export default function App() {
   // Splash screen state
   const [showSplash, setShowSplash] = useState(true);
+  // Callback stable : sinon SplashScreen réarme son minuteur à chaque rendu d'App et ne se ferme jamais.
+  const hideSplash = useCallback(() => setShowSplash(false), []);
   // Page d'accueil publique (vitrine) affichée avant l'écran de connexion — pour le référencement
   // et la présentation du produit aux visiteurs qui n'ont pas encore de compte.
   const [showLandingPage, setShowLandingPage] = useState(true);
@@ -112,6 +117,15 @@ export default function App() {
   // Type de profil : uniquement "mechanic" (professionnel) pour le moment — le profil
   // "owner" (propriétaire de véhicule) est temporairement désactivé côté produit.
   const [accountType] = useState<"mechanic" | "owner">("mechanic");
+
+  // Mode choisi par l'utilisateur sur cet appareil : automobiliste ("driver") ou mécanicien.
+  const [userMode, setUserMode] = useState<UserMode | null>(() => readUserMode());
+  const chooseMode = (m: UserMode) => {
+    saveUserMode(m);
+    setUserMode(m);
+    setActiveTab(m === "driver" ? "assistance" : "diagnose");
+    window.scrollTo({ top: 0 });
+  };
 
   // Connectivity monitoring state
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -222,7 +236,18 @@ export default function App() {
   }, []);
 
   // Navigation tabs
-  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening">("diagnose");
+  const [activeTab, setActiveTab] = useState<"diagnose" | "live" | "prices" | "admin" | "mechanics" | "parts" | "screening" | "assistance" | "depannage">(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.get("assistance") && q.get("payment") === "return") return "assistance"; // retour de paiement Jèko
+    } catch { /* ignoré */ }
+    return readUserMode() === "driver" ? "assistance" : "diagnose";
+  });
+  // Assistance automobile : pré-remplissage depuis un diagnostic IA (jamais transmis sans consentement)
+  const [assistancePrefill, setAssistancePrefill] = useState<AssistancePrefill | null>(null);
+  const [lastDiagInput, setLastDiagInput] = useState<{
+    vehicleBrand: string; vehicleModel: string; vehicleYear: string; vehicleEngine: string; textDescription: string;
+  } | null>(null);
 
   const [activeResultTab, setActiveResultTab] = useState<"report" | "chat" | "visual">("report");
   const [showMobileUserMenu, setShowMobileUserMenu] = useState(false);
@@ -244,6 +269,21 @@ export default function App() {
   const [planExpiresAt, setPlanExpiresAt] = useState<number | null>(null);
   // Compte administrateur ou non — l'onglet Admin n'est visible que si true (renvoyé par le serveur)
   const [isAdminAccount, setIsAdminAccount] = useState(false);
+  // Automobiliste : n'affiche que l'assistance (l'admin garde tous ses accès)
+  const isDriver = userMode === "driver" && !isAdminAccount;
+  // Changement de mode depuis le profil / menu compte
+  const modeSwitch = (
+    <button
+      onClick={() => {
+        setShowMobileUserMenu(false);
+        chooseMode(userMode === "driver" ? "mechanic" : "driver");
+      }}
+      className="w-full inline-flex items-center justify-center gap-2 py-2.5 min-h-[44px] bg-slate-900 hover:bg-slate-800 text-slate-200 border border-white/[0.1] rounded-lg text-xs font-bold transition cursor-pointer"
+    >
+      <Car className="w-4 h-4" />
+      {userMode === "driver" ? "Passer en mode mécanicien" : "Passer en mode automobiliste"}
+    </button>
+  );
 
   // Plan changer helper that records activation time (usage interne : expiration du plan, etc.)
   const handlePlanChange = async (plan: SubscriptionPlan) => {
@@ -297,10 +337,15 @@ export default function App() {
   // Dès que le serveur constate la fin de l'essai, on ouvre automatiquement la page des abonnements.
   // Le paiement reste volontaire : l'utilisateur choisit ensuite son forfait et son moyen de paiement.
   useEffect(() => {
-    if (loggedInUser && currentPlan === "free_expired") {
+    if (loggedInUser && currentPlan === "free_expired" && !isDriver) {
       setActiveTab("prices");
     }
-  }, [loggedInUser, currentPlan]);
+  }, [loggedInUser, currentPlan, isDriver]);
+
+  // Un automobiliste reste toujours sur l'assistance (aucun écran professionnel).
+  useEffect(() => {
+    if (isDriver && activeTab !== "assistance") setActiveTab("assistance");
+  }, [isDriver, activeTab]);
 
   // Load and Save user status from server as source of truth.
   // BUG CORRIGÉ : avant, ce statut n'était récupéré qu'une seule fois à la connexion.
@@ -471,6 +516,26 @@ export default function App() {
   const USD_TO_EUR = 0.92;
 
   // Trigger vehicle diagnosis request
+  const requestMechanicFromDiagnosis = () => {
+    if (!diagnosisResult) return;
+    const d = diagnosisResult;
+    const summary = [
+      `Véhicule : ${d.brandModelInfo}`,
+      "Pistes à vérifier (analyse automatique, non confirmée) :",
+      ...d.probableCauses.slice(0, 5).map((c) => `- ${c}`),
+    ].join("\n");
+    setAssistancePrefill({
+      vehicle: lastDiagInput
+        ? { brand: lastDiagInput.vehicleBrand, model: lastDiagInput.vehicleModel, year: lastDiagInput.vehicleYear, engine: lastDiagInput.vehicleEngine }
+        : undefined,
+      symptoms: lastDiagInput?.textDescription?.slice(0, 300),
+      faultCodes: d.dtcCodesDetected.map((c) => c.code),
+      summary,
+    });
+    setActiveTab("assistance");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const handleDiagnose = async (formData: {
     vehicleBrand: string;
     vehicleModel: string;
@@ -492,6 +557,7 @@ export default function App() {
     }
 
     setIsLoading(true);
+    setLastDiagInput(formData);
     setDiagnosisResult(null);
     setApiUsage(null);
     setChatHistory([]); // Clear prior chat logs for a new diagnosis
@@ -692,29 +758,37 @@ export default function App() {
     <>
       <AnimatePresence>
         {showSplash && (
-          <SplashScreen onComplete={() => setShowSplash(false)} />
+          <SplashScreen onComplete={hideSplash} />
         )}
       </AnimatePresence>
 
-      {!isOnline && (
-        <div className="bg-red-600 text-white px-6 py-4 flex items-center justify-between gap-4 sticky top-0 z-[100] shadow-xl border-b border-red-700 font-bold text-center justify-center flex-wrap md:flex-nowrap">
-          <div className="flex items-center gap-3 justify-center w-full md:w-auto">
-            <span className="p-1.5 bg-white/20 rounded-lg shrink-0">
-              <AlertTriangle className="w-5 h-5 text-white animate-pulse" />
-            </span>
-            <span className="text-xs md:text-sm text-left">
-              Attention : Connexion réseau perdue. Certains diagnostics en temps réel, analyses audio/vidéo et l'assistant de chat intelligent ne fonctionneront pas hors ligne.
-            </span>
+      {!isOnline && (() => {
+        // Sur l'assistance, le message parle de la demande (qui part au retour du réseau) et non des diagnostics IA.
+        const onAssistance = isDriver || activeTab === "assistance" || activeTab === "depannage";
+        return (
+          <div role="status" className={`bg-red-600 text-[#ffffff] px-4 ${onAssistance ? "py-2.5" : "py-4 md:px-6"} flex items-center justify-between gap-3 sticky top-0 z-[100] shadow-xl border-b border-red-700 font-bold text-center justify-center flex-wrap md:flex-nowrap`}>
+            <div className="flex items-center gap-3 justify-center w-full md:w-auto">
+              <span className="p-1.5 bg-white/20 rounded-lg shrink-0">
+                <AlertTriangle className="w-5 h-5 text-[#ffffff] animate-pulse" />
+              </span>
+              <span className="text-xs md:text-sm text-left">
+                {onAssistance
+                  ? "Pas de réseau : l'application continue de fonctionner, les mises à jour reprendront au retour du réseau."
+                  : "Attention : Connexion réseau perdue. Certains diagnostics en temps réel, analyses audio/vidéo et l'assistant de chat intelligent ne fonctionneront pas hors ligne."}
+              </span>
+            </div>
+            {!onAssistance && (
+              <button
+                onClick={() => setIsOnline(navigator.onLine)}
+                className="bg-white/20 hover:bg-white/30 text-[#ffffff] text-[10px] md:text-xs px-3.5 py-2 rounded-xl font-black uppercase tracking-wider transition cursor-pointer flex items-center gap-1.5 shrink-0"
+              >
+                <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
+                Réessayer
+              </button>
+            )}
           </div>
-          <button 
-            onClick={() => setIsOnline(navigator.onLine)} 
-            className="bg-white/20 hover:bg-white/30 text-white text-[10px] md:text-xs px-3.5 py-2 rounded-xl font-black uppercase tracking-wider transition cursor-pointer flex items-center gap-1.5 shrink-0"
-          >
-            <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
-            Réessayer
-          </button>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Parcours : page d'accueil, puis connexion. Le choix de profil (mécanicien /
           propriétaire) est temporairement désactivé — l'app est mécanicien uniquement. */}
@@ -727,6 +801,8 @@ export default function App() {
             localStorage.setItem("auth_user_phone", phone);
           }}
         />
+      ) : !userMode ? (
+        <ModeSelect onChoose={chooseMode} />
       ) : (
         <div className="min-h-screen bg-slate-950 font-sans text-slate-100 workshop-grid pb-24 lg:pb-0 lg:flex lg:items-stretch">
           
@@ -749,20 +825,23 @@ export default function App() {
                 <div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-base font-display font-black uppercase tracking-tight text-white leading-none">
-                      DiagAssist
+                      {isDriver ? "Car Assist" : "DiagAssist"}
                     </span>
+                    {!isDriver && (
                     <span className="scintillant-badge text-[8px] font-black px-1.5 py-0.5 rounded uppercase font-mono tracking-wider border">
                       PRO
                     </span>
+                    )}
                   </div>
                   <p className="text-[10px] text-slate-500 mt-1 font-medium tracking-wide">
-                    Assistant mécanique pro
+                    {isDriver ? "Aide en cas de panne" : "Assistant mécanique pro"}
                   </p>
                 </div>
               </div>
 
               {/* Vertical Tab Navigation */}
               <nav className="space-y-2">
+{!isDriver && (<>
                 <button
                   onClick={() => {
                     setActiveTab("diagnose");
@@ -805,8 +884,9 @@ export default function App() {
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
                 </button>
+</>)}
 
-                {accountType === "mechanic" && (
+                {accountType === "mechanic" && !isDriver && (
                   <button
                     onClick={() => {
                       setActiveTab("screening");
@@ -826,6 +906,25 @@ export default function App() {
                   </button>
                 )}
 
+                <button
+                  onClick={() => {
+                    setActiveTab("assistance");
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
+                    activeTab === "assistance" || activeTab === "depannage"
+                      ? "bg-red-600 text-white shadow-lg shadow-red-600/25 border border-white/10"
+                      : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <LifeBuoy className="w-4.5 h-4.5" />
+                    <span>Assistance</span>
+                  </div>
+                  {(activeTab === "assistance" || activeTab === "depannage") && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                </button>
+
+{!isDriver && (<>
                 <button
                   onClick={() => {
                     setActiveTab("prices");
@@ -860,6 +959,7 @@ export default function App() {
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
                   </span>
                 </a>
+</>)}
               </nav>
             </div>
 
@@ -917,7 +1017,7 @@ export default function App() {
               </div>
 
               {/* Countdown Plan Indicator */}
-              {loggedInUser && (
+              {loggedInUser && !isDriver && (
                 <div className="bg-slate-950/80 border border-white/[0.05] rounded-xl p-3 text-xs space-y-1">
                   <span className="text-slate-500 text-[9px] block uppercase tracking-wider font-extrabold font-mono">
                     {currentPlan === "free_trial" && "Essai Gratuit :"}
@@ -946,6 +1046,8 @@ export default function App() {
                   </span>
                 </div>
                 
+                {modeSwitch}
+
                 <button
                   onClick={async () => {
                     if (confirm("Voulez-vous vraiment vous déconnecter de votre compte DiagAssist ?")) {
@@ -969,13 +1071,15 @@ export default function App() {
               <div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-sm font-display font-black uppercase tracking-tight text-white leading-none">
-                    DiagAssist
+                    {isDriver ? "Car Assist" : "DiagAssist"}
                   </span>
+                  {!isDriver && (
                   <span className="scintillant-badge text-[8px] font-black px-1.5 py-0.5 rounded uppercase font-mono tracking-widest border">
                     PRO
                   </span>
+                  )}
                 </div>
-                <p className="text-[9px] text-slate-500">Multimédia Auto</p>
+                <p className="text-[9px] text-slate-500">{isDriver ? "Aide en cas de panne" : "Multimédia Auto"}</p>
               </div>
             </div>
 
@@ -1042,6 +1146,7 @@ export default function App() {
                       </div>
                     </div>
 
+                    {!isDriver && (
                     <div className="space-y-1 border-t border-white/[0.05] pt-3">
                       <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block font-mono">
                         {currentPlan === "free_trial" && "Essai Gratuit :"}
@@ -1054,6 +1159,9 @@ export default function App() {
                         ⏱️ {remainingTimeText || "Calcul..."}
                       </strong>
                     </div>
+                    )}
+
+                    {modeSwitch}
 
                     <button 
                       onClick={async () => {
@@ -1074,6 +1182,7 @@ export default function App() {
 
           {/* FLOATING MOBILE & TABLET BOTTOM NAVIGATION DOCK - Figma Pro style */}
           <nav className="lg:hidden fixed bottom-4 left-4 right-4 sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-md z-50 bg-slate-900/95 backdrop-blur-lg border border-white/[0.1] rounded-2xl p-1.5 flex items-center justify-around shadow-[0_12px_40px_rgba(0,0,0,0.85)] select-none">
+{!isDriver && (<>
             <button
               onClick={() => {
                 setActiveTab("diagnose");
@@ -1111,8 +1220,9 @@ export default function App() {
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
               </span>
             </button>
+</>)}
 
-            {accountType === "mechanic" && (
+            {accountType === "mechanic" && !isDriver && (
               <button
                 onClick={() => {
                   setActiveTab("screening");
@@ -1129,6 +1239,22 @@ export default function App() {
               </button>
             )}
 
+            <button
+              onClick={() => {
+                setActiveTab("assistance");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
+                activeTab === "assistance" || activeTab === "depannage"
+                  ? "bg-slate-950 text-red-500 border border-white/[0.04]"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <LifeBuoy className="w-5 h-5" />
+              <span className="text-[9px] font-black uppercase tracking-wider">Assistance</span>
+            </button>
+
+{!isDriver && (<>
             <button
               onClick={() => {
                 setActiveTab("prices");
@@ -1158,6 +1284,16 @@ export default function App() {
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
               </span>
             </a>
+</>)}
+            {isDriver && (
+              <button
+                onClick={() => setShowMobileUserMenu(true)}
+                className="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer text-slate-400 hover:text-slate-200"
+              >
+                <Users className="w-5 h-5" />
+                <span className="text-[9px] font-black uppercase tracking-wider">Mon compte</span>
+              </button>
+            )}
           </nav>
 
           {/* MAIN CONTAINER PANEL */}
@@ -1173,6 +1309,24 @@ export default function App() {
                 
                 {/* Left side: Form Inputs */}
                 <div className="lg:col-span-5 space-y-4 print:hidden">
+              {/* Assistance automobile : accès direct pour un automobiliste en panne */}
+              <div className="premium-glass-card border border-red-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3 shadow-xl">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl bg-red-600/15 text-red-500 flex items-center justify-center shrink-0">
+                    <LifeBuoy className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-black text-white">Besoin d'un mécanicien ?</div>
+                    <div className="text-xs text-slate-400">Un professionnel près de vous peut venir sur place.</div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setAssistancePrefill(null); setActiveTab("assistance"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  className="min-h-[48px] px-5 rounded-xl bg-red-600 hover:bg-red-700 text-[#ffffff] text-sm font-black shadow-lg shadow-red-600/20 transition cursor-pointer shrink-0"
+                >
+                  Je suis en panne
+                </button>
+              </div>
               <DiagnosticForm onDiagnose={handleDiagnose} isLoading={isLoading} />
               
               {/* Optional Reset panel if results exist */}
@@ -1276,6 +1430,7 @@ export default function App() {
                       apiUsage={apiUsage!} 
                       currentPlan={currentPlan}
                       onUpgradeClick={() => setActiveTab("prices")}
+                      onRequestMechanic={requestMechanicFromDiagnosis}
                     />
                   ) : activeResultTab === "visual" ? (
                     <VisualRepairAssistant
@@ -1368,8 +1523,21 @@ export default function App() {
           </div>
         )}
 
+        {/* TAB: Assistance automobile (client) */}
+        {activeTab === "assistance" && (
+          <ClientAssistance
+            prefill={assistancePrefill}
+            onPrefillUsed={() => setAssistancePrefill(null)}
+            onOpenMechanicSpace={isDriver ? undefined : () => setActiveTab("depannage")}
+            driverMode={isDriver}
+          />
+        )}
+
+        {/* TAB: Espace dépannage (mécanicien) */}
+        {activeTab === "depannage" && !isDriver && <MechanicSpace onBack={() => setActiveTab("assistance")} onUpgrade={() => setActiveTab("prices")} />}
+
         {/* TAB: DiagAssist Scanner — appairage tablette + coaching temps réel */}
-        {activeTab === "screening" && accountType === "mechanic" && (
+        {activeTab === "screening" && accountType === "mechanic" && !isDriver && (
           <div className="max-w-5xl mx-auto space-y-6 animate-fade-in">
             <div>
               <div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400">DIAGASSIST SCANNER</div>
