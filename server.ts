@@ -435,6 +435,10 @@ async function initDatabase(): Promise<void> {
       created_at BIGINT NOT NULL
     );
     ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS jeko_id TEXT;
+    -- kind : plan (abonnement) | shop (commande boutique, order_ref = référence DA-AAAA-NNNNNN)
+    ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'plan';
+    ALTER TABLE jeko_payments ADD COLUMN IF NOT EXISTS order_ref TEXT;
+    CREATE INDEX IF NOT EXISTS idx_jeko_payments_order ON jeko_payments (order_ref);
     CREATE INDEX IF NOT EXISTS idx_jeko_payments_phone ON jeko_payments (phone);
   `);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
@@ -447,6 +451,9 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS order_ref TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_method TEXT;
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_fee_fcfa INTEGER DEFAULT 0; -- porté par la première ligne de la commande
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'non_paye'; -- non_paye | acompte_paye | paye
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS related_order_ref TEXT;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'manual';
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
@@ -4097,30 +4104,109 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   setTimeout(() => { processDueShopFollowups().catch((err) => console.error("[CRM WhatsApp] Initial worker:", err)); }, 5000);
 
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
+  // --- Règles communes aux commandes publiques ---
+  const MAX_ORDER_LINES = 20, MAX_LINE_QUANTITY = 100;
+  const DEFAULT_SHIPPING_FEES: Record<string, number> = { showroom: 0, abidjan: 3000, interieur: 5000, afrique: 15000 };
+  // Tarifs de livraison configurables : SHOP_SHIPPING_FEES='{"abidjan":2500,...}' (FCFA, entiers >= 0).
+  function shippingFees(): Record<string, number> {
+    const fees = { ...DEFAULT_SHIPPING_FEES };
+    try {
+      const custom = process.env.SHOP_SHIPPING_FEES ? JSON.parse(process.env.SHOP_SHIPPING_FEES) : {};
+      for (const k of Object.keys(fees)) if (Number.isInteger(custom[k]) && custom[k] >= 0) fees[k] = custom[k];
+    } catch { console.warn("[Boutique] SHOP_SHIPPING_FEES invalide, tarifs par défaut utilisés."); }
+    return fees;
+  }
+  const cleanShopPhone = (v: unknown) => String(v ?? "").replace(/[\s-]/g, "");
+  const isValidShopPhone = (v: string) => /^\+?\d{8,15}$/.test(v);
+  // Compare deux numéros sur leurs 10 derniers chiffres (+225 07… = 07…).
+  const phoneKey = (v: string) => v.replace(/\D/g, "").slice(-10);
+  const PHONE_KEY_SQL = "right(regexp_replace(customer_phone, '\\D', '', 'g'), 10)";
+
+  // Valide les lignes d'une commande : entiers 1..100, 20 lignes max, produits actifs et non en rupture.
+  async function loadOrderLines(rawItems: any): Promise<{ lines: { product: any; quantity: number }[] } | { error: string }> {
+    if (!Array.isArray(rawItems) || rawItems.length === 0) return { error: "Au moins un article est requis." };
+    if (rawItems.length > MAX_ORDER_LINES) return { error: `Maximum ${MAX_ORDER_LINES} articles par commande.` };
+    const quantities = new Map<number, number>();
+    for (const it of rawItems) {
+      const id = Number(it?.product_id);
+      const q = it?.quantity === undefined ? 1 : Number(it.quantity);
+      if (!Number.isInteger(id) || id <= 0) return { error: "Produit invalide." };
+      if (!Number.isInteger(q) || q < 1 || q > MAX_LINE_QUANTITY) return { error: `Quantité invalide (1 à ${MAX_LINE_QUANTITY}).` };
+      quantities.set(id, Math.min(MAX_LINE_QUANTITY, (quantities.get(id) || 0) + q));
+    }
+    const { rows } = await dbPool!.query("SELECT * FROM shop_products WHERE id = ANY($1::int[]) AND is_active = true", [Array.from(quantities.keys())]);
+    const byId = new Map<number, any>(rows.map((r: any) => [Number(r.id), r]));
+    const lines: { product: any; quantity: number }[] = [];
+    for (const [id, quantity] of quantities) {
+      const product = byId.get(id);
+      if (!product) return { error: "Un des produits n'est plus disponible." };
+      if (product.availability === "rupture") return { error: `« ${product.name} » est en rupture de stock.` };
+      lines.push({ product, quantity });
+    }
+    return { lines };
+  }
+
+  // Insère toutes les lignes d'une commande dans une seule transaction (tout ou rien).
+  async function insertOrder(o: {
+    phone: string; orderRef: string; lines: { product: any; quantity: number }[];
+    city?: string | null; address?: string | null; notes?: string | null;
+    shippingMethod?: string | null; shippingFee?: number;
+  }) {
+    const client = await dbPool!.connect();
+    const ids: number[] = [];
+    let depositTotal = 0;
+    let leadDays: number | null = null;
+    try {
+      await client.query("BEGIN");
+      for (let idx = 0; idx < o.lines.length; idx++) {
+        const { product, quantity } = o.lines[idx];
+        const dep = depositFor(product, quantity);
+        depositTotal += dep.amount;
+        if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
+        const r = await client.query(
+          `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes, shipping_city, shipping_address, shipping_method, shipping_fee_fcfa, deposit_fcfa, deposit_status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+          [o.phone, product.id, product.name, product.price_fcfa, quantity, o.orderRef, o.notes || null, o.city || null, o.address || null,
+           o.shippingMethod || null, idx === 0 ? (o.shippingFee || 0) : 0, dep.amount, dep.status]
+        );
+        ids.push(r.rows[0].id);
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    const itemsTotal = o.lines.reduce((a, l) => a + Number(l.product.price_fcfa || 0) * l.quantity, 0);
+    return { ids, depositTotal, leadDays, itemsTotal, total: itemsTotal + (o.shippingFee || 0) };
+  }
+
+  // Tarifs de livraison pour l'écran de commande.
+  app.get("/api/shop/shipping-options", (_req, res) => {
+    res.json({ success: true, fees: shippingFees() });
+  });
+
+  // --- Public : commande d'un seul produit ---
   app.post("/api/shop/orders", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { phone, name, city, product_id, quantity, notes } = req.body;
     if (!phone || !product_id) return res.status(400).json({ success: false, message: "Téléphone et produit requis." });
-    const cleanPhone = String(phone).replace(/[\s-]/g, "");
-
-    const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [product_id]);
-    if (productRes.rows.length === 0) return res.status(404).json({ success: false, message: "Produit introuvable." });
-    const product = productRes.rows[0];
+    const cleanPhone = cleanShopPhone(phone);
+    if (!isValidShopPhone(cleanPhone)) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+    const loaded = await loadOrderLines([{ product_id, quantity }]);
+    if ("error" in loaded) return res.status(400).json({ success: false, message: loaded.error });
 
     await upsertShopCustomer(cleanPhone, name, city, "produit");
     const orderRef = await nextOrderRef();
-    const dep = depositFor(product, quantity || 1);
-    const orderRes = await dbPool.query(
-      `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, notes, deposit_fcfa, deposit_status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-      [cleanPhone, product_id, product.name, product.price_fcfa, quantity || 1, orderRef, notes || null, dep.amount, dep.status]
-    );
+    const order = await insertOrder({ phone: cleanPhone, orderRef, lines: loaded.lines, city, notes });
+    const product = loaded.lines[0].product;
     await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order" });
     const days = product.lead_time_days ? Number(product.lead_time_days) : null;
     res.json({
       success: true,
-      message: dep.amount > 0 ? "Commande enregistrée. " + depositMessage(dep.amount, days) : "Commande enregistrée. Nous vous contacterons sous peu.",
-      order_id: orderRes.rows[0].id, order_ref: orderRef, deposit_total: dep.amount, lead_time_days: days,
+      message: order.depositTotal > 0 ? "Commande enregistrée. " + depositMessage(order.depositTotal, days) : "Commande enregistrée. Nous vous contacterons sous peu.",
+      order_id: order.ids[0], order_ref: orderRef, deposit_total: order.depositTotal, total_fcfa: order.total, lead_time_days: days,
     });
   });
 
@@ -4132,7 +4218,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     return { amount: Math.round((price * Math.max(1, Number(quantity) || 1) * pct) / 100), status: "en_attente" };
   }
   const depositMessage = (amount: number, days: number | null) =>
-    `Un acompte de ${amount.toLocaleString("fr-FR")} FCFA est à verser dans nos locaux pour lancer la commande.` +
+    `Un acompte de ${amount.toLocaleString("fr-FR")} FCFA est à régler pour lancer la commande.` +
     (days ? ` Livraison sous environ ${days} jours ouvrables après l'acompte.` : "");
 
   // Génère une référence de commande sans collision : DA-AAAA-NNNNNN, compteur atomique par année.
@@ -4153,79 +4239,131 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     // La boutique envoie customer_phone / customer_name / shipping_address ; les anciens noms restent acceptes.
     const body = req.body as any;
-    const phone: string = body.phone ?? body.customer_phone;
+    const phone = body.phone ?? body.customer_phone;
     const name: string | undefined = body.name ?? body.customer_name;
     const city: string | undefined = body.city;
     const address: string | undefined = body.address ?? body.shipping_address;
-    const items: { product_id: number; quantity: number }[] = body.items;
-    if (!phone || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, message: "Téléphone et au moins un article requis." });
-    }
-    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+    if (!phone) return res.status(400).json({ success: false, message: "Téléphone requis." });
+    const cleanPhone = cleanShopPhone(phone);
+    if (!isValidShopPhone(cleanPhone)) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+
+    // Le serveur impose les frais : le client ne choisit que le mode de livraison.
+    const fees = shippingFees();
+    const shippingMethod = body.shipping_method === undefined ? "abidjan" : String(body.shipping_method);
+    if (!(shippingMethod in fees)) return res.status(400).json({ success: false, message: "Mode de livraison invalide." });
+
+    const loaded = await loadOrderLines(body.items);
+    if ("error" in loaded) return res.status(400).json({ success: false, message: loaded.error });
 
     await upsertShopCustomer(cleanPhone, name, city, "produit");
     const orderRef = await nextOrderRef();
-
-    const createdIds: number[] = [];
-    let depositTotal = 0;
-    let leadDays: number | null = null;
-    for (const item of items) {
-      const productRes = await dbPool.query("SELECT * FROM shop_products WHERE id = $1", [item.product_id]);
-      if (productRes.rows.length === 0) continue; // ignore un produit devenu introuvable plutôt que d'annuler toute la commande
-      const product = productRes.rows[0];
-      const dep = depositFor(product, item.quantity || 1);
-      depositTotal += dep.amount;
-      if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
-      const orderRes = await dbPool.query(
-        `INSERT INTO shop_orders (customer_phone, product_id, product_name_snapshot, unit_price_snapshot, quantity, order_ref, shipping_city, shipping_address, deposit_fcfa, deposit_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-        [cleanPhone, item.product_id, product.name, product.price_fcfa, item.quantity || 1, orderRef, city || null, address || null, dep.amount, dep.status]
-      );
-      createdIds.push(orderRes.rows[0].id);
-    }
-
-    if (createdIds.length === 0) return res.status(400).json({ success: false, message: "Aucun des produits du panier n'est plus disponible." });
-    const firstProductName = await dbPool.query("SELECT product_name_snapshot FROM shop_orders WHERE id = $1", [createdIds[0]]);
-    await scheduleShopFollowups(cleanPhone, {
-      orderRef,
-      productName: firstProductName.rows[0]?.product_name_snapshot || undefined,
-      kind: "order",
+    const order = await insertOrder({
+      phone: cleanPhone, orderRef, lines: loaded.lines, city, address,
+      notes: typeof body.notes === "string" ? body.notes.slice(0, 500) : null,
+      shippingMethod, shippingFee: fees[shippingMethod],
     });
+
+    await scheduleShopFollowups(cleanPhone, { orderRef, productName: loaded.lines[0].product.name, kind: "order" });
     res.json({
       success: true,
-      message: depositTotal > 0 ? "Commande enregistrée. " + depositMessage(depositTotal, leadDays) : "Commande enregistrée. Nous vous contacterons sous peu.",
-      order_ref: orderRef, order_ids: createdIds, deposit_total: depositTotal, lead_time_days: leadDays,
+      message: order.depositTotal > 0 ? "Commande enregistrée. " + depositMessage(order.depositTotal, order.leadDays) : "Commande enregistrée.",
+      order_ref: orderRef, order_ids: order.ids, deposit_total: order.depositTotal, lead_time_days: order.leadDays,
+      items_total_fcfa: order.itemsTotal, shipping_fee_fcfa: fees[shippingMethod], total_fcfa: order.total,
     });
   });
 
-  // --- Public : suivi de commande par référence + téléphone ---
-  app.get("/api/shop/track", async (req, res) => {
-    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
-    const { ref, phone } = req.query as { ref?: string; phone?: string };
-    if (!phone) return res.status(400).json({ success: false, message: "Téléphone requis." });
-    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+  // Récapitulatif d'une commande (toutes ses lignes) avec montants et paiements, pour le suivi et le paiement.
+  // Le téléphone du client fait office de secret : la référence seule ne suffit pas.
+  async function loadOrderSummary(orderRef: string, phone: string) {
+    const { rows } = await dbPool!.query(
+      `SELECT * FROM shop_orders WHERE order_ref = $1 AND ${PHONE_KEY_SQL} = $2 ORDER BY id`,
+      [orderRef, phoneKey(phone)]
+    );
+    if (rows.length === 0) return null;
+    const paid = await dbPool!.query(
+      "SELECT COALESCE(SUM(amount_cents), 0) / 100 AS paid FROM jeko_payments WHERE kind = 'shop' AND order_ref = $1 AND status = 'success'",
+      [orderRef]
+    );
+    const itemsTotal = rows.reduce((a: number, r: any) => a + Number(r.unit_price_snapshot || 0) * Number(r.quantity || 1), 0);
+    const shippingFee = rows.reduce((a: number, r: any) => a + Number(r.shipping_fee_fcfa || 0), 0);
+    const depositTotal = rows.reduce((a: number, r: any) => a + Number(r.deposit_fcfa || 0), 0);
+    const total = itemsTotal + shippingFee;
+    const paidFcfa = Number(paid.rows[0]?.paid || 0);
+    const status = rows[0].status;
+    return {
+      order_ref: orderRef, status, created_at: rows[0].created_at,
+      shipping_method: rows[0].shipping_method, shipping_address: rows[0].shipping_address || null,
+      items: rows.map((r: any) => ({ product_name: r.product_name_snapshot, quantity: r.quantity, unit_price: r.unit_price_snapshot, status: r.status })),
+      items_total_fcfa: itemsTotal, shipping_fee_fcfa: shippingFee, total_fcfa: total,
+      deposit_total_fcfa: depositTotal, paid_fcfa: paidFcfa,
+      remaining_fcfa: status === "annulee" ? 0 : Math.max(0, total - paidFcfa),
+      payment_status: rows[0].payment_status || "non_paye",
+    };
+  }
 
-    let query = "SELECT * FROM shop_orders WHERE customer_phone = $1";
-    const params: any[] = [cleanPhone];
-    if (ref) { params.push(ref); query += ` AND order_ref = $2`; }
-    query += " ORDER BY created_at DESC LIMIT 50";
-    const { rows } = await dbPool.query(query, params);
-    if (rows.length === 0) return res.status(404).json({ success: false, message: "Aucune commande trouvée pour ces informations." });
-
-    // Regroupe par order_ref (ou par commande individuelle si pas de ref, ex: anciennes commandes)
-    const groups = new Map<string, any[]>();
-    for (const row of rows) {
-      const key = row.order_ref || `single-${row.id}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(row);
+  // Montant à payer pour une commande : l'acompte, ou le solde restant. Jamais fourni par le client.
+  async function quoteShopPayment(orderRef: string, phone: string, mode: "deposit" | "full"): Promise<{ amountXof: number } | { error: string }> {
+    if (!dbPool) return { error: "Service indisponible." };
+    const o = await loadOrderSummary(orderRef, phone);
+    if (!o) return { error: "Commande introuvable pour ces informations." };
+    if (o.status === "annulee") return { error: "Cette commande est annulée." };
+    if (o.total_fcfa <= 0) return { error: "Le montant de cette commande sera confirmé par notre équipe." };
+    if (o.remaining_fcfa <= 0) return { error: "Cette commande est déjà réglée." };
+    if (mode === "deposit") {
+      const depositLeft = o.deposit_total_fcfa - o.paid_fcfa;
+      if (o.deposit_total_fcfa <= 0 || depositLeft <= 0) return { error: "Aucun acompte à régler pour cette commande." };
+      return { amountXof: Math.min(depositLeft, o.remaining_fcfa) };
     }
-    const orders = Array.from(groups.entries()).map(([key, items]) => ({
-      order_ref: items[0].order_ref || null,
-      status: items[0].status, // statut de la première ligne — simplification: toutes les lignes d'une même commande évoluent ensemble en pratique
-      created_at: items[0].created_at,
-      items: items.map((i) => ({ product_name: i.product_name_snapshot, quantity: i.quantity, status: i.status })),
-    }));
-    res.json({ success: true, orders });
+    return { amountXof: o.remaining_fcfa };
+  }
+
+  // Après un paiement Jèko confirmé : met à jour l'état de paiement et l'acompte de la commande.
+  async function syncShopPaymentState(orderRef: string) {
+    if (!dbPool) return;
+    const paid = await dbPool.query(
+      "SELECT COALESCE(SUM(amount_cents), 0) / 100 AS paid FROM jeko_payments WHERE kind = 'shop' AND order_ref = $1 AND status = 'success'",
+      [orderRef]
+    );
+    const paidFcfa = Number(paid.rows[0]?.paid || 0);
+    const { rows } = await dbPool.query(
+      `SELECT COALESCE(SUM(COALESCE(unit_price_snapshot,0) * COALESCE(quantity,1) + COALESCE(shipping_fee_fcfa,0)), 0) AS total,
+              COALESCE(SUM(deposit_fcfa), 0) AS deposit
+         FROM shop_orders WHERE order_ref = $1`, [orderRef]);
+    const total = Number(rows[0]?.total || 0), deposit = Number(rows[0]?.deposit || 0);
+    const state = total > 0 && paidFcfa >= total ? "paye" : paidFcfa > 0 ? "acompte_paye" : "non_paye";
+    await dbPool.query("UPDATE shop_orders SET payment_status = $2, updated_at = CURRENT_TIMESTAMP WHERE order_ref = $1", [orderRef, state]);
+    if (deposit > 0 && paidFcfa >= deposit) {
+      await dbPool.query(
+        "UPDATE shop_orders SET deposit_status = 'recu', deposit_received_at = COALESCE(deposit_received_at, CURRENT_TIMESTAMP) WHERE order_ref = $1 AND deposit_status = 'en_attente'",
+        [orderRef]
+      );
+    }
+  }
+
+  // --- Public : suivi de commande par référence + téléphone ---
+  app.get("/api/shop/track", shopPublicLimiter, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const ref = String(req.query.ref || "").trim();
+    const phone = cleanShopPhone(req.query.phone);
+    if (!phone || !isValidShopPhone(phone)) return res.status(400).json({ success: false, message: "Téléphone requis." });
+
+    let refs: string[];
+    if (ref) {
+      refs = [ref];
+    } else {
+      const found = await dbPool.query(
+        `SELECT order_ref FROM shop_orders WHERE order_ref IS NOT NULL AND ${PHONE_KEY_SQL} = $1 GROUP BY order_ref ORDER BY MAX(created_at) DESC LIMIT 10`,
+        [phoneKey(phone)]
+      );
+      refs = found.rows.map((r: any) => r.order_ref);
+    }
+    const orders = [];
+    for (const r of refs) {
+      const summary = await loadOrderSummary(r, phone);
+      if (summary) orders.push(summary);
+    }
+    if (orders.length === 0) return res.status(404).json({ success: false, message: "Aucune commande trouvée pour ces informations." });
+    res.json({ success: true, order: ref ? orders[0] : undefined, orders });
   });
 
   // --- Public : demande de pièce à l'étranger (avec carte grise) ---
@@ -4258,6 +4396,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const normalizedPriceEur = price_eur !== undefined && price_eur !== null && price_eur !== "" ? Number(price_eur) : null;
     const convertedPriceFcfa = normalizedPriceEur !== null && Number.isFinite(normalizedPriceEur) ? euroToRoundedFcfa(normalizedPriceEur) : (price_fcfa !== undefined && price_fcfa !== null && price_fcfa !== "" ? Number(price_fcfa) : null);
     if (!name) return res.status(400).json({ success: false, message: "Nom requis." });
+    if (convertedPriceFcfa !== null && (!Number.isFinite(convertedPriceFcfa) || convertedPriceFcfa < 0)) {
+      return res.status(400).json({ success: false, message: "Prix invalide." });
+    }
     const slug = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") + "-" + Date.now().toString(36);
     const result = await dbPool.query(
       `INSERT INTO shop_products (category_id, name, slug, brand, model, price_eur, price_fcfa, description, specs, compatibility, box_contents, warranty, availability, photos, videos)
@@ -4278,6 +4419,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const fields = req.body;
     const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active", "deposit_pct", "lead_time_days"];
     const jsonFields = ["photos", "videos"];
+    if (fields.price_fcfa !== undefined && fields.price_fcfa !== null && (!Number.isInteger(Number(fields.price_fcfa)) || Number(fields.price_fcfa) < 0)) {
+      return res.status(400).json({ success: false, message: "Prix FCFA invalide." });
+    }
+    if (fields.deposit_pct !== undefined && fields.deposit_pct !== null && (!Number.isInteger(Number(fields.deposit_pct)) || Number(fields.deposit_pct) < 0 || Number(fields.deposit_pct) > 100)) {
+      return res.status(400).json({ success: false, message: "Acompte invalide (0 à 100 %)." });
+    }
+    if (fields.lead_time_days !== undefined && fields.lead_time_days !== null && (!Number.isInteger(Number(fields.lead_time_days)) || Number(fields.lead_time_days) < 0)) {
+      return res.status(400).json({ success: false, message: "Délai invalide." });
+    }
     const sets: string[] = [];
     const values: any[] = [];
     let i = 1;
@@ -4345,6 +4495,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const list = Array.isArray(req.body?.categories) ? req.body.categories.slice(0, 10) : [];
     if (!list.length) return res.status(400).json({ success: false, message: "categories requis : [{ url, name }]." });
     const markupPct = Number(req.body?.markupPct ?? process.env.IVOIRELITE_MARKUP_PCT ?? 15); // marge ajoutee au prix fournisseur
+    if (!Number.isFinite(markupPct) || markupPct < 0 || markupPct > 100) return res.status(400).json({ success: false, message: "Marge invalide (0 à 100 %)." });
     try {
       if (req.body?.dryRun) {
         const out = [];
@@ -4370,6 +4521,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.post("/api/admin/shop/import/3hautoparts", requireAdminAuth, async (req, res) => {
     const list = Array.isArray(req.body?.categories) ? req.body.categories.slice(0, 10) : [];
     const markupPct = Number(req.body?.markupPct ?? process.env.H3_MARKUP_PCT ?? 15); // marge ajoutee au prix fournisseur
+    if (!Number.isFinite(markupPct) || markupPct < 0 || markupPct > 100) return res.status(400).json({ success: false, message: "Marge invalide (0 à 100 %)." });
     try {
       if (!list.length) return res.json({ success: true, availableCategories: await fetch3hCategories() });
       if (req.body?.dryRun) {
@@ -4438,6 +4590,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.patch("/api/admin/shop/orders/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { status, notes, deposit_status } = req.body;
+    const ORDER_STATUSES = ["nouvelle", "a_contacter", "contactee", "confirmee", "en_traitement", "prete", "livree", "annulee", "client_injoignable"];
+    if (status !== undefined && !ORDER_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, message: "Statut de commande invalide." });
+    }
     if (deposit_status !== undefined && !["non_requis", "en_attente", "recu"].includes(deposit_status)) {
       return res.status(400).json({ success: false, message: "Statut d'acompte invalide." });
     }
@@ -5306,6 +5462,7 @@ Directives pour ce tour :
       }
     },
     dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
+    shop: dbPool ? { limiter: shopPublicLimiter, quote: quoteShopPayment, onPaid: syncShopPaymentState } : undefined,
   });
 
   // HP-Web : recherche métier côté serveur, jamais depuis le navigateur.
