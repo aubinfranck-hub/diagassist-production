@@ -15,6 +15,7 @@ export type AssistanceRouteDeps = {
   isAdminPhone: (phone: string) => boolean;
   getDirectory: () => DirectoryMechanic[];
   sendWhatsApp?: (phone: string, message: string) => Promise<void>;
+  jeko?: CoreDeps["jeko"];
   isProSubscribed: CoreDeps["isProSubscribed"];
   analyze?: CoreDeps["analyze"];
   getOrigin: (req: Request) => string;
@@ -28,9 +29,9 @@ function decodeBase64(raw: unknown): Buffer | null {
   return buf.length ? buf : null;
 }
 
-export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCore | null; syncDirectory: () => Promise<void> } {
+export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCore | null; onExternalWebhook: (ref: string, status: string, body: any) => Promise<boolean>; syncDirectory: () => Promise<void> } {
   const { app, pool } = d;
-  const core = pool ? createAssistanceCore({ pool, sendWhatsApp: d.sendWhatsApp, isProSubscribed: d.isProSubscribed, analyze: d.analyze, appUrl: process.env.APP_URL }) : null;
+  const core = pool ? createAssistanceCore({ pool, sendWhatsApp: d.sendWhatsApp, jeko: d.jeko, isProSubscribed: d.isProSubscribed, analyze: d.analyze, appUrl: process.env.APP_URL }) : null;
 
   const wrap = (fn: (req: any, res: Response) => Promise<any>) => async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -87,11 +88,12 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
 
   // ---------- Statut public ----------
   app.get("/api/assistance/status", d.requireAuth, wrap(async (req, res) => {
-    if (!core) return res.json({ success: true, enabled: false, dbConfigured: false, whatsappConfigured: false, services: [], zones: [], message: "Base de données non configurée : l'assistance automobile est indisponible." });
+    if (!core) return res.json({ success: true, enabled: false, dbConfigured: false, paymentConfigured: false, whatsappConfigured: false, services: [], zones: [], paymentMethods: [], message: "Base de données non configurée : l'assistance automobile est indisponible." });
     const [services, zones, settings] = await Promise.all([core.servicesStatus(), core.pool.query("SELECT id, name FROM assistance_zones WHERE active ORDER BY name"), core.getSettings()]);
+    const paymentConfigured = !!d.jeko?.isConfigured();
     res.json({
-      success: true, enabled: true, dbConfigured: true, whatsappConfigured: !!d.sendWhatsApp && settings.whatsapp_notifications,
-      services, zones: zones.rows,
+      success: true, enabled: true, dbConfigured: true, paymentConfigured, whatsappConfigured: !!d.sendWhatsApp && settings.whatsapp_notifications,
+      services, zones: zones.rows, paymentMethods: paymentConfigured ? ["wave", "orange", "mtn", "moov"] : [],
     });
   }));
 
@@ -103,12 +105,12 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
   // ---------- Client : demandes ----------
   app.post("/api/assistance/requests", ...auth, createLimiter, wrap(async (req, res) => {
     const r = await core!.createRequest(phoneOf(req), req.body || {});
-    res.json({ success: true, request: core!.summary(r), id: r.id });
+    res.json({ success: true, request: core!.summary(r, undefined, (await core!.getSettings()).tariffs), id: r.id });
   }));
 
   app.patch("/api/assistance/requests/:id", ...auth, writeLimiter, wrap(async (req, res) => {
     const r = await core!.updateDraft(String(req.params.id), phoneOf(req), req.body || {});
-    res.json({ success: true, request: core!.summary(r) });
+    res.json({ success: true, request: core!.summary(r, undefined, (await core!.getSettings()).tariffs) });
   }));
 
   app.get("/api/assistance/requests", ...auth, wrap(async (req, res) => {
@@ -126,6 +128,16 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
   app.post("/api/assistance/requests/:id/cancel", ...auth, writeLimiter, wrap(async (req, res) => {
     await core!.cancelRequest(String(req.params.id), phoneOf(req), "client", String(req.body?.reason || ""));
     res.json({ success: true });
+  }));
+  // Mode atelier : le client confirme (ou refuse) le garage qui a accepté de le recevoir, puis indique son départ.
+  app.post("/api/assistance/requests/:id/visit", ...auth, writeLimiter, wrap(async (req, res) => {
+    if (typeof req.body?.accept !== "boolean") return res.status(400).json({ success: false, message: "Indiquez si vous confirmez votre venue (accept: true ou false)." });
+    await core!.decideVisit(String(req.params.id), phoneOf(req), req.body.accept);
+    res.json({ success: true, ...(await core!.clientDetail(String(req.params.id), phoneOf(req))) });
+  }));
+  app.post("/api/assistance/requests/:id/leaving", ...auth, writeLimiter, wrap(async (req, res) => {
+    await core!.clientLeaving(String(req.params.id), phoneOf(req));
+    res.json({ success: true, ...(await core!.clientDetail(String(req.params.id), phoneOf(req))) });
   }));
   app.post("/api/assistance/requests/:id/retry", ...auth, writeLimiter, wrap(async (req, res) => {
     await core!.retryRequest(String(req.params.id), phoneOf(req));
@@ -197,6 +209,19 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
   app.post("/api/assistance/requests/:id/quotes/:quoteId/decision", ...auth, writeLimiter, wrap(async (req, res) => {
     await core!.decideQuote(String(req.params.id), Number(req.params.quoteId), phoneOf(req), req.body?.accept === true);
     res.json({ success: true });
+  }));
+  app.post("/api/assistance/requests/:id/pay", ...auth, writeLimiter, wrap(async (req, res) => {
+    const out = await core!.startPayment(String(req.params.id), phoneOf(req), String(req.body?.method || ""), req.body?.payerPhone ? String(req.body.payerPhone) : undefined, d.getOrigin(req));
+    res.json({ success: true, ...out });
+  }));
+  app.get("/api/assistance/requests/:id/payment", ...auth, wrap(async (req, res) => {
+    const detail = await core!.clientDetail(String(req.params.id), phoneOf(req));
+    if (detail.payment?.status === "en_attente") {
+      await core!.reconcilePayment(detail.payment.reference);
+      const again = await core!.clientDetail(String(req.params.id), phoneOf(req));
+      return res.json({ success: true, payment: again.payment, paymentStatus: again.request.paymentStatus });
+    }
+    res.json({ success: true, payment: detail.payment, paymentStatus: detail.request.paymentStatus });
   }));
   app.post("/api/assistance/requests/:id/review", ...auth, writeLimiter, wrap(async (req, res) => {
     await core!.addReview(String(req.params.id), phoneOf(req), Number(req.body?.rating), String(req.body?.comment || ""));
@@ -298,6 +323,11 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     await core!.proposeQuote(String(req.params.id), phoneOf(req), req.body || {});
     res.json({ success: true, ...(await core!.proMissionDetail(String(req.params.id), phoneOf(req))) });
   }));
+  app.get("/api/assistance/pro/earnings", ...auth, wrap(async (req, res) => {
+    const exists = await core!.pool.query("SELECT 1 FROM assistance_pros WHERE phone=$1", [phoneOf(req)]);
+    if (!exists.rowCount) return res.status(403).json({ success: false, code: "NO_PRO_PROFILE", message: "Créez d'abord votre profil dépannage." });
+    res.json({ success: true, ...(await core!.proEarnings(phoneOf(req))) });
+  }));
   // ---------- Administration ----------
   const A = (path: string) => `/api/admin/assistance${path}`;
   const adm = [d.requireAdminAuth, needDb];
@@ -320,7 +350,8 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
        LEFT JOIN assistance_zones z ON z.id=r.zone_id LEFT JOIN assistance_pros p ON p.phone=r.assigned_phone
        ${w.length ? "WHERE " + w.join(" AND ") : ""} ORDER BY r.manual_requested DESC, r.created_at DESC LIMIT 300`, v);
     const labels = await core!.serviceLabels();
-    res.json({ success: true, requests: rows.rows.map((r) => ({ ...core!.summary(r, labels[r.service]), clientPhone: r.client_phone, zoneId: r.zone_id, zoneName: r.zone_name, proPhone: r.assigned_phone, proName: r.pro_name })) });
+    const tariffs = (await core!.getSettings()).tariffs;
+    res.json({ success: true, requests: rows.rows.map((r) => ({ ...core!.summary(r, labels[r.service], tariffs), clientPhone: r.client_phone, zoneId: r.zone_id, zoneName: r.zone_name, proPhone: r.assigned_phone, proName: r.pro_name })) });
   }));
 
   app.get(A("/requests/:id"), ...adm, wrap(async (req, res) => {
@@ -328,10 +359,11 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     const r = await core!.getRequestRow(id);
     if (!r) return res.status(404).json({ success: false, message: "Demande introuvable." });
     const q = (sql: string) => core!.pool.query(sql, [id]).then((x) => x.rows);
-    const [events, offers, quotes, media, claims, review, labels] = await Promise.all([
+    const [events, offers, quotes, payments, media, claims, review, labels] = await Promise.all([
       q("SELECT id, at, actor, actor_role, type, from_status, to_status, reason, meta FROM assistance_events WHERE request_id=$1 ORDER BY at, id"),
       q("SELECT id, pro_phone, status, distance_km, sent_at, expires_at, responded_at FROM assistance_offers WHERE request_id=$1 ORDER BY id"),
       q("SELECT id, version, kind, lines, total, status, note, created_by, created_at, decided_at, decided_by FROM assistance_quotes WHERE request_id=$1 ORDER BY version"),
+      q("SELECT reference, method, provider, amount, commission_pct, commission_amount, pro_amount, status, payout_status, payout_at, payout_by, confirmed_by, created_at, updated_at FROM assistance_payments WHERE request_id=$1 ORDER BY created_at"),
       q("SELECT id, kind, mime, size FROM assistance_media WHERE request_id=$1 ORDER BY created_at"),
       q("SELECT id, kind, message, status, admin_note, created_at FROM assistance_claims WHERE request_id=$1 ORDER BY id"),
       q("SELECT rating, comment FROM assistance_reviews WHERE request_id=$1"),
@@ -340,10 +372,10 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     const messages = await core!.listMessages(id);
     res.json({
       success: true,
-      request: { ...core!.summary(r, labels[r.service]), clientPhone: r.client_phone, contactPhone: r.contact_phone, faultCodes: r.fault_codes, description: r.description, proPhone: r.assigned_phone, zoneId: r.zone_id, proDiagnosis: r.pro_diagnosis, aiAnalysis: r.ai_analysis, cancelReason: r.cancel_reason, shareDiagnostic: r.share_diagnostic, diagnostic: r.diagnostic, position: { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source, confirmed: r.position_confirmed } },
+      request: { ...core!.summary(r, labels[r.service], (await core!.getSettings()).tariffs), clientPhone: r.client_phone, contactPhone: r.contact_phone, faultCodes: r.fault_codes, description: r.description, proPhone: r.assigned_phone, zoneId: r.zone_id, proDiagnosis: r.pro_diagnosis, aiAnalysis: r.ai_analysis, cancelReason: r.cancel_reason, shareDiagnostic: r.share_diagnostic, diagnostic: r.diagnostic, position: { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source, confirmed: r.position_confirmed } },
       timeline: events.map((e: any) => ({ id: Number(e.id), at: Number(e.at), actor: e.actor, actorRole: e.actor_role, type: e.type, from: e.from_status, to: e.to_status, reason: e.reason, meta: e.meta })),
       offers: offers.map((o: any) => ({ ...o, sent_at: Number(o.sent_at), expires_at: Number(o.expires_at), responded_at: o.responded_at ? Number(o.responded_at) : null })),
-      quotes, media, claims, messages, review: review[0] || null,
+      quotes, payments, media, claims, messages, review: review[0] || null,
     });
   }));
 
@@ -491,6 +523,21 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
   app.get(A("/settings"), ...adm, wrap(async (_req, res) => { res.json({ success: true, settings: await core!.getSettings(true) }); }));
   app.put(A("/settings"), ...adm, writeLimiter, wrap(async (req, res) => { res.json({ success: true, settings: await core!.saveSettings(req.body || {}) }); }));
 
+  // Paiements (Jèko), commissions, reversements
+  app.get(A("/payments"), ...adm, wrap(async (_req, res) => {
+    const r = await core!.pool.query(`SELECT p.reference, p.request_id, p.payer_phone, p.pro_phone, pr.display_name AS pro_name, p.method, p.provider, p.amount, p.commission_pct, p.commission_amount, p.pro_amount, p.status, p.payout_status, p.payout_at, p.payout_by, p.confirmed_by, p.created_at, p.updated_at
+      FROM assistance_payments p LEFT JOIN assistance_pros pr ON pr.phone=p.pro_phone ORDER BY p.created_at DESC LIMIT 300`);
+    res.json({ success: true, payments: r.rows.map((p) => ({ ...p, payout_at: p.payout_at ? Number(p.payout_at) : null, created_at: Number(p.created_at), updated_at: Number(p.updated_at) })) });
+  }));
+  app.post(A("/payments/:reference/payout"), ...adm, writeLimiter, wrap(async (req, res) => {
+    await core!.markPayout(String(req.params.reference), adminActor(req));
+    res.json({ success: true });
+  }));
+  app.post(A("/payments/:reference/reconcile"), ...adm, writeLimiter, wrap(async (req, res) => {
+    await core!.reconcilePayment(String(req.params.reference));
+    res.json({ success: true });
+  }));
+
   // Réclamations
   app.get(A("/claims"), ...adm, wrap(async (_req, res) => {
     const r = await core!.pool.query(`SELECT id, request_id, author_phone, kind, message, status, admin_note, created_at, resolved_at FROM assistance_claims ORDER BY status, created_at DESC LIMIT 300`);
@@ -504,6 +551,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
 
   return {
     core,
+    onExternalWebhook: async (ref, status, body) => (core ? core.handleJekoWebhook(ref, status, body) : false),
     syncDirectory: async () => { if (core) { const r = await core.syncDirectory(d.getDirectory()); console.log(`[ASSISTANCE] Annuaire synchronisé : ${r.created} profils créés (en attente de validation), ${r.linked} rattachés, ${r.suspended} suspendus.`); } },
   };
 }

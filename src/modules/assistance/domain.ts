@@ -8,7 +8,11 @@ export const REQUEST_STATUSES = [
 export type RequestStatus = (typeof REQUEST_STATUSES)[number];
 
 export const QUOTE_STATUSES = ["aucun", "propose", "accepte", "refuse"] as const;
-export const PAYMENT_STATUSES = ["aucun", "en_attente", "especes_a_confirmer", "paye", "echoue"] as const;
+export const PAYMENT_STATUSES = ["aucun", "en_attente", "paye", "echoue"] as const;
+export const PAYMENT_METHODS = ["wave", "orange", "mtn", "moov"] as const;
+export const MODES = ["depannage", "atelier"] as const;
+export type RequestMode = (typeof MODES)[number];
+export const VISIT_STATUSES = ["aucune", "proposee", "confirmee", "refusee"] as const;
 export const PRO_STATUSES = ["en_attente", "valide", "suspendu", "refuse"] as const;
 
 export const SERVICE_SEED: { code: string; label: string; description: string; sort: number }[] = [
@@ -53,6 +57,17 @@ export const STATUS_LABELS: Record<RequestStatus, string> = {
   sans_disponibilite: "Aucun mécanicien disponible",
   annulee: "Annulée",
 };
+
+// Libellé d'état adapté au parcours : en mode atelier, le client se déplace chez le mécanicien.
+export function statusLabelFor(r: { status: string; mode?: string; visit_status?: string }): string {
+  if (r.mode === "atelier") {
+    if (r.status === "affectee") return r.visit_status === "confirmee" ? "Visite confirmée" : "Garage proposé";
+    if (r.status === "en_route") return "En route vers le garage";
+    if (r.status === "sur_place") return "Arrivé au garage";
+    if (r.status === "recherche") return "Recherche d'un garage";
+  }
+  return STATUS_LABELS[r.status as RequestStatus] || r.status;
+}
 
 export function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371;

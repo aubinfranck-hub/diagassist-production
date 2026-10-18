@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS assistance_requests (
   assigned_at BIGINT,
   quote_status TEXT NOT NULL DEFAULT 'aucun' CHECK (quote_status IN ('aucun','propose','accepte','refuse')),
   ai_analysis TEXT,
-  amount_due INTEGER NOT NULL DEFAULT 0, -- montant convenu = somme des devis acceptés (règlement direct avec le mécanicien, hors plateforme)
+  amount_due INTEGER NOT NULL DEFAULT 0, -- montant convenu = somme des devis acceptés, sinon tarif affiché du service
   manual_requested BOOLEAN NOT NULL DEFAULT false,
   search_started_at BIGINT,
   cancel_reason TEXT,
@@ -210,8 +210,42 @@ CREATE TABLE IF NOT EXISTS assistance_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_assistance_notifications_phone ON assistance_notifications (phone, id DESC);
 
--- Migration sûre si une version précédente du schéma existait.
+-- Paiement via le système (Jèko) : le client paie la plateforme, qui prélève sa commission puis reverse
+-- le net au mécanicien (payout_status). Le client n'est jamais facturé par DiagAssist.
+CREATE TABLE IF NOT EXISTS assistance_payments (
+  reference TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL REFERENCES assistance_requests(id) ON DELETE CASCADE,
+  payer_phone TEXT NOT NULL,
+  pro_phone TEXT,
+  method TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  amount INTEGER NOT NULL CHECK (amount > 0),
+  commission_pct DOUBLE PRECISION,
+  commission_amount INTEGER,
+  pro_amount INTEGER,
+  status TEXT NOT NULL DEFAULT 'en_attente' CHECK (status IN ('en_attente','paye','echoue','annule')),
+  payout_status TEXT CHECK (payout_status IN ('a_reverser','reverse')),
+  payout_at BIGINT,
+  payout_by TEXT,
+  provider_ref TEXT,
+  redirect_url TEXT,
+  confirmed_by TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_assistance_payments_req ON assistance_payments (request_id, created_at DESC);
+
+-- Migrations idempotentes (bases créées par une version précédente).
 ALTER TABLE assistance_requests ADD COLUMN IF NOT EXISTS ai_analysis TEXT;
-ALTER TABLE assistance_requests DROP COLUMN IF EXISTS payment_status;
-DROP TABLE IF EXISTS assistance_payments;
+ALTER TABLE assistance_requests ADD COLUMN IF NOT EXISTS immobilised BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE assistance_requests ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'depannage' CHECK (mode IN ('depannage','atelier'));
+ALTER TABLE assistance_requests ADD COLUMN IF NOT EXISTS visit_status TEXT NOT NULL DEFAULT 'aucune' CHECK (visit_status IN ('aucune','proposee','confirmee','refusee'));
+ALTER TABLE assistance_requests ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'aucun' CHECK (payment_status IN ('aucun','en_attente','paye','echoue'));
+ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS pro_phone TEXT;
+ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS commission_pct DOUBLE PRECISION;
+ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS pro_amount INTEGER;
+ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS payout_status TEXT CHECK (payout_status IN ('a_reverser','reverse'));
+ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS payout_at BIGINT;
+ALTER TABLE assistance_payments ADD COLUMN IF NOT EXISTS payout_by TEXT;
+CREATE INDEX IF NOT EXISTS idx_assistance_payments_pro ON assistance_payments (pro_phone, status);
 `;

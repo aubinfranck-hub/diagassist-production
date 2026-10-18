@@ -1,9 +1,9 @@
 import crypto from "crypto";
 import type { Pool, PoolClient } from "pg";
 import {
-  ACTIVE_MISSION_STATUSES, CLIENT_CANCELLABLE, SERVICE_SEED, STATUS_LABELS, approxPosition, canTransition,
-  clean, estimateEtaMinutes, haversineKm, normalizePhone, parseQuoteLines, validCoords,
-  type RequestStatus,
+  ACTIVE_MISSION_STATUSES, CLIENT_CANCELLABLE, PAYMENT_METHODS, SERVICE_SEED, STATUS_LABELS, approxPosition, canTransition,
+  clean, estimateEtaMinutes, haversineKm, normalizePhone, parseQuoteLines, statusLabelFor, validCoords,
+  type RequestMode, type RequestStatus,
 } from "./domain";
 import { ASSISTANCE_SCHEMA_SQL } from "./schema";
 
@@ -24,6 +24,12 @@ export type CoreDeps = {
   // Analyse automatique par l'IA DiagAssist (texte + médias). Peut échouer : la demande part quand même.
   appUrl?: string;
   analyze?: (input: { service: string; vehicle: any; symptoms: string; faultCodes: string | null; media: { mime: string; data: Buffer }[] }) => Promise<string | null>;
+  // Paiement via le système (Jèko). Absent ou non configuré : le paiement renvoie 503 explicite.
+  jeko?: {
+    isConfigured: () => boolean;
+    create: (p: { reference: string; amountXof: number; paymentMethod: string; payerPhone?: string; successUrl: string; errorUrl: string }) => Promise<{ id?: string; redirectUrl?: string }>;
+    fetchStatus: (jekoId: string) => Promise<string>;
+  };
 };
 
 const DEFAULT_SETTINGS = {
@@ -33,7 +39,8 @@ const DEFAULT_SETTINGS = {
   broadcast_size: 5,
   location_max_age_min: 15,
   avg_speed_kmh: 25,
-  commission_pct: null as number | null,
+  commission_pct: 10 as number, // % prélevé par DiagAssist sur le paiement reçu par le mécanicien (0..100)
+  // `indicatif` = tarif affiché au client pour le service (clé conservée pour compatibilité).
   tariffs: {} as Record<string, { deplacement?: number; diagnostic?: number; indicatif?: number }>,
   whatsapp_notifications: false,
 };
@@ -108,7 +115,7 @@ export function createAssistanceCore(deps: CoreDeps) {
     if ("max_candidates" in patch) out.max_candidates = Math.round(num("max_candidates", 1, 50));
     if ("location_max_age_min" in patch) out.location_max_age_min = num("location_max_age_min", 1, 240);
     if ("avg_speed_kmh" in patch) out.avg_speed_kmh = num("avg_speed_kmh", 5, 120);
-    if ("commission_pct" in patch) out.commission_pct = patch.commission_pct === null || patch.commission_pct === "" ? null : num("commission_pct", 0, 100);
+    if ("commission_pct" in patch) out.commission_pct = patch.commission_pct === null || patch.commission_pct === "" ? DEFAULT_SETTINGS.commission_pct : num("commission_pct", 0, 100);
     if ("whatsapp_notifications" in patch) out.whatsapp_notifications = patch.whatsapp_notifications === true;
     if ("tariffs" in patch) {
       const t: Record<string, { deplacement?: number; diagnostic?: number; indicatif?: number }> = {};
@@ -117,7 +124,7 @@ export function createAssistanceCore(deps: CoreDeps) {
         const dep = src[code]?.deplacement, diag = src[code]?.diagnostic;
         const entry: { deplacement?: number; diagnostic?: number; indicatif?: number } = {};
         const ind = src[code]?.indicatif;
-        if (ind !== undefined && ind !== null && ind !== "") { if (!Number.isInteger(Number(ind)) || Number(ind) < 0) throw new AssistanceError(400, "Montant indicatif invalide."); entry.indicatif = Number(ind); }
+        if (ind !== undefined && ind !== null && ind !== "") { if (!Number.isInteger(Number(ind)) || Number(ind) < 0) throw new AssistanceError(400, "Tarif affiché invalide."); entry.indicatif = Number(ind); }
         if (dep !== undefined && dep !== null && dep !== "") { if (!Number.isInteger(Number(dep)) || Number(dep) < 0) throw new AssistanceError(400, "Tarif de déplacement invalide."); entry.deplacement = Number(dep); }
         if (diag !== undefined && diag !== null && diag !== "") { if (!Number.isInteger(Number(diag)) || Number(diag) < 0) throw new AssistanceError(400, "Tarif de diagnostic invalide."); entry.diagnostic = Number(diag); }
         t[String(code)] = entry;
@@ -171,14 +178,21 @@ export function createAssistanceCore(deps: CoreDeps) {
   async function servicesStatus() {
     const s = await pool.query(`SELECT code, label, description, enabled FROM assistance_services ORDER BY sort, code`);
     const pros = await pool.query(
-      `SELECT phone, specialties, zone_ids, available, mobility FROM assistance_pros WHERE validation_status='valide' AND mobility IN ('mobile','both')`
+      `SELECT phone, specialties, zone_ids, available, mobility, last_lat FROM assistance_pros WHERE validation_status='valide'`
     );
     const settings = await getSettings();
     const zones = await pool.query(`SELECT id FROM assistance_zones WHERE active`);
     const activeZoneIds = new Set(zones.rows.map((z) => z.id));
     return s.rows.filter((x) => x.enabled).map((x) => {
-      const comp = pros.rows.filter((p) => deps.isProSubscribed(p.phone) && p.specialties.includes(x.code) && p.zone_ids.some((z: number) => activeZoneIds.has(z)));
-      return { code: x.code, label: x.label, description: x.description, available: comp.length > 0, proCount: comp.length, availableNow: comp.filter((p) => p.available).length, indicativeAmount: settings.tariffs[x.code]?.indicatif ?? null };
+      const ok = pros.rows.filter((p) => deps.isProSubscribed(p.phone) && p.specialties.includes(x.code) && p.zone_ids.some((z: number) => activeZoneIds.has(z)));
+      const comp = ok.filter((p) => ["mobile", "both"].includes(p.mobility));
+      const atelier = ok.filter((p) => ["garage", "both"].includes(p.mobility) && p.last_lat != null);
+      const tariff = settings.tariffs[x.code]?.indicatif ?? null;
+      return {
+        code: x.code, label: x.label, description: x.description, available: comp.length > 0, proCount: comp.length, availableNow: comp.filter((p) => p.available).length,
+        atelierAvailable: atelier.length > 0, atelierProCount: atelier.length, atelierAvailableNow: atelier.filter((p) => p.available).length,
+        tariff, indicativeAmount: tariff,
+      };
     });
   }
 
@@ -240,7 +254,6 @@ export function createAssistanceCore(deps: CoreDeps) {
     if (!deps.isProSubscribed(p.phone)) b.push("Votre abonnement DiagAssist n'est plus à jour : renouvelez-le pour recevoir des assistances.");
     if (!p.specialties?.length) b.push("Choisissez au moins une spécialité.");
     if (!p.zone_ids?.length) b.push("Choisissez au moins une zone d'intervention.");
-    if (p.mobility === "garage") b.push("Votre profil est réservé au garage fixe : les interventions mobiles ne vous sont pas proposées.");
     return b;
   }
 
@@ -290,7 +303,7 @@ export function createAssistanceCore(deps: CoreDeps) {
       [phone, name, input.garageName ? clean(input.garageName, 80) : null, specialties, zoneIds, mobility, now]
     );
     // Retirer un service/une zone ne doit pas laisser une offre ouverte devenue incompatible.
-    await pool.query(`UPDATE assistance_pros SET available=false WHERE phone=$1 AND (cardinality(specialties)=0 OR cardinality(zone_ids)=0 OR mobility='garage')`, [phone]);
+    await pool.query(`UPDATE assistance_pros SET available=false WHERE phone=$1 AND (cardinality(specialties)=0 OR cardinality(zone_ids)=0)`, [phone]);
     return proProfile(phone);
   }
 
@@ -361,17 +374,20 @@ export function createAssistanceCore(deps: CoreDeps) {
     if (!symptoms && !clean(input.description, 1000)) throw new AssistanceError(400, "Décrivez la panne en quelques mots.");
     const v = input.vehicle || {};
     const vehicle = { brand: clean(v.brand, 60), model: clean(v.model, 80), year: clean(v.year, 8), engine: clean(v.engine, 80), source: v.source === "catalogue" ? "catalogue" : "saisie" };
+    const immobilised = input.immobilised !== false; // défaut : véhicule immobilisé (le mécanicien vient)
+    const mode: RequestMode = immobilised ? "depannage" : "atelier";
+    const tariff = (await getSettings()).tariffs[service]?.indicatif ?? 0;
     const share = input.shareDiagnostic === true;
     const diagnostic = share && input.diagnostic ? { summary: clean(input.diagnostic.summary, 4000), faultCodes: clean(input.diagnostic.faultCodes, 300), vehicle: input.diagnostic.vehicle ? clean(JSON.stringify(input.diagnostic.vehicle), 500) : null } : null;
     const id = rid();
     const now = Date.now();
     await tx(async (c) => {
       await c.query(
-        `INSERT INTO assistance_requests (id, client_phone, status, service, vehicle, symptoms, fault_codes, description, contact_phone, lat, lng, accuracy, position_source, address, landmark, position_confirmed, share_diagnostic, diagnostic, created_at, updated_at)
-         VALUES ($1,$2,'brouillon',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)`,
-        [id, clientPhone, service, JSON.stringify(vehicle), symptoms, clean(input.faultCodes, 300) || null, clean(input.description, 1000) || null, contact, pos.lat, pos.lng, pos.accuracy, pos.source, pos.address, pos.landmark, pos.confirmed, share && !!diagnostic, diagnostic ? JSON.stringify(diagnostic) : null, now]
+        `INSERT INTO assistance_requests (id, client_phone, status, service, vehicle, symptoms, fault_codes, description, contact_phone, lat, lng, accuracy, position_source, address, landmark, position_confirmed, share_diagnostic, diagnostic, immobilised, mode, amount_due, created_at, updated_at)
+         VALUES ($1,$2,'brouillon',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)`,
+        [id, clientPhone, service, JSON.stringify(vehicle), symptoms, clean(input.faultCodes, 300) || null, clean(input.description, 1000) || null, contact, pos.lat, pos.lng, pos.accuracy, pos.source, pos.address, pos.landmark, pos.confirmed, share && !!diagnostic, diagnostic ? JSON.stringify(diagnostic) : null, immobilised, mode, tariff, now]
       );
-      await logEvent(c, id, clientPhone, "client", "creation", { to: "brouillon", meta: { share_diagnostic: share && !!diagnostic } });
+      await logEvent(c, id, clientPhone, "client", "creation", { to: "brouillon", meta: { share_diagnostic: share && !!diagnostic, mode } });
       const ids: string[] = Array.isArray(input.mediaIds) ? input.mediaIds.map(String).slice(0, 8) : [];
       if (ids.length) {
         await c.query(`UPDATE assistance_media SET request_id=$1 WHERE id = ANY($2) AND owner_phone=$3 AND request_id IS NULL`, [id, ids, clientPhone]);
@@ -387,7 +403,12 @@ export function createAssistanceCore(deps: CoreDeps) {
     if (r.status !== "brouillon") throw new AssistanceError(409, "Cette demande est déjà envoyée et ne peut plus être modifiée.");
     const sets: string[] = []; const vals: any[] = [];
     const add = (col: string, v: any) => { vals.push(v); sets.push(`${col}=$${vals.length}`); };
-    if (input.service !== undefined) { await assertServiceEnabled(String(input.service)); add("service", String(input.service)); }
+    if (input.service !== undefined) {
+      await assertServiceEnabled(String(input.service));
+      add("service", String(input.service));
+      add("amount_due", (await getSettings()).tariffs[String(input.service)]?.indicatif ?? 0);
+    }
+    if (input.immobilised !== undefined) { add("immobilised", input.immobilised !== false); add("mode", input.immobilised !== false ? "depannage" : "atelier"); }
     if (input.symptoms !== undefined) add("symptoms", clean(input.symptoms, 1000));
     if (input.faultCodes !== undefined) add("fault_codes", clean(input.faultCodes, 300) || null);
     if (input.description !== undefined) add("description", clean(input.description, 1000) || null);
@@ -424,10 +445,11 @@ export function createAssistanceCore(deps: CoreDeps) {
       const zone = await resolveZone(r.lat, r.lng);
       if (!zone) throw new AssistanceError(422, "Votre position est hors des zones couvertes pour le moment.", "OUT_OF_ZONE");
       const now = Date.now();
-      await c.query(`UPDATE assistance_requests SET status='recherche', zone_id=$2, search_started_at=$3, updated_at=$3 WHERE id=$1`, [id, zone.id, now]);
-      await logEvent(c, id, clientPhone, "client", "envoi", { from: "brouillon", to: "recherche", meta: { zone: zone.name } });
+      const tariff = (await getSettings()).tariffs[r.service]?.indicatif ?? 0;
+      await c.query(`UPDATE assistance_requests SET status='recherche', zone_id=$2, search_started_at=$3, updated_at=$3, amount_due=$4, visit_status='aucune' WHERE id=$1`, [id, zone.id, now, tariff]);
+      await logEvent(c, id, clientPhone, "client", "envoi", { from: "brouillon", to: "recherche", meta: { zone: zone.name, mode: r.mode } });
     });
-    await notify(clientPhone, id, "demande_recue", "Demande reçue", "Nous cherchons un mécanicien près de vous.");
+    await notify(clientPhone, id, "demande_recue", "Demande reçue", (await getRequestRow(id))?.mode === "atelier" ? "Nous cherchons un garage proche de vous." : "Nous cherchons un mécanicien près de vous.");
     await analyzeRequest(id);
     nudgeUnsubscribed(id).catch((e) => console.warn("[ASSISTANCE] Invitation abonnement:", e?.message || e));
     await dispatch(id);
@@ -437,20 +459,20 @@ export function createAssistanceCore(deps: CoreDeps) {
   // (WhatsApp + notification) qu'une assistance existe près d'eux et invités à s'abonner pour la prendre.
   // Aucun détail privé du client, ni sa position exacte. Une invitation par mécanicien et par 24 h.
   async function nudgeUnsubscribed(requestId: string): Promise<void> {
-    const r = (await pool.query(`SELECT r.service, r.zone_id, r.client_phone, z.name AS zone_name, s.label FROM assistance_requests r LEFT JOIN assistance_zones z ON z.id=r.zone_id LEFT JOIN assistance_services s ON s.code=r.service WHERE r.id=$1 AND r.status='recherche'`, [requestId])).rows[0];
+    const r = (await pool.query(`SELECT r.service, r.zone_id, r.client_phone, r.mode, z.name AS zone_name, s.label FROM assistance_requests r LEFT JOIN assistance_zones z ON z.id=r.zone_id LEFT JOIN assistance_services s ON s.code=r.service WHERE r.id=$1 AND r.status='recherche'`, [requestId])).rows[0];
     if (!r || !r.zone_id) return;
     const cands = (await pool.query(
       `SELECT p.phone FROM assistance_pros p
-       WHERE p.validation_status IN ('valide','en_attente') AND p.mobility IN ('mobile','both')
+       WHERE p.validation_status IN ('valide','en_attente') AND p.mobility = ANY($5)
          AND $1 = ANY(p.specialties) AND $2 = ANY(p.zone_ids) AND p.phone <> $3
          AND NOT EXISTS (SELECT 1 FROM assistance_notifications n WHERE n.phone=p.phone AND n.type='abonnement_invite' AND n.created_at > $4)`,
-      [r.service, r.zone_id, r.client_phone, Date.now() - 24 * 3600000]
+      [r.service, r.zone_id, r.client_phone, Date.now() - 24 * 3600000, r.mode === "atelier" ? ["garage", "both"] : ["mobile", "both"]]
     )).rows.filter((p) => !deps.isProSubscribed(p.phone)).slice(0, 20);
     const link = deps.appUrl ? ` ${deps.appUrl}` : "";
     for (const p of cands) {
       await notify(
-        p.phone, null, "abonnement_invite", "Un dépannage vous attend près de vous",
-        `Un automobiliste demande une assistance (${r.label || r.service}) à ${r.zone_name || "votre zone"}. Abonnez-vous à DiagAssist pour recevoir et prendre ces demandes.${link}`,
+        p.phone, null, "abonnement_invite", r.mode === "atelier" ? "Un client cherche un garage près de vous" : "Un dépannage vous attend près de vous",
+        `Un automobiliste demande ${r.mode === "atelier" ? "un garage" : "une assistance"} (${r.label || r.service}) à ${r.zone_name || "votre zone"}. Abonnez-vous à DiagAssist pour recevoir et prendre ces demandes.${link}`,
         "force"
       );
     }
@@ -528,6 +550,7 @@ export function createAssistanceCore(deps: CoreDeps) {
   async function dispatch(requestId: string): Promise<void> {
     const settings = await getSettings();
     let offered: string[] = [];
+    let offeredAtelier = false;
     let noneFor: string | null = null;
     await tx(async (c) => {
       const r = (await c.query("SELECT * FROM assistance_requests WHERE id=$1 FOR UPDATE", [requestId])).rows[0];
@@ -540,16 +563,19 @@ export function createAssistanceCore(deps: CoreDeps) {
       const tried = (await c.query(`SELECT COUNT(*)::int n FROM assistance_offers WHERE request_id=$1 AND sent_at>=$2`, [requestId, round])).rows[0].n;
       let chosen: { phone: string; km: number }[] = [];
       const room = Math.min(settings.broadcast_size, settings.max_candidates - tried);
+      const atelier = r.mode === "atelier";
       if (room > 0 && r.zone_id) {
-        const minLoc = now - settings.location_max_age_min * 60000;
+        // Dépannage : position fraîche exigée (le mécanicien se déplace). Atelier : la dernière position
+        // partagée sert de position du garage (fixe), seule sa présence est requise.
+        const minLoc = atelier ? 0 : now - settings.location_max_age_min * 60000;
         const cands = (await c.query(
           `SELECT p.phone, p.last_lat, p.last_lng FROM assistance_pros p
-           WHERE p.validation_status='valide' AND p.available AND p.mobility IN ('mobile','both')
-             AND $1 = ANY(p.specialties) AND $2 = ANY(p.zone_ids) AND p.last_loc_at >= $3 AND p.phone <> $4
+           WHERE p.validation_status='valide' AND p.available AND p.mobility = ANY($8) AND p.last_lat IS NOT NULL AND p.last_lng IS NOT NULL
+             AND $1 = ANY(p.specialties) AND $2 = ANY(p.zone_ids) AND COALESCE(p.last_loc_at,0) >= $3 AND p.phone <> $4
              AND NOT EXISTS (SELECT 1 FROM assistance_requests m WHERE m.assigned_phone=p.phone AND m.status = ANY($7))
              AND NOT EXISTS (SELECT 1 FROM assistance_offers o WHERE o.request_id=$5 AND o.pro_phone=p.phone AND o.sent_at>=$6)
              AND NOT EXISTS (SELECT 1 FROM assistance_assignments a WHERE a.request_id=$5 AND a.pro_phone=p.phone)`,
-          [r.service, r.zone_id, minLoc, r.client_phone, requestId, round, ACTIVE_MISSION_STATUSES]
+          [r.service, r.zone_id, minLoc, r.client_phone, requestId, round, ACTIVE_MISSION_STATUSES, atelier ? ["garage", "both"] : ["mobile", "both"]]
         )).rows;
         chosen = cands
           .filter((p) => deps.isProSubscribed(p.phone))
@@ -565,15 +591,18 @@ export function createAssistanceCore(deps: CoreDeps) {
             [requestId, ch.phone, ch.km, now, now + settings.offer_timeout_s * 1000]
           );
         }
-        await logEvent(c, requestId, "systeme", "systeme", "proposition", { meta: { pros: chosen.map((x) => x.phone), km: chosen.map((x) => Math.round(x.km * 10) / 10) } });
+        await logEvent(c, requestId, "systeme", "systeme", "proposition", { meta: { mode: r.mode, pros: chosen.map((x) => x.phone), km: chosen.map((x) => Math.round(x.km * 10) / 10) } });
         offered = chosen.map((x) => x.phone);
+        offeredAtelier = atelier;
       } else {
         await c.query(`UPDATE assistance_requests SET status='sans_disponibilite', updated_at=$2 WHERE id=$1`, [requestId, now]);
         await logEvent(c, requestId, "systeme", "systeme", "sans_disponibilite", { from: "recherche", to: "sans_disponibilite", reason: tried >= settings.max_candidates ? "candidats épuisés" : "aucun professionnel éligible" });
         noneFor = r.client_phone;
       }
     });
-    for (const pro of offered) await notify(pro, requestId, "mission_proposee", "Nouvelle assistance près de vous", "Le premier à accepter prend la mission. Ouvrez DiagAssist.", true);
+    for (const pro of offered) {
+      await notify(pro, requestId, "mission_proposee", offeredAtelier ? "Un client peut venir à votre garage" : "Nouvelle assistance près de vous", offeredAtelier ? "Le premier à accepter reçoit le client, qui devra confirmer sa venue. Ouvrez DiagAssist." : "Le premier à accepter prend la mission. Ouvrez DiagAssist.", true);
+    }
     if (noneFor) await notify(noneFor, requestId, "sans_disponibilite", "Aucun mécanicien disponible", "Aucun professionnel n'est disponible pour le moment. Vous pouvez réessayer ou demander une prise en charge manuelle.");
   }
 
@@ -598,7 +627,7 @@ export function createAssistanceCore(deps: CoreDeps) {
   // Acceptation ATOMIQUE : verrou de ligne sur la demande + proposition ouverte unique + index unique
   // d'affectation active. Deux acceptations simultanées ne produisent jamais deux affectations.
   async function acceptOffer(offerId: number, proPhone: string) {
-    let clientPhone = "", requestId = "";
+    let clientPhone = "", requestId = "", atelier = false;
     await tx(async (c) => {
       const o = (await c.query("SELECT * FROM assistance_offers WHERE id=$1", [offerId])).rows[0];
       if (!o || o.pro_phone !== proPhone) throw new AssistanceError(404, "Proposition introuvable.");
@@ -617,12 +646,14 @@ export function createAssistanceCore(deps: CoreDeps) {
       await c.query(`UPDATE assistance_offers SET status='acceptee', responded_at=$2 WHERE id=$1`, [offerId, now]);
       await c.query(`UPDATE assistance_offers SET status='annulee', responded_at=$2 WHERE request_id=$1 AND id<>$3 AND status='envoyee'`, [r.id, now, offerId]);
       await c.query(`INSERT INTO assistance_assignments (request_id, pro_phone, assigned_at, assigned_by) VALUES ($1,$2,$3,$2)`, [r.id, proPhone, now]);
-      await c.query(`UPDATE assistance_requests SET status='affectee', assigned_phone=$2, assigned_at=$3, updated_at=$3 WHERE id=$1`, [r.id, proPhone, now]);
-      await logEvent(c, r.id, proPhone, "pro", "acceptation", { from: "recherche", to: "affectee" });
-      clientPhone = r.client_phone;
+      // Mode atelier : double accord. Le pro a accepté de recevoir le client ; le client doit confirmer (visit_status).
+      await c.query(`UPDATE assistance_requests SET status='affectee', assigned_phone=$2, assigned_at=$3, updated_at=$3, visit_status=$4 WHERE id=$1`, [r.id, proPhone, now, r.mode === "atelier" ? "proposee" : "aucune"]);
+      await logEvent(c, r.id, proPhone, "pro", "acceptation", { from: "recherche", to: "affectee", meta: r.mode === "atelier" ? { mode: "atelier", visite: "proposee" } : undefined });
+      clientPhone = r.client_phone; atelier = r.mode === "atelier";
     });
-    const p = await pool.query("SELECT display_name FROM assistance_pros WHERE phone=$1", [proPhone]);
-    await notify(clientPhone, requestId, "mission_acceptee", "Mécanicien trouvé", `${p.rows[0]?.display_name || "Un mécanicien"} a accepté votre demande.`, true);
+    const p = await pool.query("SELECT display_name, garage_name FROM assistance_pros WHERE phone=$1", [proPhone]);
+    if (atelier) await notify(clientPhone, requestId, "visite_proposee", "Un garage vous est proposé", `${p.rows[0]?.garage_name || p.rows[0]?.display_name || "Un mécanicien"} accepte de vous recevoir. Confirmez votre venue dans l'application.`, true);
+    else await notify(clientPhone, requestId, "mission_acceptee", "Mécanicien trouvé", `${p.rows[0]?.display_name || "Un mécanicien"} a accepté votre demande.`, true);
     return requestId;
   }
 
@@ -650,13 +681,13 @@ export function createAssistanceCore(deps: CoreDeps) {
       await c.query(`UPDATE assistance_offers SET status='annulee', responded_at=$2 WHERE request_id=$1 AND status='envoyee'`, [requestId, now]);
       await c.query(`UPDATE assistance_assignments SET ended_at=$2, ended_reason='reaffectation' WHERE request_id=$1 AND ended_at IS NULL`, [requestId, now]);
       await c.query(`INSERT INTO assistance_assignments (request_id, pro_phone, assigned_at, assigned_by) VALUES ($1,$2,$3,$4)`, [requestId, proPhone, now, admin]);
-      await c.query(`UPDATE assistance_requests SET status='affectee', assigned_phone=$2, assigned_at=$3, updated_at=$3 WHERE id=$1`, [requestId, proPhone, now]);
+      await c.query(`UPDATE assistance_requests SET status='affectee', assigned_phone=$2, assigned_at=$3, updated_at=$3, visit_status=$4 WHERE id=$1`, [requestId, proPhone, now, r.mode === "atelier" ? "proposee" : "aucune"]);
       await logEvent(c, requestId, admin, "admin", "affectation_manuelle", { from: r.status, to: "affectee", meta: { pro: proPhone, previous: r.assigned_phone } });
       clientPhone = r.client_phone;
       if (r.assigned_phone && r.assigned_phone !== proPhone) await notify(r.assigned_phone, requestId, "mission_retiree", "Mission réaffectée", "Cette mission a été confiée à un autre professionnel.");
     });
     await notify(proPhone, requestId, "mission_assignee", "Mission assignée", "DiagAssist vous a confié une mission. Ouvrez-la pour voir les détails.", true);
-    await notify(clientPhone, requestId, "mission_acceptee", "Mécanicien trouvé", "Un mécanicien a été affecté à votre demande.", true);
+    await notify(clientPhone, requestId, "mission_acceptee", "Mécanicien trouvé", "Un mécanicien a été affecté à votre demande. S'il s'agit d'un garage, confirmez votre venue dans l'application.", true);
   }
 
   async function redispatch(requestId: string, actor: string, role: "admin" | "pro", reason: string, expectedPro?: string) {
@@ -669,7 +700,7 @@ export function createAssistanceCore(deps: CoreDeps) {
       const now = Date.now();
       await c.query(`UPDATE assistance_offers SET status='annulee', responded_at=$2 WHERE request_id=$1 AND status='envoyee'`, [requestId, now]);
       await c.query(`UPDATE assistance_assignments SET ended_at=$2, ended_reason=$3 WHERE request_id=$1 AND ended_at IS NULL`, [requestId, now, role === "pro" ? "desistement" : "reaffectation"]);
-      await c.query(`UPDATE assistance_requests SET status='recherche', assigned_phone=NULL, assigned_at=NULL, search_started_at=$2, updated_at=$2 WHERE id=$1`, [requestId, now]);
+      await c.query(`UPDATE assistance_requests SET status='recherche', assigned_phone=NULL, assigned_at=NULL, search_started_at=$2, updated_at=$2, visit_status='aucune' WHERE id=$1`, [requestId, now]);
       await logEvent(c, requestId, actor, role, role === "pro" ? "desistement" : "relance_recherche", { from: r.status, to: "recherche", reason });
       prevPro = r.assigned_phone; clientPhone = r.client_phone;
     });
@@ -685,15 +716,22 @@ export function createAssistanceCore(deps: CoreDeps) {
       const r = (await c.query("SELECT * FROM assistance_requests WHERE id=$1 FOR UPDATE", [requestId])).rows[0];
       if (!r || (!admin && r.assigned_phone !== proPhone)) throw new AssistanceError(404, "Mission introuvable.");
       if (!["en_route", "sur_place", "en_intervention", "terminee"].includes(to)) throw new AssistanceError(400, "Étape invalide.");
-      if (!canTransition(r.status, to)) throw new AssistanceError(409, `Impossible de passer de « ${STATUS_LABELS[r.status as RequestStatus]} » à « ${STATUS_LABELS[to]} ».`);
-      if (to === "en_intervention" && r.quote_status !== "accepte") throw new AssistanceError(409, "Le client doit d'abord accepter le devis avant de commencer.", "QUOTE_NOT_ACCEPTED");
+      const atelier = r.mode === "atelier";
+      if (atelier && r.visit_status !== "confirmee") throw new AssistanceError(409, "Le client n'a pas encore confirmé sa venue : la mission ne peut pas avancer.", "VISIT_NOT_CONFIRMED");
+      if (atelier && to === "en_route") throw new AssistanceError(409, "En mode atelier, c'est le client qui indique son départ.", "CLIENT_TRAVELS");
+      // Atelier : si le client arrive sans avoir appuyé sur « Je pars », le pro peut marquer son arrivée directement.
+      const direct = atelier && r.status === "affectee" && to === "sur_place";
+      if (!direct && !canTransition(r.status, to)) throw new AssistanceError(409, `Impossible de passer de « ${statusLabelFor(r)} » à « ${STATUS_LABELS[to]} ».`);
+      if (to === "en_intervention" && !canStartWork(r)) throw new AssistanceError(409, "Le client doit d'abord accepter le devis avant de commencer.", "QUOTE_NOT_ACCEPTED");
       const now = Date.now();
       let amountDue = r.amount_due;
       if (to === "terminee") {
         if (r.quote_status === "propose") throw new AssistanceError(409, "Un devis attend l'accord du client : l'intervention ne peut pas être terminée.", "QUOTE_PENDING");
+        // Montant convenu = somme des devis acceptés, sinon le tarif affiché du service.
         const sum = (await c.query(`SELECT COALESCE(SUM(total),0)::int s FROM assistance_quotes WHERE request_id=$1 AND status='accepte'`, [requestId])).rows[0].s;
-        if (sum <= 0) throw new AssistanceError(409, "Aucun devis accepté : établissez un devis avant de terminer.", "NO_QUOTE");
-        amountDue = sum;
+        const tariff = (await getSettings()).tariffs[r.service]?.indicatif ?? 0;
+        amountDue = sum > 0 ? sum : r.quote_status === "refuse" ? 0 : tariff;
+        if (amountDue <= 0) throw new AssistanceError(409, "Aucun devis accepté : établissez un devis avant de terminer.", "NO_QUOTE");
       }
       await c.query(
         `UPDATE assistance_requests SET status=$2, amount_due=$3, updated_at=$4, completed_at=$5 WHERE id=$1`,
@@ -703,15 +741,67 @@ export function createAssistanceCore(deps: CoreDeps) {
       clientPhone = r.client_phone; prev = r.status;
     });
     if (to === "terminee") await clearLocationIfIdle(proPhone);
+    const atelierNow = (await getRequestRow(requestId))?.mode === "atelier";
     const msgs: Partial<Record<RequestStatus, [string, string, string]>> = {
       en_route: ["mecanicien_en_route", "Votre mécanicien est en route", "Il se dirige vers vous."],
-      sur_place: ["mecanicien_arrive", "Votre mécanicien est arrivé", "Il est sur place."],
+      sur_place: atelierNow ? ["arrivee_enregistree", "Arrivée enregistrée", "Le garage a enregistré votre arrivée."] : ["mecanicien_arrive", "Votre mécanicien est arrivé", "Il est sur place."],
       en_intervention: ["intervention_commencee", "Intervention en cours", "Le mécanicien a commencé les travaux."],
-      terminee: ["intervention_terminee", "Intervention terminée", "Consultez le récapitulatif et procédez au paiement."],
+      terminee: ["intervention_terminee", "Intervention terminée", "Consultez le récapitulatif et réglez en ligne depuis l'application."],
     };
     const m = msgs[to];
     if (m) await notify(clientPhone, requestId, m[0], m[1], m[2], to === "sur_place" || to === "terminee");
     return prev;
+  }
+
+  // Le travail peut commencer si le devis est accepté, ou si le tarif du service est connu et qu'aucun devis n'est en discussion.
+  const canStartWork = (r: any) => r.quote_status === "accepte" || (r.quote_status === "aucun" && Number(r.amount_due) > 0);
+
+  // ---------- Mode atelier : double accord ----------
+  // Le pro a accepté de recevoir le client (acceptOffer). Le client confirme ou refuse ici.
+  async function decideVisit(requestId: string, clientPhone: string, accept: boolean) {
+    let proPhone = "";
+    await tx(async (c) => {
+      const r = (await c.query("SELECT * FROM assistance_requests WHERE id=$1 FOR UPDATE", [requestId])).rows[0];
+      if (!r || r.client_phone !== clientPhone) throw new AssistanceError(404, "Demande introuvable.");
+      if (r.mode !== "atelier") throw new AssistanceError(409, "Cette demande n'est pas une visite en garage.");
+      if (r.status !== "affectee" || r.visit_status !== "proposee" || !r.assigned_phone) throw new AssistanceError(409, "Aucun garage n'attend votre confirmation.", "NO_VISIT_PROPOSED");
+      const now = Date.now();
+      proPhone = r.assigned_phone;
+      if (accept) {
+        await c.query(`UPDATE assistance_requests SET visit_status='confirmee', updated_at=$2 WHERE id=$1`, [requestId, now]);
+        await logEvent(c, requestId, clientPhone, "client", "visite_confirmee", { meta: { pro: proPhone } });
+      } else {
+        // Refus : le pro est libéré et exclu pour cette demande (l'affectation terminée l'écarte du redispatch).
+        await c.query(`UPDATE assistance_offers SET status='annulee', responded_at=$2 WHERE request_id=$1 AND status='envoyee'`, [requestId, now]);
+        await c.query(`UPDATE assistance_assignments SET ended_at=$2, ended_reason='refus_client' WHERE request_id=$1 AND ended_at IS NULL`, [requestId, now]);
+        await c.query(`UPDATE assistance_requests SET status='recherche', assigned_phone=NULL, assigned_at=NULL, visit_status='aucune', search_started_at=$2, updated_at=$2 WHERE id=$1`, [requestId, now]);
+        await logEvent(c, requestId, clientPhone, "client", "visite_refusee", { from: "affectee", to: "recherche", meta: { pro: proPhone } });
+      }
+    });
+    if (accept) {
+      await notify(proPhone, requestId, "visite_confirmee", "Le client confirme sa venue", "Le client a confirmé : il se rendra à votre garage. Vous pouvez désormais le joindre depuis la mission.", true);
+    } else {
+      await clearLocationIfIdle(proPhone);
+      await notify(proPhone, requestId, "visite_refusee", "Le client ne vient pas", "Le client a choisi un autre garage. Vous êtes de nouveau disponible.");
+      await notify(clientPhone, requestId, "recherche_relancee", "Nous cherchons un autre garage", "Nous recherchons un autre mécanicien proche de vous.");
+      await dispatch(requestId);
+    }
+  }
+
+  // Atelier : le client appuie sur « Je pars » une fois sa venue confirmée.
+  async function clientLeaving(requestId: string, clientPhone: string) {
+    let proPhone = "";
+    await tx(async (c) => {
+      const r = (await c.query("SELECT * FROM assistance_requests WHERE id=$1 FOR UPDATE", [requestId])).rows[0];
+      if (!r || r.client_phone !== clientPhone) throw new AssistanceError(404, "Demande introuvable.");
+      if (r.mode !== "atelier") throw new AssistanceError(409, "Cette action concerne uniquement une visite en garage.");
+      if (r.status !== "affectee" || r.visit_status !== "confirmee") throw new AssistanceError(409, "Confirmez d'abord votre venue au garage proposé.", "VISIT_NOT_CONFIRMED");
+      const now = Date.now();
+      await c.query(`UPDATE assistance_requests SET status='en_route', updated_at=$2 WHERE id=$1`, [requestId, now]);
+      await logEvent(c, requestId, clientPhone, "client", "depart_client", { from: "affectee", to: "en_route" });
+      proPhone = r.assigned_phone;
+    });
+    await notify(proPhone, requestId, "client_en_route", "Le client est en route", "Le client est parti vers votre garage.", true);
   }
 
   async function setProDiagnosis(requestId: string, proPhone: string, text: string) {
@@ -759,11 +849,159 @@ export function createAssistanceCore(deps: CoreDeps) {
       await c.query(`UPDATE assistance_quotes SET status=$2, decided_at=$3, decided_by=$4 WHERE id=$1`, [quoteId, accept ? "accepte" : "refuse", now, clientPhone]);
       // Statut global du devis : accepté dès qu'un devis est accepté ; un refus d'un supplément laisse le devis initial accepté.
       const accepted = (await c.query(`SELECT 1 FROM assistance_quotes WHERE request_id=$1 AND status='accepte'`, [requestId])).rowCount;
-      await c.query(`UPDATE assistance_requests SET quote_status=$2, updated_at=$3 WHERE id=$1`, [requestId, accepted ? "accepte" : accept ? "accepte" : "refuse", now]);
+      // Montant convenu = somme des devis acceptés, sinon tarif affiché du service.
+      const sum = (await c.query(`SELECT COALESCE(SUM(total),0)::int s FROM assistance_quotes WHERE request_id=$1 AND status='accepte'`, [requestId])).rows[0].s;
+      const tariff = (await getSettings()).tariffs[r.service]?.indicatif ?? 0;
+      await c.query(`UPDATE assistance_requests SET quote_status=$2, amount_due=$4, updated_at=$3 WHERE id=$1`, [requestId, accepted ? "accepte" : accept ? "accepte" : "refuse", now, sum > 0 ? sum : tariff]);
       await logEvent(c, requestId, clientPhone, actorRole, accept ? "devis_accepte" : "devis_refuse", { meta: { version: q.version, kind: q.kind, total: q.total } });
       proPhone = r.assigned_phone;
     });
     if (proPhone) await notify(proPhone, requestId, accept ? "devis_accepte" : "devis_refuse", accept ? "Devis accepté" : "Devis refusé", accept ? "Le client a donné son accord." : "Le client a refusé le devis.", true);
+  }
+
+  // ---------- Paiement via le système (Jèko) ----------
+  // Le client règle la plateforme en mobile money ; DiagAssist ne lui facture rien en plus. À la confirmation
+  // (webhook signé ou réconciliation auprès de Jèko, jamais par le client), la commission est calculée côté
+  // serveur et le net est « à reverser » au mécanicien. Le montant vient toujours de la base (amount_due).
+  async function startPayment(requestId: string, clientPhone: string, method: string, payerPhone: string | undefined, origin: string) {
+    const r = (await pool.query("SELECT * FROM assistance_requests WHERE id=$1", [requestId])).rows[0];
+    if (!r || r.client_phone !== clientPhone) throw new AssistanceError(404, "Demande introuvable.");
+    if (r.status !== "terminee") throw new AssistanceError(409, "Le paiement s'ouvre une fois l'intervention terminée.");
+    if (r.payment_status === "paye") throw new AssistanceError(409, "Cette intervention est déjà payée.");
+    if (!(r.amount_due > 0)) throw new AssistanceError(409, "Aucun montant à payer.");
+    if (!(PAYMENT_METHODS as readonly string[]).includes(method)) throw new AssistanceError(400, "Moyen de paiement invalide (Wave, Orange Money, MTN MoMo ou Moov Money).");
+    if (!deps.jeko?.isConfigured()) throw new AssistanceError(503, "Le paiement en ligne n'est pas encore activé. Réessayez plus tard.", "PAYMENT_NOT_CONFIGURED");
+    const recent = (await pool.query(`SELECT * FROM assistance_payments WHERE request_id=$1 AND status='en_attente' AND provider='jeko' AND created_at > $2 ORDER BY created_at DESC LIMIT 1`, [requestId, Date.now() - 10 * 60000])).rows[0];
+    if (recent && recent.method === method && recent.redirect_url) return { reference: recent.reference, redirectUrl: recent.redirect_url, paymentStatus: "en_attente" };
+    if (recent) throw new AssistanceError(409, "Un paiement est déjà en cours. Patientez quelques minutes avant de changer de moyen.");
+    const reference = `dgas-${requestId}-${crypto.randomBytes(4).toString("hex")}`;
+    const created = await deps.jeko.create({
+      reference, amountXof: r.amount_due, paymentMethod: method,
+      payerPhone: payerPhone ? normalizePhone(payerPhone) : undefined,
+      successUrl: `${origin}/?assistance=${encodeURIComponent(requestId)}&payment=return`,
+      errorUrl: `${origin}/?assistance=${encodeURIComponent(requestId)}&payment=return`,
+    });
+    const now = Date.now();
+    await tx(async (c) => {
+      await c.query(`UPDATE assistance_payments SET status='annule', updated_at=$2 WHERE request_id=$1 AND status='en_attente'`, [requestId, now]);
+      await c.query(
+        `INSERT INTO assistance_payments (reference, request_id, payer_phone, pro_phone, method, provider, amount, status, provider_ref, redirect_url, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,'jeko',$6,'en_attente',$7,$8,$9,$9)`,
+        [reference, requestId, clientPhone, r.assigned_phone, method, r.amount_due, created.id || null, created.redirectUrl || null, now]
+      );
+      await c.query(`UPDATE assistance_requests SET payment_status='en_attente', updated_at=$2 WHERE id=$1 AND payment_status<>'paye'`, [requestId, now]);
+      await logEvent(c, requestId, clientPhone, "client", "paiement_initie", { meta: { reference, method, amount: r.amount_due } });
+    });
+    return { reference, redirectUrl: created.redirectUrl, paymentStatus: "en_attente" };
+  }
+
+  async function applyPaymentResult(reference: string, outcome: "paye" | "echoue", by: string) {
+    await tx(async (c) => {
+      const p = (await c.query("SELECT * FROM assistance_payments WHERE reference=$1 FOR UPDATE", [reference])).rows[0];
+      if (!p) return;
+      if (!["en_attente", "annule"].includes(p.status)) return; // déjà traité : idempotent, pas de double traitement
+      const r = (await c.query("SELECT * FROM assistance_requests WHERE id=$1 FOR UPDATE", [p.request_id])).rows[0];
+      const now = Date.now();
+      if (outcome === "paye") {
+        const dup = r.payment_status === "paye";
+        if (dup) {
+          // Second règlement pour une intervention déjà payée : enregistré mais sans commission ni reversement (à rembourser).
+          await c.query(`UPDATE assistance_payments SET status='paye', commission_pct=NULL, commission_amount=0, pro_amount=0, payout_status=NULL, confirmed_by=$2, updated_at=$3 WHERE reference=$1`, [reference, by, now]);
+        } else {
+          const settings = await getSettings();
+          const pct = Math.min(100, Math.max(0, Number(settings.commission_pct)));
+          const commission = Math.round((p.amount * pct) / 100);
+          await c.query(
+            `UPDATE assistance_payments SET status='paye', commission_pct=$2, commission_amount=$3, pro_amount=$4, payout_status='a_reverser', pro_phone=COALESCE(pro_phone,$5), confirmed_by=$6, updated_at=$7 WHERE reference=$1`,
+            [reference, pct, commission, p.amount - commission, r.assigned_phone, by, now]
+          );
+          await c.query(`UPDATE assistance_requests SET payment_status='paye', updated_at=$2 WHERE id=$1`, [p.request_id, now]);
+        }
+        await logEvent(c, p.request_id, by, by === "jeko" ? "systeme" : "admin", dup ? "double_paiement_detecte" : "paiement_confirme", { meta: { reference, amount: p.amount } });
+      } else {
+        await c.query(`UPDATE assistance_payments SET status='echoue', updated_at=$2 WHERE reference=$1`, [reference, now]);
+        if (r.payment_status !== "paye") {
+          const other = (await c.query(`SELECT 1 FROM assistance_payments WHERE request_id=$1 AND reference<>$2 AND status='en_attente'`, [p.request_id, reference])).rowCount;
+          if (!other) await c.query(`UPDATE assistance_requests SET payment_status='echoue', updated_at=$2 WHERE id=$1`, [p.request_id, now]);
+        }
+        await logEvent(c, p.request_id, by, "systeme", "paiement_echoue", { meta: { reference } });
+      }
+    });
+    const pay = (await pool.query("SELECT request_id, payer_phone, pro_phone, pro_amount, payout_status FROM assistance_payments WHERE reference=$1", [reference])).rows[0];
+    if (pay && outcome === "paye" && pay.payout_status === "a_reverser") {
+      if (pay.pro_phone) await notify(pay.pro_phone, pay.request_id, "paiement_recu", "Paiement reçu", `Le client a réglé l'intervention : ${pay.pro_amount} F CFA vous seront reversés par DiagAssist.`, true);
+      await notify(pay.payer_phone, pay.request_id, "paiement_confirme", "Paiement confirmé", "Merci, votre paiement est bien enregistré.");
+    }
+  }
+
+  // Appelé par le webhook Jèko (signature déjà vérifiée par jeko.routes). Contrôle montant et identifiants.
+  async function handleJekoWebhook(reference: string, status: string, body: any): Promise<boolean> {
+    const p = (await pool.query("SELECT * FROM assistance_payments WHERE reference=$1", [reference])).rows[0];
+    if (!p) return false;
+    if (p.provider !== "jeko") return true;
+    if (!["en_attente", "annule"].includes(p.status)) return true;
+    const webhookAmount = Number(body?.amount?.amount);
+    if (Number.isFinite(webhookAmount) && webhookAmount !== p.amount * 100) {
+      console.warn(`[ASSISTANCE][Webhook] Montant différent pour ${reference} : reçu=${webhookAmount}, attendu=${p.amount * 100}.`);
+      return true;
+    }
+    const jid = body?.transactionDetails?.id;
+    if (p.provider_ref && jid && String(jid) !== String(p.provider_ref)) {
+      console.warn(`[ASSISTANCE][Webhook] Identifiant Jèko différent pour ${reference}.`);
+      return true;
+    }
+    const s = status.toLowerCase();
+    if (s === "success" || s === "completed") await applyPaymentResult(reference, "paye", "jeko");
+    else await applyPaymentResult(reference, "echoue", "jeko");
+    return true;
+  }
+
+  async function reconcilePayment(reference: string) {
+    const p = (await pool.query("SELECT * FROM assistance_payments WHERE reference=$1", [reference])).rows[0];
+    if (!p || p.status !== "en_attente" || p.provider !== "jeko" || !p.provider_ref || !deps.jeko?.isConfigured()) return;
+    try {
+      const s = (await deps.jeko.fetchStatus(p.provider_ref)).toLowerCase();
+      if (s === "success" || s === "completed") await applyPaymentResult(reference, "paye", "jeko");
+      else if (s === "error" || s === "failed") await applyPaymentResult(reference, "echoue", "jeko");
+    } catch (e: any) {
+      console.error("[ASSISTANCE] Réconciliation Jèko impossible:", e.message);
+    }
+  }
+
+  // Reversement au mécanicien (admin) : le net d'un paiement confirmé est marqué comme reversé, une seule fois.
+  async function markPayout(reference: string, admin: string) {
+    let proPhone: string | null = null, requestId = "", amount = 0;
+    await tx(async (c) => {
+      const p = (await c.query("SELECT * FROM assistance_payments WHERE reference=$1 FOR UPDATE", [reference])).rows[0];
+      if (!p) throw new AssistanceError(404, "Paiement introuvable.");
+      if (p.status !== "paye" || p.payout_status !== "a_reverser") throw new AssistanceError(409, p.payout_status === "reverse" ? "Ce paiement a déjà été reversé au mécanicien." : "Ce paiement n'est pas à reverser.");
+      const now = Date.now();
+      await c.query(`UPDATE assistance_payments SET payout_status='reverse', payout_at=$2, payout_by=$3, updated_at=$2 WHERE reference=$1`, [reference, now, admin]);
+      await logEvent(c, p.request_id, admin, "admin", "reversement_effectue", { meta: { reference, amount: p.pro_amount, pro: p.pro_phone } });
+      proPhone = p.pro_phone; requestId = p.request_id; amount = p.pro_amount;
+    });
+    if (proPhone) await notify(proPhone, requestId, "reversement_effectue", "Reversement effectué", `DiagAssist vous a reversé ${amount} F CFA pour cette intervention.`, true);
+  }
+
+  const paymentView = (x: any, forPro = false) => x ? {
+    reference: x.reference, method: x.method, amount: x.amount, status: x.status,
+    ...(forPro ? { commissionAmount: x.commission_amount, proAmount: x.pro_amount, payoutStatus: x.payout_status, payoutAt: x.payout_at ? Number(x.payout_at) : null } : {}),
+    redirectUrl: !forPro && x.status === "en_attente" ? x.redirect_url : null, updatedAt: Number(x.updated_at),
+  } : null;
+
+  async function proEarnings(phone: string) {
+    const [agg, list, s] = await Promise.all([
+      pool.query(`SELECT COALESCE(SUM(pro_amount) FILTER (WHERE payout_status IN ('a_reverser','reverse')),0)::bigint paid,
+                         COALESCE(SUM(pro_amount) FILTER (WHERE payout_status='a_reverser'),0)::bigint to_receive,
+                         COALESCE(SUM(pro_amount) FILTER (WHERE payout_status='reverse'),0)::bigint received
+                  FROM assistance_payments WHERE pro_phone=$1 AND status='paye'`, [phone]),
+      pool.query(`SELECT p.*, r.service FROM assistance_payments p JOIN assistance_requests r ON r.id=p.request_id WHERE p.pro_phone=$1 AND p.status IN ('paye','en_attente') ORDER BY p.created_at DESC LIMIT 100`, [phone]),
+      getSettings(),
+    ]);
+    const labels = await serviceLabels();
+    return {
+      paid: Number(agg.rows[0].paid), toReceive: Number(agg.rows[0].to_receive), received: Number(agg.rows[0].received), commissionPct: s.commission_pct,
+      payments: list.rows.map((x) => ({ ...paymentView(x, true), requestId: x.request_id, service: x.service, serviceLabel: labels[x.service] || x.service, grossAmount: x.amount, createdAt: Number(x.created_at) })),
+    };
   }
 
   // ---------- Avis, réclamations ----------
@@ -821,9 +1059,11 @@ export function createAssistanceCore(deps: CoreDeps) {
   }
 
   // ---------- Vues ----------
-  const summary = (r: any, serviceLabel?: string) => ({
-    id: r.id, status: r.status, statusLabel: STATUS_LABELS[r.status as RequestStatus], service: r.service, serviceLabel: serviceLabel || r.service,
-    vehicle: r.vehicle, symptoms: r.symptoms, quoteStatus: r.quote_status, amountAgreed: r.amount_due,
+  // `tariffs` (réglages) permet d'exposer le tarif affiché du service (`tariff`, null si non configuré).
+  const summary = (r: any, serviceLabel?: string, tariffs?: Settings["tariffs"]) => ({
+    id: r.id, status: r.status, statusLabel: statusLabelFor(r), mode: r.mode as RequestMode, immobilised: r.immobilised !== false, visitStatus: r.visit_status as string,
+    service: r.service, serviceLabel: serviceLabel || r.service, tariff: tariffs?.[r.service]?.indicatif ?? null,
+    vehicle: r.vehicle, symptoms: r.symptoms, quoteStatus: r.quote_status, paymentStatus: r.payment_status as string, amountAgreed: r.amount_due,
     createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), manualRequested: r.manual_requested,
   });
 
@@ -833,11 +1073,11 @@ export function createAssistanceCore(deps: CoreDeps) {
   }
 
   async function listForClient(phone: string) {
-    const [r, labels] = await Promise.all([
+    const [r, labels, st] = await Promise.all([
       pool.query("SELECT * FROM assistance_requests WHERE client_phone=$1 ORDER BY created_at DESC LIMIT 100", [phone]),
-      serviceLabels(),
+      serviceLabels(), getSettings(),
     ]);
-    return r.rows.map((x) => summary(x, labels[x.service]));
+    return r.rows.map((x) => summary(x, labels[x.service], st.tariffs));
   }
 
   const CLIENT_TIMELINE: Record<string, string> = {
@@ -845,7 +1085,8 @@ export function createAssistanceCore(deps: CoreDeps) {
     sans_disponibilite: "Aucun mécanicien disponible", nouvel_essai: "Nouvelle recherche", relance_recherche: "Recherche relancée",
     desistement: "Le mécanicien n'est plus disponible, nouvelle recherche", annulation: "Demande annulée",
     devis_propose: "Devis proposé", devis_supplementaire_propose: "Travaux supplémentaires proposés", devis_accepte: "Devis accepté", devis_refuse: "Devis refusé",
-    paiement_confirme: "Paiement confirmé", paiement_echoue: "Paiement échoué", paiement_especes_confirme: "Paiement en espèces confirmé", especes_declarees: "Règlement en espèces déclaré",
+    paiement_confirme: "Paiement confirmé", paiement_echoue: "Paiement échoué", paiement_initie: "Paiement lancé",
+    visite_confirmee: "Venue au garage confirmée", visite_refusee: "Garage refusé, nouvelle recherche", depart_client: "Vous êtes en route vers le garage",
     avis: "Avis envoyé", reclamation: "Réclamation envoyée",
   };
   const STEP_LABELS: Record<string, string> = { en_route: "Mécanicien en route", sur_place: "Mécanicien arrivé", en_intervention: "Intervention commencée", terminee: "Intervention terminée" };
@@ -854,13 +1095,15 @@ export function createAssistanceCore(deps: CoreDeps) {
     const r = (await pool.query("SELECT * FROM assistance_requests WHERE id=$1 AND client_phone=$2", [id, phone])).rows[0];
     if (!r) throw new AssistanceError(404, "Demande introuvable.");
     const settings = await getSettings();
-    const [labels, quotes, ev, media, review] = await Promise.all([
+    const [labels, quotes, ev, media, review, pay] = await Promise.all([
       serviceLabels(),
       pool.query(`SELECT id, version, kind, lines, total, currency, status, note, created_at, decided_at FROM assistance_quotes WHERE request_id=$1 ORDER BY version`, [id]),
       pool.query(`SELECT at, type, to_status FROM assistance_events WHERE request_id=$1 ORDER BY at, id`, [id]),
       pool.query(`SELECT id, kind, mime, size FROM assistance_media WHERE request_id=$1 ORDER BY created_at`, [id]),
       pool.query(`SELECT rating, comment, created_at FROM assistance_reviews WHERE request_id=$1`, [id]),
+      pool.query(`SELECT reference, method, amount, status, created_at, updated_at, redirect_url FROM assistance_payments WHERE request_id=$1 ORDER BY created_at DESC LIMIT 1`, [id]),
     ]);
+    const atelier = r.mode === "atelier";
     let pro: any = null;
     if (r.assigned_phone && r.status !== "annulee") {
       const p = (await pool.query("SELECT * FROM assistance_pros WHERE phone=$1", [r.assigned_phone])).rows[0];
@@ -869,13 +1112,15 @@ export function createAssistanceCore(deps: CoreDeps) {
           pool.query("SELECT COUNT(*)::int n, AVG(rating)::float avg FROM assistance_reviews WHERE pro_phone=$1", [p.phone]),
           pool.query("SELECT title, issuer FROM assistance_trainings WHERE pro_phone=$1 AND status='verifiee' ORDER BY id", [p.phone]),
         ]);
-        const sharing = ["affectee", "en_route"].includes(r.status);
-        const fresh = p.last_loc_at && Date.now() - Number(p.last_loc_at) <= settings.location_max_age_min * 60000;
+        // Dépannage : position du mécanicien en route (fraîche). Atelier : position du garage (fixe), visible tout le trajet.
+        const sharing = atelier ? ["affectee", "en_route", "sur_place"].includes(r.status) : ["affectee", "en_route"].includes(r.status);
+        const fresh = atelier || (p.last_loc_at && Date.now() - Number(p.last_loc_at) <= settings.location_max_age_min * 60000);
         const loc = sharing && fresh && p.last_lat != null ? { lat: p.last_lat, lng: p.last_lng, updatedAt: Number(p.last_loc_at) } : null;
         let eta = null;
         if (loc && r.lat != null) {
           const km = haversineKm(loc.lat, loc.lng, r.lat, r.lng);
-          eta = { minutes: estimateEtaMinutes(km, settings.avg_speed_kmh), distanceKm: Math.round(km * 10) / 10, approximate: true };
+          // Atelier : trajet estimé du client jusqu'au garage ; dépannage : arrivée du mécanicien. Toujours approximatif.
+        eta = { minutes: estimateEtaMinutes(km, settings.avg_speed_kmh), distanceKm: Math.round(km * 10) / 10, approximate: true };
         }
         const contactOpen = ACTIVE_MISSION_STATUSES.includes(r.status) || (r.status === "terminee" && Date.now() - Number(r.completed_at || 0) < 48 * 3600000);
         pro = {
@@ -886,18 +1131,19 @@ export function createAssistanceCore(deps: CoreDeps) {
       }
     }
     const timeline = ev.rows
-      .map((e) => ({ at: Number(e.at), label: e.type === "creation" ? "Demande créée" : e.type === "etape" ? STEP_LABELS[e.to_status] : CLIENT_TIMELINE[e.type], status: e.to_status || null }))
+      .map((e) => ({ at: Number(e.at), label: e.type === "creation" ? "Demande créée" : e.type === "etape" ? (atelier && e.to_status === "sur_place" ? "Arrivée au garage" : STEP_LABELS[e.to_status]) : (atelier && e.type === "acceptation" ? "Garage proposé" : CLIENT_TIMELINE[e.type]), status: e.to_status || null }))
       .filter((e) => e.label);
     const hasReview = review.rowCount! > 0;
     return {
       request: {
-        ...summary(r, labels[r.service]), faultCodes: r.fault_codes, description: r.description, contactPhone: r.contact_phone,
+        ...summary(r, labels[r.service], settings.tariffs), faultCodes: r.fault_codes, description: r.description, contactPhone: r.contact_phone,
         position: { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source, confirmed: r.position_confirmed },
         shareDiagnostic: r.share_diagnostic, diagnostic: r.diagnostic, aiAnalysis: r.ai_analysis, proDiagnosis: r.pro_diagnosis, cancelReason: r.cancel_reason,
       },
       pro,
       quotes: quotes.rows.map((q) => ({ id: q.id, version: q.version, kind: q.kind, lines: q.lines, total: q.total, currency: q.currency, status: q.status, note: q.note, createdAt: Number(q.created_at), decidedAt: q.decided_at ? Number(q.decided_at) : null })),
       timeline,
+      payment: paymentView(pay.rows[0]),
       media: media.rows,
       review: hasReview ? { rating: review.rows[0].rating, comment: review.rows[0].comment } : null,
       allowed: {
@@ -907,6 +1153,9 @@ export function createAssistanceCore(deps: CoreDeps) {
         review: r.status === "terminee" && !hasReview,
         claim: !!r.assigned_phone,
         decideQuote: r.quote_status === "propose" && ACTIVE_MISSION_STATUSES.includes(r.status),
+        pay: r.status === "terminee" && r.amount_due > 0 && r.payment_status !== "paye",
+        confirmVisit: atelier && r.status === "affectee" && r.visit_status === "proposee",
+        leaving: atelier && r.status === "affectee" && r.visit_status === "confirmee",
       },
     };
   }
@@ -914,7 +1163,7 @@ export function createAssistanceCore(deps: CoreDeps) {
   async function proOffers(phone: string) {
     const labels = await serviceLabels();
     const o = await pool.query(
-      `SELECT o.id, o.request_id, o.distance_km, o.expires_at, r.service, r.vehicle, r.symptoms, r.ai_analysis, r.lat, r.lng
+      `SELECT o.id, o.request_id, o.distance_km, o.expires_at, r.service, r.mode, r.vehicle, r.symptoms, r.ai_analysis, r.lat, r.lng
        FROM assistance_offers o JOIN assistance_requests r ON r.id=o.request_id
        WHERE o.pro_phone=$1 AND o.status='envoyee' AND o.expires_at>$2 AND r.status='recherche'`,
       [phone, Date.now()]
@@ -922,45 +1171,57 @@ export function createAssistanceCore(deps: CoreDeps) {
     const settings = await getSettings();
     return o.rows.map((x) => ({
       id: x.id, requestId: x.request_id, service: x.service, serviceLabel: labels[x.service] || x.service, vehicle: x.vehicle, symptoms: x.symptoms,
-      aiAnalysis: x.ai_analysis, indicativeAmount: settings.tariffs[x.service]?.indicatif ?? null,
-      approxPosition: approxPosition(x.lat, x.lng), distanceKm: Math.round(x.distance_km * 10) / 10, expiresAt: Number(x.expires_at),
+      aiAnalysis: x.ai_analysis, mode: x.mode as RequestMode, tariff: settings.tariffs[x.service]?.indicatif ?? null, indicativeAmount: settings.tariffs[x.service]?.indicatif ?? null,
+      // Atelier : le client se déplace, sa position n'est d'aucune utilité au garage → rien n'est exposé, seulement la distance.
+      approxPosition: x.mode === "atelier" ? null : approxPosition(x.lat, x.lng), distanceKm: Math.round(x.distance_km * 10) / 10, expiresAt: Number(x.expires_at),
     }));
   }
 
   async function proMissionList(phone: string) {
-    const [labels, r] = await Promise.all([
+    const [labels, r, st] = await Promise.all([
       serviceLabels(),
       pool.query(`SELECT * FROM assistance_requests WHERE assigned_phone=$1 ORDER BY created_at DESC LIMIT 100`, [phone]),
+      getSettings(),
     ]);
-    return r.rows.map((x) => ({ ...summary(x, labels[x.service]), isActive: ACTIVE_MISSION_STATUSES.includes(x.status) }));
+    return r.rows.map((x) => ({ ...summary(x, labels[x.service], st.tariffs), isActive: ACTIVE_MISSION_STATUSES.includes(x.status) }));
   }
 
   async function proMissionDetail(id: string, phone: string) {
     const r = (await pool.query("SELECT * FROM assistance_requests WHERE id=$1 AND assigned_phone=$2", [id, phone])).rows[0];
     if (!r) throw new AssistanceError(404, "Mission introuvable.");
-    const [labels, quotes, media, msgs] = await Promise.all([
+    const [labels, quotes, media, msgs, pay, offer] = await Promise.all([
       serviceLabels(),
       pool.query(`SELECT id, version, kind, lines, total, currency, status, note, created_at, decided_at FROM assistance_quotes WHERE request_id=$1 ORDER BY version`, [id]),
       pool.query(`SELECT id, kind, mime, size FROM assistance_media WHERE request_id=$1 ORDER BY created_at`, [id]),
       listMessages(id),
+      pool.query(`SELECT * FROM assistance_payments WHERE request_id=$1 AND pro_phone=$2 ORDER BY created_at DESC LIMIT 1`, [id, phone]),
+      pool.query(`SELECT distance_km FROM assistance_offers WHERE request_id=$1 AND pro_phone=$2 AND status='acceptee' ORDER BY id DESC LIMIT 1`, [id, phone]),
     ]);
+    const atelier = r.mode === "atelier";
     const open = ACTIVE_MISSION_STATUSES.includes(r.status) || (r.status === "terminee" && Date.now() - Number(r.completed_at || 0) < 48 * 3600000);
+    // Atelier : téléphone et médias du client seulement après SA confirmation ; sa position n'est jamais transmise.
+    const detailsOpen = open && (!atelier || r.visit_status === "confirmee");
     const s = await getSettings();
     return {
       mission: {
-        ...summary(r, labels[r.service]), faultCodes: r.fault_codes, description: r.description,
-        // Position exacte, repère et téléphone : uniquement pour le professionnel affecté, tant que la mission est ouverte.
-        position: open ? { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source } : null,
-        clientPhone: open ? r.contact_phone : null,
+        ...summary(r, labels[r.service], s.tariffs), faultCodes: r.fault_codes, description: r.description,
+        // Dépannage : position exacte, repère et téléphone, uniquement pour le professionnel affecté, tant que la mission est ouverte.
+        position: !atelier && open ? { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source } : null,
+        clientPhone: detailsOpen ? r.contact_phone : null,
+        distanceKm: atelier && offer.rows[0] ? Math.round(offer.rows[0].distance_km * 10) / 10 : null,
         // Dossier IA transmis seulement avec le consentement du client.
         diagnostic: r.share_diagnostic ? r.diagnostic : null, shareDiagnostic: r.share_diagnostic, aiAnalysis: r.ai_analysis, proDiagnosis: r.pro_diagnosis,
       },
       quotes: quotes.rows.map((q) => ({ id: q.id, version: q.version, kind: q.kind, lines: q.lines, total: q.total, status: q.status, note: q.note, createdAt: Number(q.created_at), decidedAt: q.decided_at ? Number(q.decided_at) : null })),
-      media: open ? media.rows : [],
+      media: detailsOpen ? media.rows : [],
       messages: msgs,
+      payment: paymentView(pay.rows[0], true),
       tariffs: s.tariffs[r.service] || {},
       allowed: {
-        enRoute: r.status === "affectee", surPlace: r.status === "en_route", enIntervention: r.status === "sur_place" && r.quote_status === "accepte",
+        // Atelier : tant que le client n'a pas confirmé, rien n'avance ; ensuite c'est le client qui « part ».
+        enRoute: !atelier && r.status === "affectee",
+        surPlace: r.status === "en_route" ? (!atelier || r.visit_status === "confirmee") : atelier && r.status === "affectee" && r.visit_status === "confirmee",
+        enIntervention: r.status === "sur_place" && (!atelier || r.visit_status === "confirmee") && canStartWork(r),
         terminer: r.status === "en_intervention" && r.quote_status !== "propose",
         quote: ["sur_place", "en_intervention"].includes(r.status) && r.quote_status !== "propose",
         release: ["affectee", "en_route", "sur_place"].includes(r.status),
@@ -973,8 +1234,8 @@ export function createAssistanceCore(deps: CoreDeps) {
     if (!m) return null;
     if (viewer.admin || m.owner_phone === viewer.phone) return m;
     if (m.request_id && viewer.phone) {
-      const r = (await pool.query("SELECT assigned_phone, status FROM assistance_requests WHERE id=$1", [m.request_id])).rows[0];
-      if (r && r.assigned_phone === viewer.phone && ACTIVE_MISSION_STATUSES.includes(r.status)) return m;
+      const r = (await pool.query("SELECT assigned_phone, status, mode, visit_status FROM assistance_requests WHERE id=$1", [m.request_id])).rows[0];
+      if (r && r.assigned_phone === viewer.phone && ACTIVE_MISSION_STATUSES.includes(r.status) && (r.mode !== "atelier" || r.visit_status === "confirmee")) return m;
     }
     return null;
   }
@@ -984,15 +1245,26 @@ export function createAssistanceCore(deps: CoreDeps) {
       pool.query(`SELECT COUNT(*) FILTER (WHERE status<>'brouillon')::int received, COUNT(*) FILTER (WHERE assigned_at IS NOT NULL)::int accepted, COUNT(*) FILTER (WHERE status='terminee')::int completed, COUNT(*) FILTER (WHERE status='annulee')::int cancelled, COUNT(*) FILTER (WHERE status='sans_disponibilite')::int unavailable, COUNT(*) FILTER (WHERE manual_requested AND status IN ('recherche','sans_disponibilite'))::int manual FROM assistance_requests`),
       pool.query(`SELECT status, COUNT(*)::int n FROM assistance_requests GROUP BY status`),
       pool.query(`SELECT AVG(r.assigned_at - e.at)::float accept_ms FROM assistance_requests r JOIN LATERAL (SELECT at FROM assistance_events WHERE request_id=r.id AND type='envoi' ORDER BY at LIMIT 1) e ON true WHERE r.assigned_at IS NOT NULL`),
-      pool.query(`SELECT COALESCE(SUM(amount_due) FILTER (WHERE status='terminee'),0)::bigint agreed, COUNT(*) FILTER (WHERE status='terminee' AND amount_due>0)::int done_with_amount FROM assistance_requests`),
+      pool.query(`SELECT COALESCE(SUM(amount_due) FILTER (WHERE status='terminee'),0)::bigint agreed, COUNT(*) FILTER (WHERE status='terminee' AND amount_due>0)::int done_with_amount, COUNT(*) FILTER (WHERE status<>'brouillon' AND mode='atelier')::int atelier_requests FROM assistance_requests`),
       pool.query(`SELECT validation_status, COUNT(*)::int n, COUNT(*) FILTER (WHERE available)::int available FROM assistance_pros GROUP BY validation_status`),
       pool.query(`SELECT COUNT(*) FILTER (WHERE status='ouverte')::int open FROM assistance_claims`),
     ]);
+    const pay = (await pool.query(`SELECT COALESCE(SUM(amount) FILTER (WHERE status='paye'),0)::bigint collected,
+        COALESCE(SUM(amount) FILTER (WHERE status='en_attente'),0)::bigint pending,
+        COALESCE(SUM(commission_amount) FILTER (WHERE status='paye'),0)::bigint commission,
+        COALESCE(SUM(pro_amount) FILTER (WHERE status='paye' AND payout_status='a_reverser'),0)::bigint to_reverse,
+        COALESCE(SUM(pro_amount) FILTER (WHERE status='paye' AND payout_status='reverse'),0)::bigint reversed,
+        COUNT(*) FILTER (WHERE status='paye')::int paid_count,
+        COUNT(*) FILTER (WHERE status='paye' AND payout_status='a_reverser')::int to_reverse_count
+      FROM assistance_payments`)).rows[0];
     const arrival = await pool.query(`SELECT AVG(a.at - b.at)::float ms FROM assistance_events a JOIN assistance_events b ON b.request_id=a.request_id AND b.type='acceptation' WHERE a.type='etape' AND a.to_status='sur_place'`);
     return {
       requests: req.rows[0], byStatus: st.rows, avgAcceptMs: times.rows[0].accept_ms ? Math.round(times.rows[0].accept_ms) : null,
       avgArrivalMs: arrival.rows[0].ms ? Math.round(arrival.rows[0].ms) : null,
       amounts: { agreedTotal: Number(money.rows[0].agreed), missionsWithAmount: money.rows[0].done_with_amount },
+      atelierRequests: money.rows[0].atelier_requests,
+      // Montants encaissés via Jèko, commissions DiagAssist, net à reverser aux mécaniciens / déjà reversé.
+      payments: { collected: Number(pay.collected), pending: Number(pay.pending), commission: Number(pay.commission), toReverse: Number(pay.to_reverse), reversed: Number(pay.reversed), paidCount: pay.paid_count, toReverseCount: pay.to_reverse_count, commissionPct: (await getSettings()).commission_pct },
       pros: pros.rows, openClaims: claims.rows[0].open,
     };
   }
@@ -1001,7 +1273,7 @@ export function createAssistanceCore(deps: CoreDeps) {
     pool, tx, init, getSettings, saveSettings, logEvent, notify, resolveZone, servicesStatus, syncDirectory, proProfile, upsertProProfile,
     setPresence, updateLocation, clearLocationIfIdle, createRequest, updateDraft, getRequestRow, submitRequest, cancelRequest, retryRequest,
     requestManual, dispatch, dispatchTick, analyzeRequest, startWorker, stopWorker, acceptOffer, declineOffer, adminAssign, redispatch, proProgress,
-    setProDiagnosis, proposeQuote, decideQuote,
+    setProDiagnosis, proposeQuote, decideQuote, decideVisit, clientLeaving, startPayment, handleJekoWebhook, reconcilePayment, applyPaymentResult, markPayout, proEarnings,
     addReview, addClaim, addMessage, listMessages, storeMedia, listForClient, clientDetail, proOffers, proMissionList, proMissionDetail,
     accessMedia, adminDashboard, serviceLabels, summary,
   };
