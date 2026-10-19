@@ -1,9 +1,11 @@
-import {StrictMode} from 'react';
+import {StrictMode, lazy, Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import ShopApp from './components/shop/ShopApp.tsx';
 import ShopAdmin from './components/shop/ShopAdmin.tsx';
 import './index.css';
+const DiagnosticApp = lazy(() => import('./components/diagnostic/DiagnosticApp'));
+const isDiagnostic = window.location.hostname === 'diagnostic.diagassist.app' || /^\/diagnostic(?:\/|$)/.test(window.location.pathname);
 
 // Section boutique/CRM : totalement indépendante de l'app de diagnostic, activée uniquement
 // sur les chemins /boutique* — permet un accès public direct (Google/Facebook/TikTok) sans
@@ -39,7 +41,7 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {isShopAdminRoute ? <ShopAdmin /> : isShopRoute ? <ShopApp /> : <App />}
+    {isDiagnostic ? <Suspense fallback={<div style={{padding:40}}>Chargement de DiagAssist…</div>}><DiagnosticApp /></Suspense> : isShopAdminRoute ? <ShopAdmin /> : isShopRoute ? <ShopApp /> : <App />}
   </StrictMode>,
 );
 

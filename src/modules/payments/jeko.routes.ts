@@ -76,6 +76,7 @@ export function registerJekoPayments(
   deps: {
     requireAuth: any;
     requireAdminAuth: any;
+    diagnosticWebhook?: (body: any) => Promise<boolean>;
     setUserPlan: (phone: string, plan: string, customDurationMs?: number) => void | Promise<void>;
     onPlanActivated: (phone: string, plan: string, activatedAt?: number) => void;
     dbQuery?: Query;
@@ -420,6 +421,7 @@ export function registerJekoPayments(
     // Le corps est la transaction elle-même, sans enveloppe (sauf variante "event"/"payload"
     // pour d'autres types de notification que nous n'utilisons pas ici).
     const body = req.body || {};
+    if (deps.diagnosticWebhook && await deps.diagnosticWebhook(body)) return res.status(200).end();
     // Jèko envoie la référence dans transactionDetails.reference pour les webhooks
     // TRANSACTION_COMPLETED (la réponse de création, elle, expose reference à la racine).
     const reference = String(body?.transactionDetails?.reference || body?.reference || "");

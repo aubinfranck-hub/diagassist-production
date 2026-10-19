@@ -1,4 +1,5 @@
 import express from "express";
+import { createServer as createHttpServer } from "node:http";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type, Modality, StartSensitivity, EndSensitivity } from "@google/genai";
@@ -16,6 +17,7 @@ import { UsageStore } from "./src/modules/security/usageStore";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments, jekoIsConfigured, createJekoRedirectPayment, fetchJekoPaymentStatus } from "./src/modules/payments/jeko.routes";
 import { registerAssistance, initAssistance } from "./src/modules/assistance/assistance.routes";
+import { registerDiagnostic } from "./src/modules/diagnostic/routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
@@ -5411,9 +5413,7 @@ Directives pour ce tour :
 
 
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  const server = createHttpServer(app);
 
   // DiagAssist V2 — Screening / Coaching module. Uses the existing authenticated session store.
   // scannerResultsByPhone lets the live voice agent read scanner autopilot results.
@@ -5465,8 +5465,11 @@ Directives pour ce tour :
   assistanceSync = assistance.syncDirectory;
   await initAssistance(assistance).catch((err: any) => console.error("[ASSISTANCE] Initialisation échouée:", err.message));
 
+  const diagnostic = await registerDiagnostic(app, { pool: dbPool, requireAuth, requireAdminAuth, isAdmin: phone => userAccounts.get(phone)?.isAdmin === true });
   registerJekoPayments(app, {
+    diagnosticWebhook: diagnostic?.webhook,
     onExternalWebhook: assistance.onExternalWebhook,
+
     requireAuth,
     requireAdminAuth,
     setUserPlan,
@@ -6239,6 +6242,10 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
         } catch (e) {}
       }
     });
+  });
+  // Accept traffic only after all async modules and error handlers are ready.
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
