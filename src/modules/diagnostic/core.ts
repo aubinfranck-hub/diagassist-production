@@ -35,6 +35,12 @@ export function reportData(body: any) {
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS diagnostic_config (id INTEGER PRIMARY KEY CHECK(id=1), data JSONB NOT NULL);
 INSERT INTO diagnostic_config VALUES (1, '{"enabled":false,"centreAddress":"","supportPhone":"","terms":"","immediateEnabled":false}') ON CONFLICT DO NOTHING;
+-- Initial contact details supplied by the operator; preserve existing administrative edits.
+UPDATE diagnostic_config SET data = data || jsonb_build_object(
+ 'centreAddress', COALESCE(NULLIF(data->>'centreAddress',''),'Cocody L100,118 — rond-point Allocodrome, Abidjan'),
+ 'supportPhone', COALESCE(NULLIF(data->>'supportPhone',''),'+2250141116026'),
+ 'supportWhatsApp', '+2250707312797'
+) WHERE id=1 AND NOT (data ? 'supportWhatsApp');
 CREATE TABLE IF NOT EXISTS diagnostic_staff (phone TEXT PRIMARY KEY, name TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT true);
 CREATE TABLE IF NOT EXISTS diagnostic_slots (
  id UUID PRIMARY KEY, staff_phone TEXT NOT NULL REFERENCES diagnostic_staff(phone), kind TEXT NOT NULL CHECK(kind IN ('centre','domicile','immediat')),
