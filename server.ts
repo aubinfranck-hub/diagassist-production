@@ -1,4 +1,5 @@
 import express from "express";
+import { createServer as createHttpServer } from "node:http";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type, Modality, StartSensitivity, EndSensitivity } from "@google/genai";
@@ -5412,9 +5413,7 @@ Directives pour ce tour :
 
 
 
-  const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  const server = createHttpServer(app);
 
   // DiagAssist V2 — Screening / Coaching module. Uses the existing authenticated session store.
   // scannerResultsByPhone lets the live voice agent read scanner autopilot results.
@@ -6243,6 +6242,10 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
         } catch (e) {}
       }
     });
+  });
+  // Accept traffic only after all async modules and error handlers are ready.
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
