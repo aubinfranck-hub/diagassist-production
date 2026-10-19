@@ -16,6 +16,7 @@ import { UsageStore } from "./src/modules/security/usageStore";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments, jekoIsConfigured, createJekoRedirectPayment, fetchJekoPaymentStatus } from "./src/modules/payments/jeko.routes";
 import { registerAssistance, initAssistance } from "./src/modules/assistance/assistance.routes";
+import { registerDiagnostic } from "./src/modules/diagnostic/routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
@@ -5465,8 +5466,11 @@ Directives pour ce tour :
   assistanceSync = assistance.syncDirectory;
   await initAssistance(assistance).catch((err: any) => console.error("[ASSISTANCE] Initialisation échouée:", err.message));
 
+  const diagnostic = await registerDiagnostic(app, { pool: dbPool, requireAuth, requireAdminAuth, isAdmin: phone => userAccounts.get(phone)?.isAdmin === true });
   registerJekoPayments(app, {
+    diagnosticWebhook: diagnostic?.webhook,
     onExternalWebhook: assistance.onExternalWebhook,
+
     requireAuth,
     requireAdminAuth,
     setUserPlan,
