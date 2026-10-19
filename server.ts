@@ -25,6 +25,16 @@ import { getGeminiKeys } from "./src/utils/geminiKeys";
 // Navigation HP-Web : l'extension du navigateur de l'utilisateur (sa session, sa licence) est
 // prioritaire ; le gateway serveur ne sert que de repli, Cloudflare le bloque souvent.
 const HP_NAV_TIMEOUT_MS = 35000;
+// Le gateway HP-Web de repli n'a qu'une seule page courante : un seul mécanicien à la fois peut le
+// piloter (bail de 3 minutes renouvelé à chaque action), sinon les navigations se mélangeraient.
+const HP_GATEWAY_LEASE_MS = 3 * 60 * 1000;
+let hpGatewayLease: { phone: string; until: number } | null = null;
+function acquireHpGateway(phone: string): boolean {
+  const now = Date.now();
+  if (hpGatewayLease && hpGatewayLease.until > now && hpGatewayLease.phone !== phone) return false;
+  hpGatewayLease = { phone, until: now + HP_GATEWAY_LEASE_MS };
+  return true;
+}
 function hpWebNavViaClient(clientWs: any, action: string, args: Record<string, unknown>): Promise<HpWebPage> {
   return new Promise((resolve, reject) => {
     const pending: Map<string, (m: any) => void> = (clientWs._hpPending ||= new Map());
@@ -482,6 +492,10 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS last_error TEXT;
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP;
+      -- Consentement WhatsApp (relances commerciales) et désinscription (réponse STOP)
+      ALTER TABLE shop_customers ADD COLUMN IF NOT EXISTS whatsapp_consent_at TIMESTAMP;
+      ALTER TABLE shop_customers ADD COLUMN IF NOT EXISTS whatsapp_optout BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE shop_customers ADD COLUMN IF NOT EXISTS whatsapp_optout_at TIMESTAMP;
     `);
     // L'index sur order_ref ne peut être créé qu'une fois la colonne garantie présente —
     // d'où sa place ici plutôt que dans le bloc de création de schéma principal.
@@ -566,10 +580,11 @@ async function loadPersistedData(): Promise<void> {
 // --- Synchronisation base véhicules depuis l'API Auto-Data.net ---
 // Récupère le flux XML marques > modèles > générations > motorisations et le stocke en base,
 // pour alimenter des menus déroulants en cascade côté app (au lieu de la saisie libre).
+let vehicleSyncRunning = false;
 async function syncVehiclesFromAutoData(apiCode: string): Promise<{ inserted: number; brands: number }> {
   if (!dbPool) throw new Error("Base de données non configurée.");
 
-  const response = await fetch(`https://api.auto-data.net/?code=${encodeURIComponent(apiCode)}`);
+  const response = await fetch(`https://api.auto-data.net/?code=${encodeURIComponent(apiCode)}`, { signal: AbortSignal.timeout(120_000) });
   if (!response.ok) throw new Error(`Auto-Data.net a répondu ${response.status}`);
   const xmlText = await response.text();
 
@@ -577,7 +592,14 @@ async function syncVehiclesFromAutoData(apiCode: string): Promise<{ inserted: nu
   const parsed = parser.parse(xmlText);
   const brandsRaw = parsed?.brands?.brand || [];
 
+  if (!Array.isArray(brandsRaw) || brandsRaw.length === 0) throw new Error("Réponse Auto-Data.net vide : la table véhicules n'a pas été modifiée.");
+
+  // Tout ou rien : la table n'est vidée qu'une fois la réponse reçue et lue, dans la même transaction.
+  const db = await dbPool.connect();
   let inserted = 0;
+  try {
+  await db.query("BEGIN");
+  await db.query("DELETE FROM vehicles");
   for (const brand of brandsRaw) {
     const brandName = brand.name;
     const brandId = Number(brand.id);
@@ -592,7 +614,7 @@ async function syncVehiclesFromAutoData(apiCode: string): Promise<{ inserted: nu
         const imageUrl = gen.images?.image?.[0]?.big || gen.images?.image?.big || null;
         const modifications = gen.modifications?.modification || [];
         for (const mod of modifications) {
-          await dbPool.query(
+          await db.query(
             `INSERT INTO vehicles (brand, brand_id, model, model_id, generation, generation_id, year_start, year_stop, engine_code, engine_displacement, power_hp, fuel_system, cylinders, image_url)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
             [
@@ -611,6 +633,13 @@ async function syncVehiclesFromAutoData(apiCode: string): Promise<{ inserted: nu
         }
       }
     }
+  }
+  await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
   }
   return { inserted, brands: brandsRaw.length };
 }
@@ -3655,10 +3684,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // API Route: le client signale sa position GPS (avec son consentement navigateur)
   app.post("/api/user/report-location", authLimiter, requireAuth, (req: any, res) => {
     const { latitude, longitude, accuracy } = req.body;
-    if (typeof latitude !== "number" || typeof longitude !== "number") {
+    if (typeof latitude !== "number" || typeof longitude !== "number" || !Number.isFinite(latitude) || !Number.isFinite(longitude)
+        || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
       return res.status(400).json({ success: false, message: "Coordonnées invalides." });
     }
-    lastKnownLocation.set(req.session.phone, { latitude, longitude, accuracy, updatedAt: Date.now(), source: "gps" });
+    const safeAccuracy = typeof accuracy === "number" && Number.isFinite(accuracy) && accuracy >= 0 ? Math.min(accuracy, 100000) : undefined;
+    lastKnownLocation.set(req.session.phone, { latitude, longitude, accuracy: safeAccuracy, updatedAt: Date.now(), source: "gps" });
     res.json({ success: true });
   });
 
@@ -3678,7 +3709,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       return res.json({ success: false, message: "Adresse IP non exploitable (environnement local)." });
     }
     try {
-      const geoRes = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`);
+      const geoRes = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}`, { signal: AbortSignal.timeout(4000) });
+      if (!geoRes.ok) return res.json({ success: false, message: "Estimation IP indisponible pour cette adresse." });
       const geo: any = await geoRes.json();
       if (!geo.success || typeof geo.latitude !== "number" || typeof geo.longitude !== "number") {
         return res.json({ success: false, message: "Estimation IP indisponible pour cette adresse." });
@@ -3717,6 +3749,15 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (displayType !== "banner" && displayType !== "floating") {
       return res.status(400).json({ success: false, message: "displayType doit être 'banner' ou 'floating'." });
     }
+    // Image : URL https ou image JPEG/PNG/WebP en base64 (3 Mo décodés au plus) ; lien : https uniquement.
+    const isHttpsUrl = (v: unknown) => {
+      if (typeof v !== "string" || v.length > 2048) return false;
+      try { const u = new URL(v); return u.protocol === "https:" && !u.username && !u.password; } catch { return false; }
+    };
+    const imageOk = typeof imageUrl === "string" && (isHttpsUrl(imageUrl) ||
+      (imageUrl.length <= Math.ceil(3 * 1024 * 1024 * 4 / 3) + 100 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(imageUrl)));
+    if (!imageOk) return res.status(400).json({ success: false, message: "Image invalide : URL https ou image JPEG/PNG/WebP (3 Mo maximum)." });
+    if (linkUrl && !isHttpsUrl(linkUrl)) return res.status(400).json({ success: false, message: "Le lien doit commencer par https://." });
     const id = crypto.randomBytes(6).toString("hex");
     const banner: Banner = { id, imageUrl, linkUrl: linkUrl || undefined, displayType, active: true, createdAt: Date.now() };
     banners.set(id, banner);
@@ -3807,13 +3848,16 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const apiCode = req.body?.apiCode || process.env.AUTO_DATA_API_CODE;
     if (!apiCode) return res.status(400).json({ success: false, message: "Code d'accès Auto-Data.net requis." });
     if (!dbPool) return res.status(503).json({ success: false, message: "Base de données indisponible." });
+    if (vehicleSyncRunning) return res.status(409).json({ success: false, message: "Une synchronisation est déjà en cours." });
+    vehicleSyncRunning = true;
     try {
-      await dbPool.query("DELETE FROM vehicles"); // resynchronisation complète, pas de doublons
-      const result = await syncVehiclesFromAutoData(apiCode);
+      const result = await syncVehiclesFromAutoData(apiCode); // resynchronisation complète et atomique
       res.json({ success: true, ...result });
     } catch (err: any) {
       console.error("[Auto-Data] Échec synchronisation:", err.message);
-      res.status(500).json({ success: false, message: err.message || "Échec de la synchronisation." });
+      res.status(500).json({ success: false, message: "Échec de la synchronisation (la table véhicules est inchangée). Voir les journaux du serveur." });
+    } finally {
+      vehicleSyncRunning = false;
     }
   });
 
@@ -3879,41 +3923,52 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   // API Routes (utilisateur connecté) : menus en cascade marque > modèle > génération > moteur
-  app.get("/api/vehicles/brands", requireAuth, async (req, res) => {
+  // Express 4 n'intercepte pas les erreurs des handlers async : sans cette enveloppe, une erreur de base
+  // de données devient un rejet non géré qui peut arrêter le processus.
+  const asyncRoute = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any) => {
+    fn(req, res).catch((err: any) => {
+      console.error(`[API] ${req.method} ${req.path}:`, err?.message || err);
+      if (!res.headersSent) res.status(500).json({ success: false, message: "Erreur serveur. Réessayez dans un instant." });
+    });
+  };
+  // Paramètre de requête texte : une seule valeur, 80 caractères au plus (rejette tableaux et objets).
+  const queryText = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 && v.length <= 80 ? v : undefined);
+
+  app.get("/api/vehicles/brands", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, brands: [] });
     const { rows } = await dbPool.query("SELECT DISTINCT brand FROM vehicles ORDER BY brand ASC");
     res.json({ success: true, brands: rows.map((r) => r.brand) });
-  });
+  }));
 
-  app.get("/api/vehicles/models", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/models", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, models: [] });
-    const brand = req.query.brand as string;
+    const brand = queryText(req.query.brand);
     if (!brand) return res.status(400).json({ success: false, message: "Marque requise." });
     const { rows } = await dbPool.query("SELECT DISTINCT model FROM vehicles WHERE brand = $1 ORDER BY model ASC", [brand]);
     res.json({ success: true, models: rows.map((r) => r.model) });
-  });
+  }));
 
-  app.get("/api/vehicles/generations", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/generations", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, generations: [] });
-    const { brand, model } = req.query as { brand?: string; model?: string };
+    const brand = queryText(req.query.brand), model = queryText(req.query.model);
     if (!brand || !model) return res.status(400).json({ success: false, message: "Marque et modèle requis." });
     const { rows } = await dbPool.query(
       "SELECT DISTINCT generation, MIN(year_start) as year_start, MAX(year_stop) as year_stop, MAX(image_url) as image_url FROM vehicles WHERE brand = $1 AND model = $2 GROUP BY generation ORDER BY year_start DESC NULLS LAST",
       [brand, model]
     );
     res.json({ success: true, generations: rows });
-  });
+  }));
 
-  app.get("/api/vehicles/modifications", requireAuth, async (req, res) => {
+  app.get("/api/vehicles/modifications", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, modifications: [] });
-    const { brand, model, generation } = req.query as { brand?: string; model?: string; generation?: string };
+    const brand = queryText(req.query.brand), model = queryText(req.query.model), generation = queryText(req.query.generation);
     if (!brand || !model || !generation) return res.status(400).json({ success: false, message: "Marque, modèle et génération requis." });
     const { rows } = await dbPool.query(
       "SELECT engine_code, engine_displacement, power_hp, fuel_system, cylinders, year_start, year_stop FROM vehicles WHERE brand = $1 AND model = $2 AND generation = $3 ORDER BY engine_displacement ASC",
       [brand, model, generation]
     );
     res.json({ success: true, modifications: rows });
-  });
+  }));
 
   // ============================================================
   // BOUTIQUE / CRM — section indépendante du diagnostic technique
@@ -3926,6 +3981,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, categories: rows });
   });
 
+  // Le catalogue public n'expose ni le fournisseur ni le prix d'achat en euros.
+  const publicShopProduct = (p: any) => {
+    const { supplier, supplier_ref, supplier_url, price_eur, ...rest } = p;
+    return rest;
+  };
   app.get("/api/shop/products", async (req, res) => {
     if (!dbPool) return res.json({ success: true, products: [] });
     const { category } = req.query as { category?: string };
@@ -3934,7 +3994,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (category) { params.push(category); query += ` AND c.slug = $${params.length}`; }
     query += " ORDER BY p.created_at DESC";
     const { rows } = await dbPool.query(query, params);
-    res.json({ success: true, products: rows });
+    res.json({ success: true, products: rows.map(publicShopProduct) });
   });
 
   app.get("/api/shop/products/:slug", async (req, res) => {
@@ -3944,24 +4004,25 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       [req.params.slug]
     );
     if (rows.length === 0) return res.status(404).json({ success: false, message: "Produit introuvable." });
-    res.json({ success: true, product: rows[0] });
+    res.json({ success: true, product: publicShopProduct(rows[0]) });
   });
 
   // Crée/retrouve le client CRM par téléphone (appelé à chaque commande ou demande)
-  async function upsertShopCustomer(phone: string, name?: string, city?: string, category?: string) {
+  async function upsertShopCustomer(phone: string, name?: string, city?: string, category?: string, whatsappConsent = false) {
     if (!dbPool) return;
     const existing = await dbPool.query("SELECT * FROM shop_customers WHERE phone = $1", [phone]);
     if (existing.rows.length === 0) {
       await dbPool.query(
-        "INSERT INTO shop_customers (phone, name, city, categories) VALUES ($1,$2,$3,$4)",
-        [phone, name || null, city || null, JSON.stringify(category ? [category] : [])]
+        "INSERT INTO shop_customers (phone, name, city, categories, whatsapp_consent_at) VALUES ($1,$2,$3,$4, CASE WHEN $5 THEN CURRENT_TIMESTAMP END)",
+        [phone, name || null, city || null, JSON.stringify(category ? [category] : []), whatsappConsent]
       );
     } else {
       const cats: string[] = existing.rows[0].categories || [];
       const newCats = category && !cats.includes(category) ? [...cats, category] : cats;
       await dbPool.query(
-        "UPDATE shop_customers SET name = COALESCE($2, name), city = COALESCE($3, city), categories = $4, last_interaction_at = CURRENT_TIMESTAMP WHERE phone = $1",
-        [phone, name || null, city || null, JSON.stringify(newCats)]
+        `UPDATE shop_customers SET name = COALESCE($2, name), city = COALESCE($3, city), categories = $4, last_interaction_at = CURRENT_TIMESTAMP,
+           whatsapp_consent_at = CASE WHEN $5 THEN COALESCE(whatsapp_consent_at, CURRENT_TIMESTAMP) ELSE whatsapp_consent_at END WHERE phone = $1`,
+        [phone, name || null, city || null, JSON.stringify(newCats), whatsappConsent]
       );
     }
   }
@@ -3973,8 +4034,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     orderRef?: string;
     productName?: string;
     kind?: "order" | "part_request";
+    whatsappConsent?: boolean;
   }) {
-    if (!dbPool) return;
+    // Aucune relance automatique sans case de consentement cochée par le client.
+    if (!dbPool || options.whatsappConsent !== true) return;
     const kind = options.kind || "order";
     const baseMessage = kind === "part_request"
       ? "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande de pièce. Souhaitez-vous toujours que nous poursuivions la recherche ?"
@@ -4068,16 +4131,35 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
           if (request.rows[0]?.completed) continue;
         }
 
+        // Consentement et désinscription : vérifiés à chaque envoi, quelle que soit l'origine de la relance.
+        const cust = await dbPool.query("SELECT whatsapp_consent_at, whatsapp_optout FROM shop_customers WHERE phone = $1", [followup.customer_phone]);
+        const c = cust.rows[0];
+        const needsConsent = followup.kind === "order" || followup.kind === "part_request";
+        if (!c || c.whatsapp_optout || (needsConsent && !c.whatsapp_consent_at)) {
+          await dbPool.query(
+            "UPDATE shop_followups SET status = 'ignoree', last_error = $2 WHERE id = $1 AND status = 'programmee'",
+            [followup.id, c?.whatsapp_optout ? "Désinscrit (STOP)" : "Pas de consentement WhatsApp"]
+          );
+          continue;
+        }
+        // Plafond : 2 messages par numéro et par 24 h (le reste attend le cycle suivant).
+        const sentToday = await dbPool.query(
+          "SELECT COUNT(*)::int AS n FROM shop_followups WHERE customer_phone = $1 AND status = 'envoyee' AND sent_at > NOW() - INTERVAL '24 hours'",
+          [followup.customer_phone]
+        );
+        if (sentToday.rows[0].n >= 2) continue;
+
         await dbPool.query(
           "UPDATE shop_followups SET attempts = attempts + 1 WHERE id = $1",
           [followup.id]
         );
-        await sendShopWhatsApp(followup.customer_phone, followup.message || "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande.");
+        const baseMsg = followup.message || "Bonjour, ici DiagAssist. Nous revenons vers vous concernant votre demande.";
+        await sendShopWhatsApp(followup.customer_phone, `${baseMsg}\n\nRépondez STOP pour ne plus recevoir nos messages.`);
         await dbPool.query(
           "UPDATE shop_followups SET status = 'envoyee', sent_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = $1 AND status = 'programmee'",
           [followup.id]
         );
-        console.log(`[CRM WhatsApp] Relance #${followup.id} envoyée à ${followup.customer_phone}.`);
+        console.log(`[CRM WhatsApp] Relance #${followup.id} envoyée.`);
       } catch (err: any) {
         const attempts = Number(followup.attempts || 0) + 1;
         const nextStatus = attempts >= 5 ? "echec" : "programmee";
@@ -4096,6 +4178,40 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   followupWorker.unref?.();
   setTimeout(() => { processDueShopFollowups().catch((err) => console.error("[CRM WhatsApp] Initial worker:", err)); }, 5000);
 
+  // Rétention des données personnelles : historique de connexion 90 jours, positions 72 heures.
+  const purgePersonalData = () => {
+    const now = Date.now();
+    for (const [phone, loc] of lastKnownLocation) if (now - loc.updatedAt > 72 * 3600 * 1000) lastKnownLocation.delete(phone);
+    dbPool?.query("DELETE FROM connection_history WHERE timestamp < $1", [now - 90 * 24 * 3600 * 1000])
+      .catch((err: any) => console.warn("[Rétention] connection_history:", err?.message || err));
+  };
+  const purgeTimer = setInterval(purgePersonalData, 6 * 3600 * 1000);
+  purgeTimer.unref?.();
+  setTimeout(purgePersonalData, 30_000).unref?.();
+
+  // --- Webhook Twilio WhatsApp entrant : STOP = désinscription des relances commerciales ---
+  // La signature Twilio (X-Twilio-Signature) est vérifiée avec TWILIO_AUTH_TOKEN ; configurer
+  // l'URL https://<APP_URL>/api/shop/whatsapp/incoming dans la console Twilio (champ « When a message comes in »).
+  app.post("/api/shop/whatsapp/incoming", async (req, res) => {
+    const authToken = (process.env.TWILIO_AUTH_TOKEN || "").trim();
+    const signature = String(req.headers["x-twilio-signature"] || "");
+    const base = (process.env.APP_URL || `https://${req.headers.host}`).replace(/\/$/, "");
+    if (!authToken || !signature || !twilio.validateRequest(authToken, signature, `${base}/api/shop/whatsapp/incoming`, req.body || {})) {
+      return res.status(403).type("text/plain").send("Signature invalide.");
+    }
+    const from = String(req.body?.From || "");
+    const text = String(req.body?.Body || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (dbPool && /^(stop|arret|arreter|desabonner|desinscrire|unsubscribe)\b/.test(text) && phoneKey(from).length >= 8) {
+      await dbPool.query(
+        `UPDATE shop_customers SET whatsapp_optout = true, whatsapp_optout_at = CURRENT_TIMESTAMP
+         WHERE right(regexp_replace(phone, '\\D', '', 'g'), 10) = $1`, [phoneKey(from)]);
+      await dbPool.query(
+        `UPDATE shop_followups SET status = 'ignoree', last_error = 'Désinscrit (STOP)'
+         WHERE status = 'programmee' AND right(regexp_replace(customer_phone, '\\D', '', 'g'), 10) = $1`, [phoneKey(from)]);
+    }
+    res.type("text/xml").send("<Response></Response>");
+  });
+
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   // --- Règles communes aux commandes publiques ---
   const MAX_ORDER_LINES = 20, MAX_LINE_QUANTITY = 100;
@@ -4108,6 +4224,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       for (const k of Object.keys(fees)) if (Number.isInteger(custom[k]) && custom[k] >= 0) fees[k] = custom[k];
     } catch { console.warn("[Boutique] SHOP_SHIPPING_FEES invalide, tarifs par défaut utilisés."); }
     return fees;
+  }
+  // Pièce jointe base64 (data URL) : type de contenu autorisé et taille maximale (5 Mo décodés).
+  const MAX_ATTACHMENT_CHARS = Math.ceil((5 * 1024 * 1024 * 4) / 3) + 100;
+  function isSafeAttachment(v: unknown, allowPdf = false): boolean {
+    if (typeof v !== "string" || v.length > MAX_ATTACHMENT_CHARS) return false;
+    const re = allowPdf ? /^data:(image\/(jpeg|png|webp)|application\/pdf);base64,[A-Za-z0-9+/]+={0,2}$/ : /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+    return re.test(v);
   }
   const cleanShopPhone = (v: unknown) => String(v ?? "").replace(/[\s-]/g, "");
   const isValidShopPhone = (v: string) => /^\+?\d{8,15}$/.test(v);
@@ -4190,11 +4313,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const loaded = await loadOrderLines([{ product_id, quantity }]);
     if ("error" in loaded) return res.status(400).json({ success: false, message: loaded.error });
 
-    await upsertShopCustomer(cleanPhone, name, city, "produit");
+    const consent = req.body.whatsapp_consent === true;
+    await upsertShopCustomer(cleanPhone, name, city, "produit", consent);
     const orderRef = await nextOrderRef();
     const order = await insertOrder({ phone: cleanPhone, orderRef, lines: loaded.lines, city, notes });
     const product = loaded.lines[0].product;
-    await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order" });
+    await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order", whatsappConsent: consent });
     const days = product.lead_time_days ? Number(product.lead_time_days) : null;
     res.json({
       success: true,
@@ -4248,7 +4372,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const loaded = await loadOrderLines(body.items);
     if ("error" in loaded) return res.status(400).json({ success: false, message: loaded.error });
 
-    await upsertShopCustomer(cleanPhone, name, city, "produit");
+    const consent = body.whatsapp_consent === true;
+    await upsertShopCustomer(cleanPhone, name, city, "produit", consent);
     const orderRef = await nextOrderRef();
     const order = await insertOrder({
       phone: cleanPhone, orderRef, lines: loaded.lines, city, address,
@@ -4256,7 +4381,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       shippingMethod, shippingFee: fees[shippingMethod],
     });
 
-    await scheduleShopFollowups(cleanPhone, { orderRef, productName: loaded.lines[0].product.name, kind: "order" });
+    await scheduleShopFollowups(cleanPhone, { orderRef, productName: loaded.lines[0].product.name, kind: "order", whatsappConsent: consent });
     res.json({
       success: true,
       message: order.depositTotal > 0 ? "Commande enregistrée. " + depositMessage(order.depositTotal, order.leadDays) : "Commande enregistrée.",
@@ -4365,15 +4490,26 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const { phone, name, part_description, part_photo_base64, carte_grise_base64, extra_info } = req.body;
     if (!phone || !part_description) return res.status(400).json({ success: false, message: "Téléphone et description de la pièce requis." });
-    const cleanPhone = String(phone).replace(/[\s-]/g, "");
+    const cleanPhone = cleanShopPhone(phone);
+    if (!isValidShopPhone(cleanPhone)) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+    if (typeof part_description !== "string" || part_description.length > 1000 || (extra_info != null && (typeof extra_info !== "string" || extra_info.length > 1000)) || (name != null && (typeof name !== "string" || name.length > 120))) {
+      return res.status(400).json({ success: false, message: "Champs trop longs ou invalides." });
+    }
+    // Pièces jointes : image JPEG/PNG/WebP (carte grise : PDF accepté), 5 Mo maximum. Rien d'autre n'est stocké.
+    for (const [value, allowPdf] of [[part_photo_base64, false], [carte_grise_base64, true]] as const) {
+      if (value != null && value !== "" && !isSafeAttachment(value, allowPdf)) {
+        return res.status(400).json({ success: false, message: "Pièce jointe invalide (JPEG, PNG ou WebP, 5 Mo maximum)." });
+      }
+    }
 
-    await upsertShopCustomer(cleanPhone, name, undefined, "pieces");
+    const consent = req.body.whatsapp_consent === true;
+    await upsertShopCustomer(cleanPhone, name, undefined, "pieces", consent);
     const result = await dbPool.query(
       `INSERT INTO shop_part_requests (customer_phone, part_description, part_photo_base64, carte_grise_base64, extra_info)
        VALUES ($1,$2,$3,$4,$5) RETURNING id`,
       [cleanPhone, part_description, part_photo_base64 || null, carte_grise_base64 || null, extra_info || null]
     );
-    await scheduleShopFollowups(cleanPhone, { kind: "part_request" });
+    await scheduleShopFollowups(cleanPhone, { kind: "part_request", whatsappConsent: consent });
     res.json({ success: true, message: "Demande envoyée. Nous préparons une cotation sous environ 15 jours.", request_id: result.rows[0].id });
   });
 
@@ -5907,6 +6043,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                               };
                               const spec = navSpec[fc.name as string];
                               if (!spec) throw new Error("Outil HP-Web inconnu : " + fc.name);
+                              if (!(clientWs as any)._hpExt && !acquireHpGateway(String((clientWs as any)._authPhone || ""))) {
+                                throw new Error("Le navigateur HP-Web partagé est utilisé par un autre mécanicien. Installe l'extension HP-Web pour utiliser ton propre onglet.");
+                              }
                               const page = (clientWs as any)._hpExt
                                 ? await hpWebNavViaClient(clientWs, spec[0], spec[1])
                                 : await hpWebNav(spec[0], spec[1]);
@@ -6241,5 +6380,10 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
     });
   });
 }
+
+// Dernier filet : un rejet de promesse non géré est journalisé au lieu d'arrêter tout le service.
+process.on("unhandledRejection", (reason: any) => {
+  console.error("[PROCESS] Rejet non géré:", reason?.message || reason);
+});
 
 startServer().catch(error => { console.error("[Démarrage]", error.message); process.exit(1); });

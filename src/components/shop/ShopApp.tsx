@@ -837,6 +837,7 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
     first_name: "", last_name: "", phone: "", email: "", address: "",
     city: "Abidjan", shipping_method: "abidjan", payment_method: "wave", notes: ""
   });
+  const [waConsent, setWaConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [orderRef, setOrderRef] = useState("");
   const [depositInfo, setDepositInfo] = useState<{ amount: number; days: number | null } | null>(null);
@@ -870,6 +871,7 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
           shipping_method: form.shipping_method,
           payment_method: form.payment_method,
           notes: form.notes || undefined,
+          whatsapp_consent: waConsent,
           items: cart.items.map(i => ({ product_id: i.product_id, quantity: i.quantity })),
         }),
       });
@@ -1004,6 +1006,11 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
                 className="w-full px-3 py-2 rounded-lg text-sm text-white outline-none resize-none"
                 style={{ background: C.dark, border: `1px solid ${C.border}` }} />
             </div>
+
+            <label className="flex items-start gap-2 text-xs text-neutral-400 cursor-pointer">
+              <input type="checkbox" checked={waConsent} onChange={(e) => setWaConsent(e.target.checked)} className="mt-0.5" />
+              <span>J'accepte de recevoir des messages WhatsApp de DiagAssist au sujet de ma commande (relances). Je peux répondre STOP à tout moment.</span>
+            </label>
 
             <button onClick={() => { if (!form.first_name || !form.last_name || !form.phone) { setErr("Nom et téléphone obligatoires."); return; } setErr(""); setStep(2); }}
               className="w-full py-3 rounded-xl font-extrabold text-white text-sm" style={{ background: C.red }}>
