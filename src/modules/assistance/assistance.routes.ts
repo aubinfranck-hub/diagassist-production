@@ -526,7 +526,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     await core!.pool.query("UPDATE assistance_services SET enabled=COALESCE($2,enabled), label=COALESCE($3,label) WHERE code=$1", [req.params.code, typeof req.body?.enabled === "boolean" ? req.body.enabled : null, req.body?.label ? clean(req.body.label, 80) : null]);
     res.json({ success: true });
   }));
-  app.get(A("/settings"), ...adm, wrap(async (_req, res) => { res.json({ success: true, settings: await core!.getSettings(true) }); }));
+  app.get(A("/settings"), ...adm, wrap(async (_req, res) => { res.json({ success: true, settings: await core!.getSettings(true), whatsappProvider: !!d.sendWhatsApp }); }));
   app.put(A("/settings"), ...adm, writeLimiter, wrap(async (req, res) => { res.json({ success: true, settings: await core!.saveSettings(req.body || {}) }); }));
 
   // Paiements (Jèko), commissions, reversements
