@@ -177,8 +177,9 @@ export async function registerDiagnostic(app: Express, deps: { pool: Pool | null
   });
   app.post(base + '/admin/config', deps.requireAdminAuth, async (req, res) => {
     const data = { enabled: req.body.enabled === true, immediateEnabled: req.body.immediateEnabled === true,
-      centreAddress: text(req.body.centreAddress, 700, false), supportPhone: text(req.body.supportPhone, 30, false), terms: text(req.body.terms, 10000, false) };
+      centreAddress: text(req.body.centreAddress, 700, false), supportPhone: text(req.body.supportPhone, 30, false), supportWhatsApp: text(req.body.supportWhatsApp, 30, false), terms: text(req.body.terms, 10000, false) };
     if (data.supportPhone && !/^\+225\d{10}$/.test(data.supportPhone)) fail(400, 'Contact attendu au format +225 suivi de 10 chiffres.');
+    if (data.supportWhatsApp && !/^\+225\d{10}$/.test(data.supportWhatsApp)) fail(400, 'WhatsApp attendu au format +225 suivi de 10 chiffres.');
     if (data.enabled && (!data.supportPhone || !data.terms || !ready())) fail(400, 'Renseignez le contact, les conditions et configurez Jèko avant d’ouvrir les réservations.');
     await svc.tx(async q => { await q.query('UPDATE diagnostic_config SET data=$1 WHERE id=1', [JSON.stringify(data)]); await svc.event(q, null, 'admin', 'config_updated'); }); res.json({ success: true });
   });
