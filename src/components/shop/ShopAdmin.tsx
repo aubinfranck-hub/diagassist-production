@@ -257,6 +257,10 @@ function FollowupsTab({ auth }: { auth: any }) {
   const badge = (ok: boolean | undefined, yes: string, no: string) => <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold ${ok ? "bg-emerald-900/40 text-emerald-300" : "bg-red-900/40 text-red-300"}`}>{ok ? "●" : "●"} {ok ? yes : no}</span>;
 
   return <div className="space-y-5">
+    {waStatus && waStatus.configured === false && <div className="rounded-xl border border-amber-700/50 bg-amber-950/30 p-3 text-xs text-amber-200">
+      <p className="font-bold">Relances WhatsApp en pause : aucun fournisseur WhatsApp n'est configuré.</p>
+      <p className="mt-1 text-amber-300/80">Aucun message ne part. {waStatus.waiting > 0 ? `${waStatus.waiting} relance(s) attendent et partiront quand un fournisseur sera connecté (les relances de plus de 3 jours seront abandonnées).` : "Les nouvelles relances resteront en attente."} Vous pouvez toujours écrire aux clients à la main avec le bouton WhatsApp de leur fiche.</p>
+    </div>}
     <div className="flex items-start justify-between gap-3">
       <div><p className="text-xl font-bold text-white">WhatsApp & relances</p><p className="text-xs text-slate-500 mt-1">Configuration, tests et automatisation commerciale</p></div>
       <button onClick={load} className="shrink-0 p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white" title="Actualiser"><RefreshCw className="w-4 h-4" /></button>

@@ -4068,10 +4068,33 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // Envoi réel des relances WhatsApp programmées.
   // Le worker utilise Twilio si les secrets sont configurés. Pour les messages
   // hors fenêtre de service WhatsApp, configurez un Content SID de template approuvé.
+  // Fournisseur WhatsApp de la boutique. Pour en brancher un autre (360dialog, Meta Cloud API…), il suffit
+  // d'implémenter cette interface et de remplacer `shopWhatsAppProvider` : le worker, l'état affiché dans
+  // l'admin et les contrôles de consentement ne dépendent que d'elle.
+  interface ShopWhatsAppProvider {
+    name: string;
+    isConfigured(): boolean;
+    send(phone: string, message: string): Promise<void>;
+  }
+  class WhatsAppNotConfiguredError extends Error {
+    constructor() { super("Aucun fournisseur WhatsApp n'est configuré."); }
+  }
+  const twilioShopProvider: ShopWhatsAppProvider = {
+    name: "twilio",
+    isConfigured: () => Boolean((process.env.TWILIO_ACCOUNT_SID || "").trim() && (process.env.TWILIO_AUTH_TOKEN || "").trim()),
+    send: (phone, message) => sendViaTwilio(phone, message),
+  };
+  const shopWhatsAppProvider: ShopWhatsAppProvider = twilioShopProvider;
+  const whatsAppConfigured = () => shopWhatsAppProvider.isConfigured();
   async function sendShopWhatsApp(phone: string, message: string): Promise<void> {
+    if (!shopWhatsAppProvider.isConfigured()) throw new WhatsAppNotConfiguredError();
+    await shopWhatsAppProvider.send(phone, message);
+  }
+
+  async function sendViaTwilio(phone: string, message: string): Promise<void> {
     const sid = (process.env.TWILIO_ACCOUNT_SID || "").trim();
     const token = (process.env.TWILIO_AUTH_TOKEN || "").trim();
-    if (!sid || !token) throw new Error("TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN manquants");
+    if (!sid || !token) throw new WhatsAppNotConfiguredError();
 
     const client = twilio(sid, token);
     const sender = (process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886").trim();
@@ -4091,8 +4114,21 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
   }
 
+  let whatsAppPauseLogged = false;
   async function processDueShopFollowups(): Promise<void> {
     if (!dbPool) return;
+    // Sans fournisseur WhatsApp : on ne touche à rien. Les relances restent « programmée » (aucun essai
+    // consommé, aucun échec) et repartent quand un fournisseur est configuré ; l'admin affiche l'état.
+    if (!whatsAppConfigured()) {
+      if (!whatsAppPauseLogged) { console.warn("[CRM WhatsApp] Aucun fournisseur configuré : relances en pause."); whatsAppPauseLogged = true; }
+      return;
+    }
+    whatsAppPauseLogged = false;
+    // Une relance en retard de plus de 3 jours est abandonnée plutôt qu'envoyée en rafale à la reconnexion.
+    await dbPool.query(
+      `UPDATE shop_followups SET status = 'ignoree', last_error = 'Expirée (envoi impossible pendant plus de 3 jours)'
+       WHERE status = 'programmee' AND channel = 'whatsapp' AND scheduled_for < NOW() - INTERVAL '3 days'`
+    );
     const { rows } = await dbPool.query(
       `SELECT f.*
        FROM shop_followups f
@@ -4812,17 +4848,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // --- Admin : état WhatsApp / worker CRM ---
   app.get("/api/admin/shop/whatsapp-status", requireAdminAuth, async (req, res) => {
-    if (!dbPool) return res.json({ success: true, configured: false, templateConfigured: false, due: 0, failed: 0, sentToday: 0 });
-    const configured = Boolean((process.env.TWILIO_ACCOUNT_SID || "").trim() && (process.env.TWILIO_AUTH_TOKEN || "").trim());
+    const configured = whatsAppConfigured();
+    if (!dbPool) return res.json({ success: true, configured, paused: !configured, provider: shopWhatsAppProvider.name, templateConfigured: false, due: 0, failed: 0, sentToday: 0, waiting: 0 });
     const templateConfigured = Boolean((process.env.TWILIO_WHATSAPP_CONTENT_SID || "").trim());
     const sender = (process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886").trim();
-    const [due, failed, sentToday] = await Promise.all([
+    const [due, failed, sentToday, waiting] = await Promise.all([
       dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'programmee' AND channel = 'whatsapp' AND scheduled_for IS NOT NULL AND scheduled_for <= NOW()"),
       dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'echec' AND channel = 'whatsapp'"),
       dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'envoyee' AND channel = 'whatsapp' AND sent_at::date = CURRENT_DATE"),
+      dbPool.query("SELECT COUNT(*) FROM shop_followups WHERE status = 'programmee' AND channel = 'whatsapp'"),
     ]);
-    const masked = sender.replace(/(whatsapp:\\+\\d{3})\\d+(\\d{2})$/, "$1••••$2");
-    res.json({ success: true, configured, templateConfigured, senderMasked: masked, due: Number(due.rows[0]?.count || 0), failed: Number(failed.rows[0]?.count || 0), sentToday: Number(sentToday.rows[0]?.count || 0), intervalMinutes: 5 });
+    const masked = sender.replace(/(whatsapp:\+\d{3})\d+(\d{2})$/, "$1••••$2");
+    res.json({ success: true, configured, paused: !configured, provider: shopWhatsAppProvider.name, waiting: Number(waiting.rows[0]?.count || 0), templateConfigured, senderMasked: masked, due: Number(due.rows[0]?.count || 0), failed: Number(failed.rows[0]?.count || 0), sentToday: Number(sentToday.rows[0]?.count || 0), intervalMinutes: 5 });
   });
 
   // --- Admin : outils de diagnostic WhatsApp ---
@@ -4840,12 +4877,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   });
 
   app.post("/api/admin/shop/whatsapp-test-message", adminLimiter, requireAdminAuth, async (req, res) => {
-    const phone = String(req.body?.phone || "").trim().replace(/[\\s-]/g, "");
+    const phone = String(req.body?.phone || "").trim().replace(/[\s-]/g, "");
     const message = String(req.body?.message || "").trim();
     if (!phone) return res.status(400).json({ success: false, message: "Le numéro destinataire est requis." });
-    if (!/^\\+\\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, message: "Utilisez un numéro international, par exemple +2250700000000." });
+    if (!/^\+\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, message: "Utilisez un numéro international, par exemple +2250700000000." });
     if (!message) return res.status(400).json({ success: false, message: "Le message test est requis." });
     if (message.length > 1000) return res.status(400).json({ success: false, message: "Le message test est limité à 1 000 caractères." });
+    if (!whatsAppConfigured()) return res.status(400).json({ success: false, message: "Aucun fournisseur WhatsApp n'est configuré : aucun message ne peut partir." });
     try {
       await sendShopWhatsApp(phone, message);
       res.json({ success: true, message: `Message test envoyé vers ${phone}.` });
