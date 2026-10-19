@@ -203,6 +203,12 @@ export default function ClientTracking({
             <p className="text-xs text-slate-500">{r.serviceLabel || "Assistance"} · {vehicleLabel(r.vehicle)}{r.symptoms ? ` · ${r.symptoms}` : ""}</p>
           </div>
         )}
+        {r.aiAnalysis && (
+          <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm">
+            <div className="font-bold text-slate-200">{MSG_AI_TITLE}</div>
+            <p className="text-slate-400 whitespace-pre-line mt-1">{r.aiAnalysis}</p>
+          </div>
+        )}
         {st === "brouillon" ? (
           <button className={btnPrimary} disabled={!!busy} onClick={() => act("submit", () => api(`/requests/${requestId}/submit`, { body: {} }))}>Envoyer la demande</button>
         ) : (
