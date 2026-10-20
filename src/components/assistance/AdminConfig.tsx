@@ -164,6 +164,11 @@ function SettingsBlock() {
   return (
     <div className={cardCls}>
       <p className="text-[11px] text-slate-300 font-bold uppercase tracking-wider">Réglages</p>
+      {data && data.whatsappProvider === false && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+          WhatsApp non configuré : les invitations aux mécaniciens non abonnés et les messages WhatsApp ne partent pas. Les notifications dans l'application continuent de fonctionner.
+        </div>
+      )}
       <Feedback fb={fb} />
       {localErr && <Feedback fb={{ ok: false, message: localErr }} />}
       {loading && !data ? <Loading /> : error ? <ErrorBox message={error} onRetry={reload} /> : (
