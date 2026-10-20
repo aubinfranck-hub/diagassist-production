@@ -1,6 +1,7 @@
 import type { VehicleContext, VehicleDataGateway, VehicleSearchQuery } from "./vehicleContext";
 
 const CACHE_TTL_MS = 15 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 500;
 const cache = new Map<string, { expiresAt: number; value: VehicleContext[] }>();
 
 function keyOf(q: VehicleSearchQuery): string {
@@ -57,6 +58,12 @@ export class HpWebGateway implements VehicleDataGateway {
 
       const body = await response.json() as { results?: VehicleContext[] };
       const results = Array.isArray(body.results) ? body.results : [];
+      if (cache.size >= MAX_CACHE_ENTRIES) {
+        const now = Date.now();
+        for (const [k, v] of cache) if (v.expiresAt <= now) cache.delete(k);
+        // Toujours plein : on retire les plus anciennes entrées (ordre d'insertion).
+        while (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value as string);
+      }
       cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, value: results });
       return results;
     } finally {

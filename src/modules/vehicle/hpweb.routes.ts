@@ -9,13 +9,15 @@ export function registerHpWebRoutes(
   app.post("/api/vehicle/hp-web/search", requireAuth, async (req: any, res: any) => {
     try {
       const body = req.body || {};
+      // Champs bornés : le gateway est payant et le cache est en mémoire.
+      const text = (v: unknown, max: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
       const query: VehicleSearchQuery = {
-        vin: typeof body.vin === "string" ? body.vin : undefined,
-        make: typeof body.make === "string" ? body.make : undefined,
-        model: typeof body.model === "string" ? body.model : undefined,
-        year: typeof body.year === "string" || typeof body.year === "number" ? body.year : undefined,
-        engine: typeof body.engine === "string" ? body.engine : undefined,
-        q: typeof body.q === "string" ? body.q : undefined,
+        vin: text(body.vin, 17),
+        make: text(body.make, 40),
+        model: text(body.model, 60),
+        year: typeof body.year === "number" && Number.isInteger(body.year) && body.year > 1950 && body.year < 2100 ? body.year : text(body.year, 4),
+        engine: text(body.engine, 60),
+        q: text(body.q, 120),
       };
 
       if (!query.vin && !query.make && !query.model && !query.year && !query.engine && !query.q) {

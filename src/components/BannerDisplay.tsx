@@ -9,6 +9,12 @@ interface Banner {
   active: boolean;
 }
 
+// Seuls les liens https sont suivis (un lien javascript: ou data: enregistré par erreur est ignoré).
+function safeLink(url?: string): string | undefined {
+  if (!url) return undefined;
+  try { return new URL(url).protocol === "https:" ? url : undefined; } catch { return undefined; }
+}
+
 export default function BannerDisplay() {
   const [banners, setBanners] = useState<Banner[]>([]);
   const [dismissedFloating, setDismissedFloating] = useState<Set<string>>(new Set());
@@ -43,8 +49,8 @@ export default function BannerDisplay() {
           >
             <X className="w-3.5 h-3.5" />
           </button>
-          {b.linkUrl ? (
-            <a href={b.linkUrl} target="_blank" rel="noopener noreferrer">
+          {safeLink(b.linkUrl) ? (
+            <a href={safeLink(b.linkUrl)} target="_blank" rel="noopener noreferrer">
               <img src={b.imageUrl} alt="Publicité" className="w-full h-auto object-cover" />
             </a>
           ) : (
@@ -66,7 +72,8 @@ export default function BannerDisplay() {
           }}
           onClick={() => {
             setDismissedFloating((prev) => new Set(prev).add(b.id));
-            if (b.linkUrl) window.open(b.linkUrl, "_blank");
+            const link = safeLink(b.linkUrl);
+            if (link) window.open(link, "_blank", "noopener,noreferrer");
           }}
         >
           <img src={b.imageUrl} alt="Publicité" className="w-full h-full object-contain block" style={{ maxHeight: "35vh" }} />
