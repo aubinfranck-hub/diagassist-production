@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleSlash, Disc3, AlertCircle, Volume2, BatteryLow, Truck, HelpCircle,
-  LocateFixed, MapPin, Camera, Video, X, ChevronDown, Loader2, ShieldCheck, Car, Wrench,
+  LocateFixed, MapPin, Camera, Video, Mic, Square, X, ChevronDown, Loader2, ShieldCheck, Car, Wrench,
 } from "lucide-react";
 import {
   api, authToken, AssistanceError, AssistanceStatus, compressImage, referenceTariffText, knownPhone, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
@@ -31,7 +31,7 @@ const TILES: Tile[] = [
   { id: "autre", label: "Autre problème", service: "", icon: <HelpCircle className="w-7 h-7" /> },
 ];
 
-interface Attach { blob: Blob; name: string; mime: string; preview?: string; kind: "image" | "video" }
+interface Attach { blob: Blob; name: string; mime: string; preview?: string; kind: "image" | "video" | "audio" }
 
 type GeoState = "idle" | "loading" | "denied" | "unavailable" | "timeout";
 
@@ -128,6 +128,48 @@ export default function ClientWizard({
       setAttachments((prev) => [...prev, { blob, name: f.name, mime, kind, preview: kind === "image" ? URL.createObjectURL(blob) : undefined }]);
     }
   };
+  // ---- Note vocale (enregistrement dans le navigateur, 60 s maximum) ----
+  const [recording, setRecording] = useState(false);
+  const [recSeconds, setRecSeconds] = useState(0);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const recTimer = useRef<number | null>(null);
+  const stopRecording = () => { if (recorder.current && recorder.current.state !== "inactive") recorder.current.stop(); };
+  const startRecording = async () => {
+    setMediaError("");
+    if (attachments.length >= 8) { setMediaError("8 fichiers au maximum."); return; }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setMediaError("L'enregistrement vocal n'est pas disponible sur cet appareil. Décrivez la panne par écrit.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find((m) => MediaRecorder.isTypeSupported(m));
+      const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const chunks: BlobPart[] = [];
+      rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (recTimer.current) window.clearInterval(recTimer.current);
+        setRecording(false);
+        const type = (rec.mimeType || mimeType || "audio/webm").split(";")[0];
+        const blob = new Blob(chunks, { type });
+        if (!blob.size) return;
+        if (blob.size > MAX_BYTES.audio) { setMediaError("Enregistrement trop long, recommencez plus court."); return; }
+        const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+        setAttachments((prev) => [...prev, { blob, name: `note-vocale.${ext}`, mime: type, kind: "audio" }]);
+      };
+      recorder.current = rec;
+      rec.start();
+      setRecSeconds(0); setRecording(true);
+      recTimer.current = window.setInterval(() => {
+        setRecSeconds((n) => { if (n + 1 >= 60) stopRecording(); return n + 1; });
+      }, 1000);
+    } catch {
+      setMediaError("Microphone refusé ou indisponible. Autorisez-le dans votre navigateur ou décrivez la panne par écrit.");
+    }
+  };
+  useEffect(() => () => { if (recTimer.current) window.clearInterval(recTimer.current); if (recorder.current?.state === "recording") recorder.current.stop(); }, []);
+
   const removeAttach = (a: Attach) => {
     if (a.preview) URL.revokeObjectURL(a.preview);
     setAttachments((p) => p.filter((x) => x !== a));
@@ -353,7 +395,7 @@ export default function ClientWizard({
       {/* Description + médias */}
       <div className="space-y-2.5">
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} maxLength={500} placeholder="En deux mots, que constatez-vous ? (facultatif)" className={inputCls} />
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-3 gap-2.5">
           <label className="inline-flex items-center justify-center gap-2 min-h-[48px] rounded-2xl bg-slate-950/80 border border-white/[0.1] text-sm font-bold text-slate-200 cursor-pointer">
             <Camera className="w-4 h-4" /> Photo
             <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void addFiles(e.target.files, "image"); e.target.value = ""; }} />
@@ -362,13 +404,16 @@ export default function ClientWizard({
             <Video className="w-4 h-4" /> Vidéo
             <input type="file" accept="video/mp4,video/webm" className="hidden" onChange={(e) => { void addFiles(e.target.files, "video"); e.target.value = ""; }} />
           </label>
+          <button type="button" onClick={() => { if (recording) stopRecording(); else void startRecording(); }} aria-pressed={recording} className={`inline-flex items-center justify-center gap-2 min-h-[48px] rounded-2xl border text-sm font-bold cursor-pointer ${recording ? "bg-red-600 border-red-500 text-[#ffffff]" : "bg-slate-950/80 border-white/[0.1] text-slate-200"}`}>
+            {recording ? <><Square className="w-4 h-4" /> Stop {recSeconds}s</> : <><Mic className="w-4 h-4" /> Voix</>}
+          </button>
         </div>
         {mediaError && <Notice tone="warn">{mediaError}</Notice>}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {attachments.map((a, i) => (
               <div key={i} className="relative w-16 h-16 rounded-xl overflow-hidden border border-white/[0.1] bg-slate-950 flex items-center justify-center text-slate-400">
-                {a.preview ? <img src={a.preview} alt="" className="w-full h-full object-cover" /> : <Video className="w-6 h-6" />}
+                {a.preview ? <img src={a.preview} alt="" className="w-full h-full object-cover" /> : a.kind === "audio" ? <Mic className="w-6 h-6" /> : <Video className="w-6 h-6" />}
                 <button type="button" onClick={() => removeAttach(a)} aria-label="Retirer" className="absolute top-0.5 right-0.5 w-6 h-6 rounded-full bg-black/70 text-[#ffffff] flex items-center justify-center cursor-pointer"><X className="w-3.5 h-3.5" /></button>
               </div>
             ))}
@@ -421,7 +466,7 @@ export default function ClientWizard({
       )}
 
       <p className="text-xs text-slate-500 flex items-start gap-2"><ShieldCheck className="w-4 h-4 shrink-0 mt-0.5" />
-        DiagAssist analysera votre description et vos photos pour aider le mécanicien. Plusieurs mécaniciens proches vous feront une offre, vous choisissez.</p>
+        DiagAssist analysera votre description, vos photos, vidéos et note vocale pour aider le mécanicien. Plusieurs mécaniciens proches vous feront une offre, vous choisissez.</p>
       </>)}
     </MapScreen>
   );
