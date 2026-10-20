@@ -1,5 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
-import { AnimatePresence } from "motion/react";
+import { useState, useEffect } from "react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText,
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench, Chrome,
@@ -11,7 +10,6 @@ import DiagnosisResultView from "./components/DiagnosisResultView";
 import DiagnosticChat from "./components/DiagnosticChat";
 import SubscriptionPanel from "./components/SubscriptionPanel";
 import BannerDisplay from "./components/BannerDisplay";
-import SplashScreen from "./components/SplashScreen";
 import IntegratedVoiceController from "./components/IntegratedVoiceController";
 import PhoneAuth from "./components/PhoneAuth";
 import LandingPage from "./components/LandingPage";
@@ -106,10 +104,6 @@ interface AdminLogEntry {
 }
 
 export default function App() {
-  // Splash screen state
-  const [showSplash, setShowSplash] = useState(true);
-  // Callback stable : sinon SplashScreen réarme son minuteur à chaque rendu d'App et ne se ferme jamais.
-  const hideSplash = useCallback(() => setShowSplash(false), []);
   // Page d'accueil publique (vitrine) affichée avant l'écran de connexion — pour le référencement
   // et la présentation du produit aux visiteurs qui n'ont pas encore de compte.
   const [showLandingPage, setShowLandingPage] = useState(true);
@@ -756,12 +750,6 @@ export default function App() {
 
   return (
     <>
-      <AnimatePresence>
-        {showSplash && (
-          <SplashScreen onComplete={hideSplash} />
-        )}
-      </AnimatePresence>
-
       {!isOnline && (() => {
         // Sur l'assistance, le message parle de la demande (qui part au retour du réseau) et non des diagnostics IA.
         const onAssistance = isDriver || activeTab === "assistance" || activeTab === "depannage";
@@ -792,9 +780,9 @@ export default function App() {
 
       {/* Parcours : page d'accueil, puis connexion. Le choix de profil (mécanicien /
           propriétaire) est temporairement désactivé — l'app est mécanicien uniquement. */}
-      {!showSplash && !loggedInUser && showLandingPage ? (
+      {!loggedInUser && showLandingPage ? (
         <LandingPage onGetStarted={() => setShowLandingPage(false)} />
-      ) : !showSplash && !loggedInUser ? (
+      ) : !loggedInUser ? (
         <PhoneAuth
           onLoginSuccess={(phone) => {
             setLoggedInUser(phone);
@@ -1671,3 +1659,4 @@ export default function App() {
     </>
   );
 }
+
