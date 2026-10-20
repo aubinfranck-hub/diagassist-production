@@ -344,7 +344,7 @@ export default function App() {
 
   // Un automobiliste reste toujours sur l'assistance (aucun écran professionnel).
   useEffect(() => {
-    if (isDriver && activeTab !== "assistance") setActiveTab("assistance");
+    if (isDriver && activeTab !== "assistance" && activeTab !== "diagnose") setActiveTab("assistance");
   }, [isDriver, activeTab]);
 
   // Load and Save user status from server as source of truth.
@@ -924,6 +924,23 @@ export default function App() {
                   {(activeTab === "assistance" || activeTab === "depannage") && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                 </button>
 
+                {isDriver && (
+                  <button
+                    onClick={() => { setActiveTab("diagnose"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className={`w-full flex items-center justify-between px-4 py-3 text-xs font-bold uppercase tracking-wider rounded-xl transition duration-150 cursor-pointer ${
+                      activeTab === "diagnose"
+                        ? "bg-red-600 text-white shadow-lg shadow-red-600/25 border border-white/10"
+                        : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Gauge className="w-4.5 h-4.5" />
+                      <span>Diagnostic</span>
+                    </div>
+                    {activeTab === "diagnose" && <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                  </button>
+                )}
+
 {!isDriver && (<>
                 <button
                   onClick={() => {
@@ -1253,6 +1270,20 @@ export default function App() {
               <LifeBuoy className="w-5 h-5" />
               <span className="text-[9px] font-black uppercase tracking-wider">Assistance</span>
             </button>
+
+            {isDriver && (
+              <button
+                onClick={() => { setActiveTab("diagnose"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-2 min-h-[48px] rounded-xl transition duration-150 cursor-pointer ${
+                  activeTab === "diagnose"
+                    ? "bg-slate-950 text-red-500 border border-white/[0.04]"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Gauge className="w-5 h-5" />
+                <span className="text-[9px] font-black uppercase tracking-wider">Diagnostic</span>
+              </button>
+            )}
 
 {!isDriver && (<>
             <button
