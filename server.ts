@@ -1,4 +1,5 @@
 import "./src/modules/security/envDefault";
+import { isAdminCode, adminAttemptsBlocked } from "./src/modules/security/adminAuth";
 import express from "express";
 import { createServer as createHttpServer } from "node:http";
 import path from "path";
@@ -826,9 +827,15 @@ function requireAuth(req: any, res: any, next: any) {
 function requireAdminAuth(req: any, res: any, next: any) {
   const adminSecret = process.env.ADMIN_SECRET;
   const providedCode = req.headers["x-admin-code"] || req.body?.code;
+  const ip = String(req.ip || "unknown");
 
-  // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
-  if (adminSecret && providedCode && providedCode === adminSecret) {
+  // Trop d'échecs de code depuis cette IP : on bloque avant toute comparaison.
+  if (providedCode && adminAttemptsBlocked(ip)) {
+    return res.status(429).json({ success: false, message: "Trop de tentatives. Réessayez plus tard." });
+  }
+
+  // Voie 1 : code admin serveur (ADMIN_SECRET) — comparaison en temps constant + limite d'échecs.
+  if (adminSecret && providedCode && isAdminCode(providedCode, ip)) {
     return next();
   }
 
@@ -5120,7 +5127,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!adminSecret) {
       return res.status(503).json({ success: false, message: "Accès admin non configuré sur le serveur." });
     }
-    if (code !== adminSecret) {
+    if (adminAttemptsBlocked(String(req.ip || "unknown"))) {
+      return res.status(429).json({ success: false, message: "Trop de tentatives. Réessayez plus tard." });
+    }
+    if (!isAdminCode(code, String(req.ip || "unknown"))) {
       return res.status(401).json({ success: false, message: "Code invalide." });
     }
     res.json({ success: true });

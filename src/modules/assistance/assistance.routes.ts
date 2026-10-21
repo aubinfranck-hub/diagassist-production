@@ -5,6 +5,7 @@ import {
   ACTIVE_MISSION_STATUSES, DOC_MAX_BYTES, DOC_MIMES, SERVICE_CODES, clean, magicMatches, mediaRuleFor, validCoords,
 } from "./domain";
 import { AssistanceError, createAssistanceCore, canonicalPhone, type AssistanceCore, type CoreDeps, type DirectoryMechanic } from "./core";
+import { isAdminCode } from "../security/adminAuth";
 
 export type AssistanceRouteDeps = {
   app: Express;
@@ -178,7 +179,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     const q = typeof req.query.token === "string" ? req.query.token : "";
     const t = String(req.headers.authorization || "").replace("Bearer ", "") || q;
     const s = t ? d.sessions.get(t) : undefined;
-    const adminCode = process.env.ADMIN_SECRET && req.headers["x-admin-code"] === process.env.ADMIN_SECRET;
+    const adminCode = isAdminCode(req.headers["x-admin-code"], String(req.ip || "unknown"));
     return { phone: s?.phone, admin: !!adminCode || (!!s && d.isAdminPhone(s.phone)) };
   };
   app.get("/api/assistance/media/:id", needDb, wrap(async (req, res) => {

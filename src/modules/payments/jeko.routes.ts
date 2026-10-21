@@ -211,6 +211,27 @@ export function registerJekoPayments(
     try { await work; } finally { confirmations.delete(reference); }
   };
 
+  // Anomalies de webhook : un webhook signé (donc authentique) qui n'est PAS appliqué peut vouloir dire
+  // « le client a payé mais n'a pas son forfait ». On ne l'ignore plus en silence : log d'erreur,
+  // conservation en mémoire (visible dans le tableau de bord admin) et trace durable en base.
+  const anomalies: Array<{ at: number; reference: string; reason: string; status: string; detail: string }> = [];
+  let anomalyTableReady = false;
+  const recordAnomaly = async (reference: string, reason: string, status: string, detail: string) => {
+    console.error(`[JEKO][ANOMALIE] ${reason} | réf=${reference} | statut=${status} | ${detail}`);
+    anomalies.unshift({ at: Date.now(), reference, reason, status, detail });
+    if (anomalies.length > 100) anomalies.length = 100;
+    if (!deps.dbQuery) return;
+    try {
+      if (!anomalyTableReady) {
+        await deps.dbQuery(`CREATE TABLE IF NOT EXISTS jeko_webhook_anomalies (id SERIAL PRIMARY KEY, reference TEXT, reason TEXT, status TEXT, detail TEXT, created_at BIGINT)`);
+        anomalyTableReady = true;
+      }
+      await deps.dbQuery(`INSERT INTO jeko_webhook_anomalies (reference, reason, status, detail, created_at) VALUES ($1,$2,$3,$4,$5)`, [reference, reason, status, detail, Date.now()]);
+    } catch (err: any) {
+      console.error("[JEKO][ANOMALIE] Écriture en base impossible:", err.message);
+    }
+  };
+
   // Filet de sécurité : si le webhook n'est jamais arrivé (ex: redémarrage du serveur pile au
   // mauvais moment — déjà arrivé une fois en test), on interroge directement Jèko pour l'état
   // réel de la transaction plutôt que de rester bloqué sur "pending" indéfiniment.
@@ -221,7 +242,10 @@ export function registerJekoPayments(
         signal: AbortSignal.timeout(15000),
         headers: { "X-API-KEY": apiKey!, "X-API-KEY-ID": apiKeyId! },
       });
-      if (!response.ok) return record;
+      if (!response.ok) {
+        console.error(`[JEKO] Réconciliation: Jèko a répondu HTTP ${response.status} pour la réf. ${reference}.`);
+        return record;
+      }
       const data: any = await response.json().catch(() => ({}));
       const status = String(data?.status || data?.transaction?.status || "").toLowerCase();
       if (status === "success" || status === "completed") {
@@ -361,7 +385,7 @@ export function registerJekoPayments(
           `SELECT reference, phone, plan, amount_cents, status, created_at, jeko_id, kind, order_ref
            FROM jeko_payments ORDER BY created_at DESC LIMIT 200`
         );
-        return res.json({ success: true, payments: result.rows });
+        return res.json({ success: true, payments: result.rows, anomalies });
       } catch (err: any) {
         return res.status(500).json({ success: false, message: "Lecture des paiements impossible." });
       }
@@ -369,7 +393,7 @@ export function registerJekoPayments(
     const payments = Array.from(pending.entries())
       .map(([reference, p]) => ({ reference, phone: p.phone, plan: p.plan, amount_cents: p.amountCents, status: p.status, created_at: p.createdAt, jeko_id: p.jekoId || null, kind: p.kind, order_ref: p.orderRef || null }))
       .sort((a, b) => b.created_at - a.created_at);
-    res.json({ success: true, payments });
+    res.json({ success: true, payments, anomalies });
   });
 
   // Revérifie manuellement un paiement encore "pending" auprès de Jèko (même filet de sécurité
@@ -440,7 +464,7 @@ export function registerJekoPayments(
 
     const record = await findPayment(reference);
     if (!record) {
-      console.warn(`[JEKO][Webhook] Référence inconnue : ${reference}`);
+      await recordAnomaly(reference, "reference_inconnue", status, "Webhook signé reçu pour une référence absente de jeko_payments.");
       return res.status(200).end();
     }
 
@@ -453,16 +477,16 @@ export function registerJekoPayments(
     // Vérifications métier supplémentaires : même avec une signature HMAC valide,
     // le webhook doit correspondre au paiement Jèko que nous avons créé.
     if (body.transactionType && String(body.transactionType) !== "PaymentRequest") {
-      console.warn(`[JEKO][Webhook] Type de transaction inattendu : ${body.transactionType}`);
+      await recordAnomaly(reference, "type_inattendu", status, `transactionType=${body.transactionType}`);
       return res.status(200).end();
     }
     if (record.jekoId && body?.transactionDetails?.id && String(body.transactionDetails.id) !== String(record.jekoId)) {
-      console.warn(`[JEKO][Webhook] ID Jèko différent pour la référence ${reference}.`);
+      await recordAnomaly(reference, "id_jeko_different", status, `reçu=${body.transactionDetails.id} attendu=${record.jekoId}`);
       return res.status(200).end();
     }
     const webhookAmount = Number(body?.amount?.amount);
     if (Number.isFinite(webhookAmount) && webhookAmount !== record.amountCents) {
-      console.warn(`[JEKO][Webhook] Montant différent pour ${reference} : reçu=${webhookAmount}, attendu=${record.amountCents}.`);
+      await recordAnomaly(reference, "montant_different", status, `reçu=${webhookAmount} attendu=${record.amountCents} (vérifier l'unité : XOF ou centimes)`);
       return res.status(200).end();
     }
 
