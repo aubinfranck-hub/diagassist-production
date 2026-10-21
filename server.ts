@@ -1,3 +1,4 @@
+import "./src/modules/security/envDefault";
 import express from "express";
 import { createServer as createHttpServer } from "node:http";
 import path from "path";
@@ -3220,6 +3221,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
           const sandboxNumber = "whatsapp:+14155238886";
           const sender = process.env.TWILIO_WHATSAPP_NUMBER || sandboxNumber;
+          if (process.env.NODE_ENV === "production" && !process.env.TWILIO_WHATSAPP_NUMBER) {
+            console.error("[send-otp] TWILIO_WHATSAPP_NUMBER absent en production : repli sur le numéro SANDBOX Twilio, qui ne livre qu'aux numéros inscrits au sandbox.");
+          }
           const fromNumber = sender.startsWith("whatsapp:") ? sender : `whatsapp:${sender}`;
           const toNumber = `whatsapp:${fullPhone}`;
 
@@ -3233,6 +3237,12 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         } catch (twilioErr: any) {
           console.error(`Erreur d'envoi Twilio (${activeChannel}) :`, twilioErr);
           errorDetails = twilioErr.message;
+          // Production : un échec d'envoi ne doit JAMAIS être présenté comme un succès (le mécanicien
+          // attendrait un code qui n'arrivera pas). On annule le code et on répond clairement.
+          if (process.env.NODE_ENV === "production") {
+            otpStorage.delete(fullPhone);
+            return res.status(502).json({ success: false, message: "Impossible d'envoyer le code WhatsApp pour le moment. Réessayez dans quelques minutes." });
+          }
         }
       } else {
         console.log(`[OTP Mode Simulation] Code de sécurité généré pour ${fullPhone} (${activeChannel}) : ${otpCode} (Renseignez vos clés Twilio dans les secrets pour envoyer de vrais messages).`);
@@ -3253,7 +3263,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         message: sentRealMessage
           ? "Un code de validation réel vient d'être envoyé sur votre compte WhatsApp."
           : "Mode simulation actif (WhatsApp). Utilisez le code fourni ci-dessous ou configurez Twilio.",
-        errorDetails,
+        errorDetails: isProd ? undefined : errorDetails,
       });
     } catch (err: any) {
       console.error("Erreur dans send-otp:", err);
