@@ -961,6 +961,16 @@ Codes DTC: ${dtcCodes}`;
     setToast("Appel vocal terminé.");
   };
 
+  // Démontage de l'écran (changement d'onglet/de vue) pendant un appel : sans ceci, le micro, le
+  // WebSocket Gemini Live et les AudioContext restaient ouverts (batterie, données, quota Live).
+  const stopLiveCallSessionRef = useRef(stopLiveCallSession);
+  stopLiveCallSessionRef.current = stopLiveCallSession;
+  useEffect(() => {
+    return () => {
+      if (wsRef.current || micStreamRef.current) stopLiveCallSessionRef.current();
+    };
+  }, []);
+
   // Helper to determine if the Gemini Live WebSocket session is genuinely active
   const isLiveSessionActive = (): boolean => {
     return callState === "live" && wsRef.current !== null && wsRef.current.readyState === WebSocket.OPEN;
