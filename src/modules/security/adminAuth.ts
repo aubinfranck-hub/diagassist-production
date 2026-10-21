@@ -37,3 +37,21 @@ export function isAdminCode(provided: unknown, ip: string): boolean {
   adminAttemptFailed(ip);
   return false;
 }
+
+// Jeton admin temporaire et signé (HMAC), délivré après vérification du code. Le navigateur ne garde
+// que ce jeton (8 h), jamais le secret ADMIN_SECRET. Changer ADMIN_SECRET invalide tous les jetons.
+const TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
+const tokenKey = () => crypto.createHash("sha256").update("diagassist-admin-token:" + (process.env.ADMIN_SECRET || "")).digest();
+export function issueAdminToken(): { token: string; expiresAt: number } {
+  const expiresAt = Date.now() + TOKEN_TTL_MS;
+  const sig = crypto.createHmac("sha256", tokenKey()).update(String(expiresAt)).digest("hex");
+  return { token: `${expiresAt}.${sig}`, expiresAt };
+}
+export function isAdminToken(provided: unknown): boolean {
+  if (!process.env.ADMIN_SECRET || typeof provided !== "string") return false;
+  const [exp, sig] = provided.split(".");
+  const expiresAt = Number(exp);
+  if (!sig || !Number.isFinite(expiresAt) || expiresAt < Date.now()) return false;
+  const expected = crypto.createHmac("sha256", tokenKey()).update(String(expiresAt)).digest("hex");
+  return sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+}

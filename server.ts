@@ -1,5 +1,5 @@
 import "./src/modules/security/envDefault";
-import { isAdminCode, adminAttemptsBlocked } from "./src/modules/security/adminAuth";
+import { isAdminCode, adminAttemptsBlocked, issueAdminToken, isAdminToken } from "./src/modules/security/adminAuth";
 import express from "express";
 import { createServer as createHttpServer } from "node:http";
 import path from "path";
@@ -115,7 +115,7 @@ const otpAttempts = new Map<string, { count: number; windowStart: number }>();
 
 // Captcha simple (question arithmétique) pour la création de compte directe, sans dépendance
 // à un service SMS/WhatsApp externe. À usage unique, expire après 10 minutes.
-const captchaStorage = new Map<string, { answer: number; expiresAt: number }>();
+const captchaStorage = new Map<string, { answer: number; expiresAt: number; issuedAt?: number }>();
 setInterval(() => {
   const now = Date.now();
   for (const [id, entry] of captchaStorage) {
@@ -833,6 +833,11 @@ function requireAdminAuth(req: any, res: any, next: any) {
   // Trop d'échecs de code depuis cette IP : on bloque avant toute comparaison.
   if (providedCode && adminAttemptsBlocked(ip)) {
     return res.status(429).json({ success: false, message: "Trop de tentatives. Réessayez plus tard." });
+  }
+
+  // Voie 0 : jeton admin temporaire signé (délivré par /api/admin/verify-code), stocké côté navigateur à la place du code.
+  if (adminSecret && isAdminToken(req.headers["x-admin-token"])) {
+    return next();
   }
 
   // Voie 1 : code admin serveur (ADMIN_SECRET) — comparaison en temps constant + limite d'échecs.
@@ -5036,18 +5041,38 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // Aucune dépendance à un service externe (reCAPTCHA, Twilio...) : juste une question
   // arithmétique dont la réponse est vérifiée côté serveur.
   app.post("/api/auth/captcha", authLimiter, (req, res) => {
-    const a = Math.floor(Math.random() * 8) + 2; // 2-9
-    const b = Math.floor(Math.random() * 8) + 2; // 2-9
+    const a = crypto.randomInt(20, 70);
+    const b = crypto.randomInt(10, 40);
+    const c = crypto.randomInt(2, 10);
     const captchaId = crypto.randomBytes(16).toString("hex");
-    captchaStorage.set(captchaId, { answer: a + b, expiresAt: Date.now() + 10 * 60 * 1000 });
-    res.json({ success: true, captchaId, question: `Combien font ${a} + ${b} ?` });
+    captchaStorage.set(captchaId, { answer: a + b - c, expiresAt: Date.now() + 10 * 60 * 1000, issuedAt: Date.now() });
+    res.json({ success: true, captchaId, question: `Combien font ${a} + ${b} - ${c} ?` });
   });
 
   // API Route : création de compte directe (numéro + mot de passe), protégée par le captcha
   // ci-dessus. Ne dépend d'aucun envoi SMS/WhatsApp — évite les pannes liées à un fournisseur
   // OTP mal configuré, tout en gardant une protection anti-bot minimale.
-  app.post("/api/auth/register", authLimiter, async (req, res) => {
+  // Anti création de masse : 5 comptes créés par heure et par IP (seuls les succès comptent), et un
+  // plafond global par heure (REGISTER_MAX_PER_HOUR, 200 par défaut) contre les attaques depuis plusieurs IP.
+  const registerLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 5,
+    skipFailedRequests: true,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message: "Trop de comptes créés depuis cette connexion. Réessayez dans une heure ou contactez le support." },
+  });
+  const registrationTimes: number[] = [];
+  app.post("/api/auth/register", authLimiter, registerLimiter, async (req, res) => {
     const { phoneNumber, countryCode, password, captchaId, captchaAnswer, name } = req.body;
+    {
+      const hourAgo = Date.now() - 60 * 60 * 1000;
+      while (registrationTimes.length && registrationTimes[0] < hourAgo) registrationTimes.shift();
+      if (registrationTimes.length >= (Number(process.env.REGISTER_MAX_PER_HOUR) || 200)) {
+        console.error("[SECURITE] Plafond global d'inscriptions par heure atteint : possible création de masse.");
+        return res.status(429).json({ success: false, message: "Beaucoup d'inscriptions en ce moment. Réessayez dans quelques minutes." });
+      }
+    }
     if (!phoneNumber || !password || !captchaId || captchaAnswer === undefined) {
       return res.status(400).json({ success: false, message: "Données manquantes pour créer le compte." });
     }
@@ -5063,6 +5088,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       captchaStorage.delete(captchaId);
       return res.status(400).json({ success: false, message: "Captcha expiré. Veuillez réessayer." });
     }
+    if (captcha.issuedAt && Date.now() - captcha.issuedAt < 2000) {
+      return res.status(400).json({ success: false, message: "Trop rapide. Veuillez réessayer." });
+    }
     if (Number(captchaAnswer) !== captcha.answer) {
       return res.status(400).json({ success: false, message: "Réponse incorrecte. Veuillez réessayer." });
     }
@@ -5076,6 +5104,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
     await createAccount(fullPhone, password, false, undefined, typeof name === "string" ? name.trim() : undefined, true);
     console.log(`[Auth] Compte créé par auto-inscription (captcha) pour ${fullPhone}.`);
+    registrationTimes.push(Date.now());
     const token = await createSession(fullPhone);
     res.json({ success: true, message: "Compte créé avec succès.", sessionToken: token });
   });
@@ -5134,7 +5163,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!isAdminCode(code, String(req.ip || "unknown"))) {
       return res.status(401).json({ success: false, message: "Code invalide." });
     }
-    res.json({ success: true });
+    const { token, expiresAt } = issueAdminToken();
+    res.json({ success: true, token, expiresAt });
   });
 
 

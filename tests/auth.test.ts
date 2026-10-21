@@ -25,7 +25,9 @@ test("account takeover regression, session revocation and API errors", async () 
   };
   const register = async (phone: string, password: string) => {
     const captcha = await request("/api/auth/captcha", {});
-    const answer = (captcha.body.question.match(/\d+/g) || []).reduce((n: number, v: string) => n + Number(v), 0);
+    const [x, y, z] = (captcha.body.question.match(/\d+/g) || []).map(Number);
+    const answer = x + y - (z || 0); // question : « a + b - c »
+    await new Promise(resolve => setTimeout(resolve, 2100)); // le serveur refuse un captcha résolu en moins de 2 s
     return request("/api/auth/register", { phoneNumber: phone, password, captchaId: captcha.body.captchaId, captchaAnswer: answer });
   };
   try {

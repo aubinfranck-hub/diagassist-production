@@ -19,36 +19,42 @@ function useShopAuth() {
   const [checking, setChecking] = useState(true);
   useEffect(() => {
     const existingToken = localStorage.getItem("auth_session_token");
-    const manualCode = localStorage.getItem("shop_admin_code");
+    // Sécurité : purge l'ancien code admin que les versions précédentes gardaient en clair dans le navigateur.
+    try { localStorage.removeItem("shop_admin_code"); } catch {}
+    let adminToken: string | null = null;
+    try { adminToken = sessionStorage.getItem("shop_admin_token"); } catch {}
     (async () => {
       if (existingToken) {
         const candidate = { header: "Authorization", value: `Bearer ${existingToken}` };
         const test = await fetch("/api/admin/shop/dashboard", { headers: { Authorization: candidate.value } }).then((r) => r.json()).catch(() => ({ success: false }));
         if (test.success) { setAuth(candidate); setChecking(false); return; }
       }
-      if (manualCode) {
-        const candidate = { header: "x-admin-code", value: manualCode };
-        const test = await fetch("/api/admin/shop/dashboard", { headers: { "x-admin-code": manualCode } }).then((r) => r.json()).catch(() => ({ success: false }));
+      if (adminToken) {
+        const candidate = { header: "x-admin-token", value: adminToken };
+        const test = await fetch("/api/admin/shop/dashboard", { headers: { "x-admin-token": adminToken } }).then((r) => r.json()).catch(() => ({ success: false }));
         if (test.success) { setAuth(candidate); setChecking(false); return; }
-        localStorage.removeItem("shop_admin_code");
+        try { sessionStorage.removeItem("shop_admin_token"); } catch {}
       }
       setChecking(false);
     })();
   }, []);
-  const saveCode = (code: string) => { localStorage.setItem("shop_admin_code", code); setAuth({ header: "x-admin-code", value: code }); };
-  const clear = () => { localStorage.removeItem("shop_admin_code"); setAuth(null); };
-  return { auth, checking, saveCode, clear };
+  // On ne garde que le jeton temporaire (8 h, onglet courant), jamais le code admin lui-même.
+  const saveToken = (token: string) => { try { sessionStorage.setItem("shop_admin_token", token); } catch {} setAuth({ header: "x-admin-token", value: token }); };
+  const clear = () => { try { sessionStorage.removeItem("shop_admin_token"); } catch {} setAuth(null); };
+  return { auth, checking, saveToken, clear };
 }
 
-function AdminGate({ onValidated }: { onValidated: (code: string) => void }) {
+function AdminGate({ onValidated }: { onValidated: (token: string) => void }) {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setChecking(true); setError(null);
-    const data = await shopFetch({ header: "x-admin-code", value: input }, "/api/admin/shop/dashboard");
+    const data = await fetch("/api/admin/verify-code", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: input }) })
+      .then((r) => r.json()).catch(() => ({ success: false }));
     setChecking(false);
-    if (data.success) onValidated(input); else setError("Code incorrect.");
+    setInput("");
+    if (data.success && data.token) onValidated(data.token); else setError(data.message || "Code incorrect.");
   };
   return <div className="max-w-sm mx-auto px-4 py-24 text-center">
     <Lock className="w-10 h-10 text-slate-600 mx-auto mb-4" />
@@ -320,10 +326,10 @@ function CustomersTab({ auth }: { auth: any }) {
 }
 
 export default function ShopAdmin() {
-  const { auth, checking, saveCode, clear } = useShopAuth();
+  const { auth, checking, saveToken, clear } = useShopAuth();
   const [tab, setTab] = useState<Tab>("dashboard");
   if (checking) return <div className="flex justify-center py-24"><Loader2 className="w-6 h-6 text-slate-500 animate-spin" /></div>;
-  if (!auth) return <AdminGate onValidated={saveCode} />;
+  if (!auth) return <AdminGate onValidated={saveToken} />;
   const tabs: { id: Tab; label: string; icon: any }[] = [{ id: "dashboard", label: "Accueil", icon: LayoutDashboard }, { id: "products", label: "Produits", icon: Package }, { id: "import", label: "Import", icon: Package }, { id: "orders", label: "Commandes", icon: ShoppingCart }, { id: "parts", label: "Pièces", icon: Wrench }, { id: "customers", label: "Clients", icon: Users }, { id: "followups", label: "Relances", icon: Bell }];
   return <div className="min-h-screen bg-slate-950 text-slate-200 pb-24"><header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 backdrop-blur z-20"><div><span className="font-bold text-white text-sm">DiagAssist</span><span className="text-[10px] text-slate-600 ml-2">Administration boutique</span></div><button onClick={clear} className="text-xs text-slate-500 hover:text-white cursor-pointer">Déconnexion</button></header><div className="max-w-6xl mx-auto px-4 md:px-6 py-5"><div className="hidden md:flex gap-2 overflow-x-auto pb-4 border-b border-slate-800 mb-5">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold ${tab === t.id ? "bg-red-600 text-white" : "bg-slate-900 text-slate-400 hover:text-white"}`}><t.icon className="w-4 h-4" />{t.label}</button>)}</div>{tab === "dashboard" && <Dashboard auth={auth} />}{tab === "products" && <ProductsTab auth={auth} />}{tab === "import" && <ImportTab auth={auth} />}{tab === "orders" && <OrdersTab auth={auth} />}{tab === "parts" && <PartsTab auth={auth} />}{tab === "customers" && <CustomersTab auth={auth} />}{tab === "followups" && <FollowupsTab auth={auth} />}</div><nav className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur border-t border-slate-800 flex z-20 md:hidden">{tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 cursor-pointer ${tab === t.id ? "text-red-500" : "text-slate-500"}`}><t.icon className="w-4.5 h-4.5" /><span className="text-[10px]">{t.label}</span></button>)}</nav></div>;
 }
