@@ -1,9 +1,9 @@
 import {StrictMode, lazy, Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
-import ShopApp from './components/shop/ShopApp.tsx';
-import ShopAdmin from './components/shop/ShopAdmin.tsx';
 import './index.css';
+const ShopApp = lazy(() => import('./components/shop/ShopApp.tsx'));
+const ShopAdmin = lazy(() => import('./components/shop/ShopAdmin.tsx'));
 const DiagnosticApp = lazy(() => import('./components/diagnostic/DiagnosticApp'));
 const isDiagnostic = window.location.hostname === 'diagnostic.diagassist.app' || /^\/diagnostic(?:\/|$)/.test(window.location.pathname);
 
@@ -41,7 +41,7 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {isDiagnostic ? <Suspense fallback={<div style={{padding:40}}>Chargement de DiagAssist…</div>}><DiagnosticApp /></Suspense> : isShopAdminRoute ? <ShopAdmin /> : isShopRoute ? <ShopApp /> : <App />}
+    {isDiagnostic ? <Suspense fallback={<div style={{padding:40}}>Chargement de DiagAssist…</div>}><DiagnosticApp /></Suspense> : isShopAdminRoute ? <Suspense fallback={<div style={{padding:40}}>Chargement…</div>}><ShopAdmin /></Suspense> : isShopRoute ? <Suspense fallback={<div style={{padding:40}}>Chargement…</div>}><ShopApp /></Suspense> : <App />}
   </StrictMode>,
 );
 

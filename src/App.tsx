@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText,
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench, Chrome,
@@ -8,22 +8,26 @@ import {
 import DiagnosticForm from "./components/DiagnosticForm";
 import DiagnosisResultView from "./components/DiagnosisResultView";
 import DiagnosticChat from "./components/DiagnosticChat";
-import SubscriptionPanel from "./components/SubscriptionPanel";
 import BannerDisplay from "./components/BannerDisplay";
 import IntegratedVoiceController from "./components/IntegratedVoiceController";
 import PhoneAuth from "./components/PhoneAuth";
 import LandingPage from "./components/LandingPage";
 import InstallPrompt from "./components/InstallPrompt";
-import VisualRepairAssistant from "./components/VisualRepairAssistant";
 import LiveMediaAssistant from "./components/LiveMediaAssistant";
 import DiagAssistLiveScreen from "./components/DiagAssistLiveScreen";
 import AutoQuestioningLoop from "./components/AutoQuestioningLoop";
-import ScreeningV2Panel from "./components/ScreeningV2Panel";
-import ClientAssistance, { AssistancePrefill } from "./components/assistance/ClientAssistance";
-import MechanicSpace from "./components/assistance/MechanicSpace";
+import type { AssistancePrefill } from "./components/assistance/ClientAssistance";
 import { ModeSelect, readUserMode, saveUserMode, UserMode } from "./components/assistance/UserMode";
 
 import { Diagnosis, ApiUsage, ChatMessage, SubscriptionPlan } from "./types";
+
+// Chargement différé des écrans lourds (gain de poids au premier affichage sur connexion faible).
+const VisualRepairAssistant = lazy(() => import("./components/VisualRepairAssistant"));
+const ScreeningV2Panel = lazy(() => import("./components/ScreeningV2Panel"));
+const SubscriptionPanel = lazy(() => import("./components/SubscriptionPanel"));
+const MechanicSpace = lazy(() => import("./components/assistance/MechanicSpace"));
+const ClientAssistance = lazy(() => import("./components/assistance/ClientAssistance"));
+const TabLoading = () => <div className="p-8 text-center text-sm text-slate-400">Chargement…</div>;
 
 const demoDiagnosis: Diagnosis = {
   brandModelInfo: "Ford C-Max 2018 (2.0 TDCi)",
@@ -1452,11 +1456,11 @@ export default function App() {
                       onRequestMechanic={requestMechanicFromDiagnosis}
                     />
                   ) : activeResultTab === "visual" ? (
-                    <VisualRepairAssistant
+                    <Suspense fallback={<TabLoading />}><VisualRepairAssistant
                       diagnosis={diagnosisResult}
                       currentPlan={currentPlan}
                       onUpgradeClick={() => setActiveTab("prices")}
-                    />
+                    /></Suspense>
                   ) : (
                     <DiagnosticChat
                       diagnosis={diagnosisResult}
@@ -1544,16 +1548,16 @@ export default function App() {
 
         {/* TAB: Assistance automobile (client) */}
         {activeTab === "assistance" && (
-          <ClientAssistance
+          <Suspense fallback={<TabLoading />}><ClientAssistance
             prefill={assistancePrefill}
             onPrefillUsed={() => setAssistancePrefill(null)}
             onOpenMechanicSpace={isDriver ? undefined : () => setActiveTab("depannage")}
             driverMode={isDriver}
-          />
+          /></Suspense>
         )}
 
         {/* TAB: Espace dépannage (mécanicien) */}
-        {activeTab === "depannage" && !isDriver && <MechanicSpace onBack={() => setActiveTab("assistance")} onUpgrade={() => setActiveTab("prices")} />}
+        {activeTab === "depannage" && !isDriver && <Suspense fallback={<TabLoading />}><MechanicSpace onBack={() => setActiveTab("assistance")} onUpgrade={() => setActiveTab("prices")} /></Suspense>}
 
         {/* TAB: DiagAssist Scanner — appairage tablette + coaching temps réel */}
         {activeTab === "screening" && accountType === "mechanic" && !isDriver && (
@@ -1563,7 +1567,7 @@ export default function App() {
               <h1 className="text-2xl md:text-3xl font-black text-white mt-1">Scanner &amp; coaching technicien à distance</h1>
               <p className="text-sm text-slate-400 mt-2">Appairez la tablette du scanner, visualisez son écran, guidez les manipulations et gardez le diagnostic sous contrôle.</p>
             </div>
-            <ScreeningV2Panel isPremium={currentPlan === "premium"} />
+            <Suspense fallback={<TabLoading />}><ScreeningV2Panel isPremium={currentPlan === "premium"} /></Suspense>
           </div>
         )}
 
@@ -1603,14 +1607,14 @@ export default function App() {
         {activeTab === "prices" && (
           <div className={isAdminAccount ? "max-w-6xl mx-auto space-y-8 animate-fade-in" : "max-w-3xl mx-auto space-y-8 animate-fade-in"}>
             {/* User Subscription Selection Panel (ou tableau de bord complet si admin) */}
-            <SubscriptionPanel 
+            <Suspense fallback={<TabLoading />}><SubscriptionPanel 
               currentPlan={currentPlan} 
               onPlanChange={handlePlanChange} 
               onActivatePayg={() => handlePlanChange("payg_active")}
               onRequestActivation={handleRequestActivation}
               isAdmin={isAdminAccount}
               isOwner={accountType === "owner"}
-            />
+            /></Suspense>
           </div>
         )}
 

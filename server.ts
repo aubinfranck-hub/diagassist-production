@@ -10,6 +10,7 @@ import twilio from "twilio";
 import nodemailer from "nodemailer";
 import { Pool } from "pg";
 import crypto from "crypto";
+import compression from "compression";
 import { WebSocketServer } from "ws";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
@@ -5715,8 +5716,18 @@ Directives pour ce tour :
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    // Fichiers de l'app : compression gzip/brotli-like et cache long. Les fichiers de /assets ont un nom
+    // haché (changent à chaque build) donc peuvent être mis en cache 1 an. index.html et sw.js ne sont
+    // JAMAIS mis en cache, pour que les mises à jour arrivent tout de suite. La compression est limitée
+    // aux fichiers statiques : elle ne touche ni l'API ni les flux temps réel.
+    app.use("/assets", compression(), express.static(path.join(distPath, "assets"), { maxAge: "1y", immutable: true }));
+    app.use(compression(), express.static(distPath, {
+      setHeaders: (res, file) => {
+        if (/(?:^|[\\/])(?:index\.html|sw\.js)$/.test(file)) res.setHeader("Cache-Control", "no-cache");
+      },
+    }));
+    app.get("*", compression(), (req, res) => {
+      res.setHeader("Cache-Control", "no-cache");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
