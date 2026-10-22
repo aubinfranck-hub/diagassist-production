@@ -6,6 +6,16 @@ import {
   type RequestMode, type RequestStatus,
 } from "./domain";
 import { ASSISTANCE_SCHEMA_SQL } from "./schema";
+import { extractDtcCodes, lookupDtc } from "../dtc/dtcKnowledge";
+
+// Intitulé de chaque code défaut saisi par le client (base locale hors ligne), pour le mécanicien.
+function faultCodeInfo(faultCodes: unknown, vehicle: any): { code: string; title: string; brandDefinition: string | null }[] {
+  const brand = typeof vehicle === "object" && vehicle ? vehicle.brand : null;
+  return extractDtcCodes(Array.isArray(faultCodes) ? faultCodes.join(" ") : String(faultCodes || ""), 6).map((code) => {
+    const info = lookupDtc(code, brand);
+    return { code, title: info?.generic?.t || "", brandDefinition: info?.matchedBrand ? `${info.oem[0].brand} : ${info.oem[0].description}` : null };
+  }).filter((x) => x.title || x.brandDefinition);
+}
 
 export class AssistanceError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
@@ -1365,7 +1375,7 @@ export function createAssistanceCore(deps: CoreDeps) {
     const s = await getSettings();
     return {
       mission: {
-        ...summary(r, labels[r.service], s.tariffs), faultCodes: r.fault_codes, description: r.description,
+        ...summary(r, labels[r.service], s.tariffs), faultCodes: r.fault_codes, faultCodeInfo: faultCodeInfo(r.fault_codes, r.vehicle), description: r.description,
         // Dépannage : position exacte, repère et téléphone, uniquement pour le professionnel affecté, tant que la mission est ouverte.
         position: !atelier && open ? { lat: r.lat, lng: r.lng, address: r.address, landmark: r.landmark, source: r.position_source } : null,
         clientPhone: detailsOpen ? r.contact_phone : null,
