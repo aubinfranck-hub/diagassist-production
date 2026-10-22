@@ -16,6 +16,13 @@ function faultCodeInfo(faultCodes: unknown, vehicle: any): { code: string; title
     return { code, title: info?.generic?.t || "", brandDefinition: info?.matchedBrand ? `${info.oem[0].brand} : ${info.oem[0].description}` : null };
   }).filter((x) => x.title || x.brandDefinition);
 }
+import { routeLeg, routeManyTo, routingEnabled } from "./routing";
+
+// Notifications destinées au professionnel (les autres vont au client).
+const PRO_NOTIFICATION_TYPES = new Set([
+  "mission_proposee", "mission_assignee", "offre_retenue", "offre_non_retenue", "mission_annulee", "mission_retiree", "abonnement_invite",
+  "visite_confirmee", "visite_refusee", "client_en_route", "devis_accepte", "devis_refuse", "paiement_recu", "reversement_effectue",
+]);
 
 export class AssistanceError extends Error {
   constructor(public status: number, message: string, public code?: string) { super(message); }
@@ -29,6 +36,8 @@ export type DirectoryMechanic = {
 export type CoreDeps = {
   pool: Pool;
   sendWhatsApp?: (phone: string, message: string) => Promise<void>;
+  // Notification Web Push vers les appareils de ce téléphone (optionnel, best-effort).
+  sendPush?: (phone: string, title: string, body: string, url: string, tag: string) => Promise<void>;
   // Droit d'accès : seuls les mécaniciens à jour de leur abonnement DiagAssist reçoivent des assistances.
   isProSubscribed: (phone: string) => boolean;
   // Analyse automatique par l'IA DiagAssist (texte + médias). Peut échouer : la demande part quand même.
@@ -175,6 +184,16 @@ export function createAssistanceCore(deps: CoreDeps) {
         `INSERT INTO assistance_notifications (phone, request_id, type, title, body, created_at) VALUES ($1,$2,$3,$4,$5,$6)`,
         [phone, requestId, type, title, body, Date.now()]
       );
+      if (deps.sendPush) {
+        // Le mécanicien ouvre son espace dépannage, le client le suivi de sa demande.
+        // Message : destiné au mécanicien sauf s'il est adressé au client de la demande.
+        const isPro = type === "message" && requestId
+          ? (await pool.query("SELECT client_phone FROM assistance_requests WHERE id = $1", [requestId])).rows[0]?.client_phone !== phone
+          : PRO_NOTIFICATION_TYPES.has(type);
+        const tab = isPro ? "depannage" : "assistance";
+        const url = `/?from=push&tab=${tab}${requestId ? `&request=${encodeURIComponent(requestId)}` : ""}`;
+        deps.sendPush(phone, title, body, url, requestId ? `${requestId}:${type}` : type).catch((e) => console.warn("[ASSISTANCE] Push non envoyé:", e?.message || e));
+      }
       if (whatsapp && deps.sendWhatsApp) {
         const s = await getSettings();
         if (whatsapp === "force" || s.whatsapp_notifications) deps.sendWhatsApp(phone, `DiagAssist - ${title}. ${body}`).catch((e) => console.warn("[ASSISTANCE] WhatsApp non envoyé:", e?.message || e));
@@ -599,12 +618,24 @@ export function createAssistanceCore(deps: CoreDeps) {
              AND NOT EXISTS (SELECT 1 FROM assistance_assignments a WHERE a.request_id=$5 AND a.pro_phone=p.phone)`,
           [r.service, r.zone_id, minLoc, r.client_phone, requestId, round, ACTIVE_MISSION_STATUSES, atelier ? ["garage", "both"] : ["mobile", "both"]]
         )).rows;
-        chosen = cands
+        let near = cands
           .filter((p) => deps.isProSubscribed(p.phone))
-          .map((p) => ({ phone: p.phone as string, km: haversineKm(r.lat, r.lng, p.last_lat, p.last_lng) }))
+          .map((p) => ({ phone: p.phone as string, km: haversineKm(r.lat, r.lng, p.last_lat, p.last_lng), lat: p.last_lat as number, lng: p.last_lng as number, minutes: null as number | null }))
           .filter((p) => p.km <= settings.search_radius_km)
-          .sort((a, b) => a.km - b.km)
-          .slice(0, room);
+          .sort((a, b) => a.km - b.km);
+        // Trajets routiers (OSRM, si configuré) : on classe par durée réelle de trajet plutôt qu'à
+        // vol d'oiseau. Dépannage : du mécanicien au client ; atelier : du client au garage.
+        if (routingEnabled() && near.length > 1) {
+          const shortlist = near.slice(0, 25);
+          const legs = atelier
+            ? await Promise.all(shortlist.map((p) => routeLeg({ lat: r.lat, lng: r.lng }, { lat: p.lat, lng: p.lng })))
+            : await routeManyTo(shortlist.map((p) => ({ lat: p.lat, lng: p.lng })), { lat: r.lat, lng: r.lng });
+          if (legs.some(Boolean)) {
+            near = shortlist.map((p, i) => (legs[i] ? { ...p, km: legs[i]!.km, minutes: legs[i]!.minutes } : p))
+              .sort((a, b) => (a.minutes ?? estimateEtaMinutes(a.km, settings.avg_speed_kmh)) - (b.minutes ?? estimateEtaMinutes(b.km, settings.avg_speed_kmh)));
+          }
+        }
+        chosen = near.slice(0, room).map((p) => ({ phone: p.phone, km: p.km }));
       }
       if (chosen.length) {
         for (const ch of chosen) {
@@ -695,7 +726,13 @@ export function createAssistanceCore(deps: CoreDeps) {
       // ETA approximatif par défaut : dépannage = du mécanicien au client ; atelier = du client au garage.
       let km = Number(o.distance_km) || 0;
       if (pro.last_lat != null && pro.last_lng != null) km = haversineKm(r.lat, r.lng, pro.last_lat, pro.last_lng);
-      finalEta = eta ?? estimateEtaMinutes(km, settings.avg_speed_kmh);
+      let routedMinutes: number | null = null;
+      if (eta == null && pro.last_lat != null && pro.last_lng != null) {
+        const pt = { lat: pro.last_lat, lng: pro.last_lng }, client = { lat: r.lat, lng: r.lng };
+        const leg = await routeLeg(r.mode === "atelier" ? client : pt, r.mode === "atelier" ? pt : client);
+        if (leg) { km = leg.km; routedMinutes = leg.minutes; }
+      }
+      finalEta = eta ?? routedMinutes ?? estimateEtaMinutes(km, settings.avg_speed_kmh);
       revised = o.status === "offre_faite";
       validUntil = now + settings.bid_valid_s * 1000;
       await c.query(
@@ -1273,8 +1310,13 @@ export function createAssistanceCore(deps: CoreDeps) {
         let eta = null;
         if (loc && r.lat != null) {
           const km = haversineKm(loc.lat, loc.lng, r.lat, r.lng);
-          // Atelier : trajet estimé du client jusqu'au garage ; dépannage : arrivée du mécanicien. Toujours approximatif.
-        eta = { minutes: estimateEtaMinutes(km, settings.avg_speed_kmh), distanceKm: Math.round(km * 10) / 10, approximate: true };
+          // Atelier : trajet estimé du client jusqu'au garage ; dépannage : arrivée du mécanicien. Toujours approximatif
+          // (OSRM, si configuré, donne la distance et la durée par la route, sans le trafic en temps réel).
+          const client = { lat: r.lat, lng: r.lng }, at = { lat: loc.lat, lng: loc.lng };
+          const leg = await routeLeg(atelier ? client : at, atelier ? at : client);
+          eta = leg
+            ? { minutes: leg.minutes, distanceKm: Math.round(leg.km * 10) / 10, approximate: true, routed: true }
+            : { minutes: estimateEtaMinutes(km, settings.avg_speed_kmh), distanceKm: Math.round(km * 10) / 10, approximate: true };
         }
         const contactOpen = ACTIVE_MISSION_STATUSES.includes(r.status) || (r.status === "terminee" && Date.now() - Number(r.completed_at || 0) < 48 * 3600000);
         pro = {

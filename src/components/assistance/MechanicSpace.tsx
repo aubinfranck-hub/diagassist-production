@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import PushToggle from "./PushToggle";
 import { AlertTriangle, ArrowLeft, Clock, Loader2, MapPin, ShieldAlert, ShieldCheck, WifiOff, X } from "lucide-react";
 import {
   api, AssistanceError, AssistanceStatus, formatDate, formatXOF, MSG_AI_TITLE, MSG_SUBSCRIPTION, STATUS_SHORT, useOnline, usePolling, vehicleLabel,
@@ -213,6 +214,8 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
         <div className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500">Espace dépannage</div>
         <h1 className="text-2xl font-black text-white mt-1">Mes missions</h1>
       </div>
+
+      <PushToggle audience="pro" />
 
       {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Hors ligne : le partage de position et les offres reprendront au retour du réseau.</span></Notice>}
       {error && <Notice tone="error">{error}</Notice>}

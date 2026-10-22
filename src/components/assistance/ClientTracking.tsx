@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import PushToggle from "./PushToggle";
 import {
   Phone, MessageCircle, Clock, CheckCircle2, Loader2, Flag, WifiOff, AlertTriangle, Star, Check, X, Navigation, Wallet,
 } from "lucide-react";
@@ -203,6 +204,7 @@ export default function ClientTracking({
             <p className="text-xs text-slate-500">{r.serviceLabel || "Assistance"} · {vehicleLabel(r.vehicle)}{r.symptoms ? ` · ${r.symptoms}` : ""}</p>
           </div>
         )}
+        {st !== "brouillon" && <PushToggle audience="client" />}
         {r.aiAnalysis && (
           <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm">
             <div className="font-bold text-slate-200">{MSG_AI_TITLE}</div>
@@ -373,6 +375,7 @@ export default function ClientTracking({
       {atelier && st === "affectee" && allowed.leaving && (
         <Notice tone="ok">Visite confirmée. Appuyez sur « Je pars » quand vous quittez l'endroit où vous êtes.</Notice>
       )}
+      <PushToggle audience="client" />
       {st === "sur_place" && <Notice tone="ok">{atelier ? "Vous êtes arrivé au garage. Présentez-vous au mécanicien." : "Votre mécanicien est arrivé. Rejoignez-le ou signalez-vous par téléphone."}</Notice>}
 
       {/* Étapes */}

@@ -25,6 +25,8 @@ import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/mo
 import { getGeminiKeys } from "./src/utils/geminiKeys";
 import { buildDtcReference, dtcKbStats, dtcProcedureComplement, dtcVoiceSummary, extractDtcCodes, lookupDtc, normalizeDtcCode } from "./src/modules/dtc/dtcKnowledge";
 import { decodeVin, extractVin, formatVinForPrompt, normalizeVin, vinDecoderStatus } from "./src/modules/vin/vinDecoder";
+import { createProductSearch } from "./src/utils/productSearch";
+import { createPushService, PUSH_SCHEMA_SQL } from "./src/modules/push/push";
 
 // Navigation HP-Web : l'extension du navigateur de l'utilisateur (sa session, sa licence) est
 // prioritaire ; le gateway serveur ne sert que de repli, Cloudflare le bloque souvent.
@@ -478,6 +480,7 @@ async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_jeko_payments_order ON jeko_payments (order_ref);
     CREATE INDEX IF NOT EXISTS idx_jeko_payments_phone ON jeko_payments (phone);
   `);
+  await dbPool.query(PUSH_SCHEMA_SQL);
   console.log("[DB] Tables PostgreSQL vérifiées/créées avec succès.");
 
   // Élargit shop_orders pour les nouvelles colonnes (panier multi-produits, suivi) sur une
@@ -1104,6 +1107,20 @@ function liveToolFindMechanic(city: string, type?: "mechanic" | "parts_vendor"):
   return `Contacts trouvés : ${lines.join(" | ")}.`;
 }
 
+// Index de recherche floue du catalogue actif (sans photos), reconstruit au plus toutes les 2 min.
+let shopSearchIndex: { at: number; search: (q: string, limit?: number) => { slug: string }[] } | null = null;
+async function fuzzyShopSearch(query: string, limit = 5): Promise<string[]> {
+  if (!dbPool) return [];
+  if (!shopSearchIndex || Date.now() - shopSearchIndex.at > 120000) {
+    const { rows } = await dbPool.query(
+      `SELECT p.slug, p.name, p.brand, p.model, p.compatibility, p.description, c.name AS category_name
+         FROM shop_products p LEFT JOIN shop_categories c ON c.id = p.category_id WHERE p.is_active = true`
+    );
+    shopSearchIndex = { at: Date.now(), search: createProductSearch(rows) };
+  }
+  return shopSearchIndex.search(query, limit).map((r) => r.slug);
+}
+
 // Vérifie le prix et la disponibilité d'une pièce dans la boutique DiagAssist.
 // Si la pièce est introuvable ou en rupture, enregistre automatiquement une demande de
 // commande dans shop_part_requests et génère un lien WhatsApp de confirmation au client.
@@ -1125,7 +1142,19 @@ async function liveToolCheckPartAvailability(
       [patterns]
     );
     let { rows } = await searchSql((tokens.length ? tokens : [query]).map((t) => `%${t}%`));
-    // Rien avec tous les mots : on retombe sur le premier mot (le type de pièce) seul.
+    // Rien avec tous les mots exacts : recherche floue (fautes de frappe, accents, pluriels) sur le
+    // catalogue actif, puis seulement en dernier recours le premier mot (le type de pièce) seul.
+    if (rows.length === 0) {
+      const fuzzy = await fuzzyShopSearch(query, 5);
+      if (fuzzy.length > 0) {
+        ({ rows } = await dbPool.query(
+          `SELECT name, slug, price_fcfa, availability, photos, warranty, compatibility FROM shop_products
+            WHERE is_active = true AND slug = ANY($1::text[])`,
+          [fuzzy]
+        ));
+        rows.sort((a: any, b: any) => fuzzy.indexOf(a.slug) - fuzzy.indexOf(b.slug));
+      }
+    }
     if (rows.length === 0 && tokens.length > 1) ({ rows } = await searchSql([`%${tokens[0]}%`]));
     // Cartes affichées à l'écran du mécanicien (photo, prix, disponibilité) — 3 max. Les photos
     // en data-URL très lourdes sont ignorées pour ne pas saturer le WebSocket.
@@ -5688,9 +5717,14 @@ Directives pour ce tour :
   // Assistance automobile : demande envoyée à plusieurs mécaniciens validés et à jour de leur abonnement ;
   // le premier qui accepte prend la mission. Paiement via Jèko (commission DiagAssist prélevée) ; enregistré
   // avant Jèko car le webhook de paiement lui délègue les références "dgas-…".
+  // Notifications Web Push (optionnel : VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY).
+  const push = createPushService(dbPool);
+  push.registerRoutes(app, requireAuth);
+
   const assistance = registerAssistance({
     app,
     pool: dbPool,
+    sendPush: (phone: string, title: string, body: string, url: string, tag: string) => push.sendToPhone(phone, { title, body, url, tag }).then(() => undefined),
     requireAuth,
     requireAdminAuth,
     sessions,

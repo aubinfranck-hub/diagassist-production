@@ -234,6 +234,13 @@ export default function App() {
     try {
       const q = new URLSearchParams(window.location.search);
       if (q.get("assistance") && q.get("payment") === "return") return "assistance"; // retour de paiement Jèko
+      // Ouverture depuis une notification push : espace dépannage (mécanicien) ou suivi (client).
+      if (q.get("from") === "push") {
+        const tab = q.get("tab");
+        window.history.replaceState(null, "", window.location.pathname);
+        if (tab === "depannage" && readUserMode() !== "driver") return "depannage";
+        if (tab === "assistance" || tab === "depannage") return "assistance";
+      }
     } catch { /* ignoré */ }
     return readUserMode() === "driver" ? "assistance" : "diagnose";
   });
