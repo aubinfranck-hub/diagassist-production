@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { compareBids, type BidSort } from "./bidComparison";
+import { useEffect, useMemo, useState } from "react";
 import { Star, Clock, MapPin, Loader2, Sparkles, RefreshCw } from "lucide-react";
-import { Bid, bestBidId } from "./api";
+import { Bid } from "./api";
 import { btnPrimary, btnSecondary, useCountdown } from "./ui";
 
 function initials(name?: string): string {
@@ -42,7 +43,7 @@ function BidCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-base font-black text-white truncate">{name}</span>
-            {best && <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full"><Sparkles className="w-3 h-3" /> Meilleur rapport</span>}
+            {best && <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full"><Sparkles className="w-3 h-3" /> Prix le plus bas</span>}
             {bid.isRevised && <span className="text-[11px] font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">Offre révisée</span>}
           </div>
           <div className="text-sm text-slate-400 flex items-center gap-x-2 flex-wrap">
@@ -82,14 +83,18 @@ export default function BidList({
   bids: Bid[]; atelier: boolean; busyId: string; error?: string;
   onSelect: (b: Bid) => void; onExpire: () => void;
 }) {
-  const [sort, setSort] = useState<"price" | "eta">("price");
+  const [sort, setSort] = useState<BidSort>("price");
   const [confirm, setConfirm] = useState<Bid | null>(null);
-  const best = useMemo(() => bestBidId(bids), [bids]);
-  const sorted = useMemo(() => [...bids].sort((a, b) =>
-    sort === "price" ? a.amount - b.amount || a.etaMinutes - b.etaMinutes : a.etaMinutes - b.etaMinutes || a.amount - b.amount), [bids, sort]);
+  const [budget, setBudget] = useState("");
+  const [maxEta, setMaxEta] = useState("");
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  const valid = useMemo(() => bids.filter(b => b.validUntil > now), [bids, now]);
+  const best = useMemo(() => compareBids(valid, "price", null, null, now)[0]?.id, [valid, now]);
+  const sorted = useMemo(() => compareBids(valid, sort, budget === "" ? null : Number(budget), maxEta === "" ? null : Number(maxEta), now), [valid, sort, budget, maxEta, now]);
   // Si l'offre en cours de confirmation disparaît (expirée, retirée), on ferme la confirmation.
-  const conf = confirm ? bids.find((b) => b.id === confirm.id) || null : null;
-  const chip = (k: "price" | "eta", label: string) => (
+  const conf = confirm ? valid.find((b) => b.id === confirm.id) || null : null;
+  const chip = (k: BidSort, label: string) => (
     <button type="button" aria-pressed={sort === k} onClick={() => setSort(k)}
       className={`min-h-[36px] px-3 rounded-full text-xs font-black border cursor-pointer ${sort === k ? "bg-red-600 border-red-500 text-[#ffffff]" : "border-white/[0.15] text-slate-300"}`}>{label}</button>
   );
@@ -98,8 +103,14 @@ export default function BidList({
     <section className="space-y-3" aria-label="Offres reçues">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-base font-black text-white">Offres reçues{bids.length ? ` (${bids.length})` : ""}</h3>
-        {bids.length > 1 && <div className="flex gap-2">{chip("price", "Moins cher")}{chip("eta", "Plus rapide")}</div>}
+        {bids.length > 1 && <div className="flex flex-wrap gap-2">{chip("price", "Moins cher")}{chip("eta", "Plus rapide")}{chip("rating", "Mieux noté")}</div>}
       </div>
+      {bids.length > 0 && <div className="flex flex-wrap gap-3 text-sm text-slate-300">
+        <label>Budget maximal (F CFA)<input type="number" min="0" value={budget} onChange={e => setBudget(e.target.value)} placeholder="Sans limite" className="block bg-slate-900 border border-slate-600 rounded-lg p-2 mt-1 w-40" /></label>
+        <label>Délai maximal<select value={maxEta} onChange={e => setMaxEta(e.target.value)} className="block bg-slate-900 border border-slate-600 rounded-lg p-2 mt-1"><option value="">Sans limite</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">1 heure</option></select></label>
+        <p role="status" className="w-full text-xs">{sorted.length} offre(s) disponible(s) selon vos critères. Les délais restent estimatifs.</p>
+        {sorted.length === 0 && <button className="underline" onClick={() => { setBudget(""); setMaxEta(""); }}>Aucune offre correspondante — effacer les filtres</button>}
+      </div>}
       {error && <div role="alert" className="rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</div>}
       {bids.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/[0.15] px-4 py-5 text-center text-sm text-slate-400 space-y-1">
@@ -126,7 +137,7 @@ export default function BidList({
             </p>
             <div className="grid grid-cols-2 gap-3">
               <button className={`${btnSecondary} !px-3`} disabled={!!busyId} onClick={() => setConfirm(null)}>Retour</button>
-              <button className={`${btnPrimary} !px-3`} disabled={!!busyId} onClick={() => { onSelect(conf); setConfirm(null); }}>Oui, choisir</button>
+              <button className={`${btnPrimary} !px-3`} disabled={!!busyId} onClick={() => { if (conf.validUntil > Date.now()) onSelect(conf); else onExpire(); setConfirm(null); }}>Oui, choisir</button>
             </div>
           </div>
         </div>
@@ -134,3 +145,4 @@ export default function BidList({
     </section>
   );
 }
+

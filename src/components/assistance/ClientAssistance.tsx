@@ -1,3 +1,4 @@
+import CallbackRequest from "../callbacks/CallbackRequest";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronRight, LifeBuoy, LocateFixed, MapPin, WifiOff, Wrench } from "lucide-react";
 import {
@@ -141,7 +142,7 @@ export default function ClientAssistance({
 
   if (view.name === "track") {
     return (
-      <Wrap>
+      <Wrap requestId={view.id}>
         <div className="relative">
           <ClientTracking requestId={view.id} status={status} paymentReturn={!!view.payReturn} onBack={() => { setView({ name: "home" }); void loadAll(); }} />
           <SosButton className="absolute top-3 right-3 z-20" />
@@ -253,6 +254,7 @@ export default function ClientAssistance({
   );
 }
 
-function Wrap({ children }: { children: React.ReactNode }) {
-  return <div className="max-w-xl mx-auto pb-2">{children}</div>;
+function Wrap({ children, requestId }: { children: React.ReactNode; requestId?: string }) {
+  return <div className="max-w-xl mx-auto pb-2">{children}<CallbackRequest key={requestId || "general"} source="assistance" requestId={requestId} /></div>;
 }
+

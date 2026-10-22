@@ -1,4 +1,5 @@
 import express from "express";
+import { registerCallbacks } from "./src/modules/callbacks/routes";
 import { createServer as createHttpServer } from "node:http";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -2333,6 +2334,8 @@ async function startServer() {
     message: { success: false, message: "Trop de demandes. Veuillez réessayer dans quelques minutes." },
   });
 
+  await registerCallbacks(app, { pool: dbPool, requireAuth, requireAdminAuth, limiter: shopPublicLimiter });
+
   // API Route: Health Check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
@@ -4240,6 +4243,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const from = String(req.body?.From || "");
     const text = String(req.body?.Body || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     if (dbPool && /^(stop|arret|arreter|desabonner|desinscrire|unsubscribe)\b/.test(text) && phoneKey(from).length >= 8) {
+      const callbackNumber = from.replace(/^whatsapp:/, "");
+      await dbPool.query("UPDATE voice_callback_permissions SET expires_at=now(),updated_at=now() WHERE phone=$1", [callbackNumber]);
+      await dbPool.query("UPDATE voice_callbacks SET status='cancelled',updated_at=now() WHERE phone=$1 AND status IN ('queued','permission_pending','review')", [callbackNumber]);
       await dbPool.query(
         `UPDATE shop_customers SET whatsapp_optout = true, whatsapp_optout_at = CURRENT_TIMESTAMP
          WHERE right(regexp_replace(phone, '\\D', '', 'g'), 10) = $1`, [phoneKey(from)]);
@@ -6432,3 +6438,4 @@ process.on("unhandledRejection", (reason: any) => {
 });
 
 startServer().catch(error => { console.error("[Démarrage]", error.message); process.exit(1); });
+
