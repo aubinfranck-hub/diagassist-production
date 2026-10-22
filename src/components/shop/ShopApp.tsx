@@ -1,3 +1,5 @@
+import CallbackRequest from "../callbacks/CallbackRequest";
+import { catalogIndex, compareCatalogPrices } from "../../modules/shop/catalogSearch";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Award, BookOpen, Calendar, CheckCircle2, ChevronDown,
@@ -399,6 +401,7 @@ function ShopCatalog({
   initialSearch: string; onProductClick: (slug: string) => void;
 }) {
   const [search, setSearch] = useState(initialSearch);
+  useEffect(() => setSearch(initialSearch), [initialSearch]);
   const [catSlug, setCatSlug] = useState<string | null>(null);
   const [brand, setBrand] = useState("");
   const [inStockOnly, setInStockOnly] = useState(false);
@@ -406,24 +409,24 @@ function ShopCatalog({
   const [view, setView] = useState<"grid" | "list">("grid");
   const [filterOpen, setFilterOpen] = useState(false);
 
+  const [visibleCount, setVisibleCount] = useState(24);
+  const index = useMemo(() => catalogIndex(products), [products]);
+  useEffect(() => setVisibleCount(24), [search, catSlug, brand, inStockOnly, sort]);
+
   const brands = useMemo(() => [...new Set(products.map(p => p.brand).filter(Boolean) as string[])].sort(), [products]);
 
   const filtered = useMemo(() => {
-    let res = products.filter(p => {
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        if (!p.name.toLowerCase().includes(q) && !(p.brand || "").toLowerCase().includes(q) &&
-          !(p.description || "").toLowerCase().includes(q)) return false;
-      }
+    const matches = search.trim() ? index.search(search.trim()).map(result => result.item) : products;
+    let res = matches.filter(p => {
       if (catSlug && p.category_slug !== catSlug) return false;
       if (brand && p.brand !== brand) return false;
       if (inStockOnly && !isInStock(p.availability)) return false;
       return true;
     });
-    if (sort === "price-asc") res = [...res].sort((a, b) => (a.price_fcfa || 0) - (b.price_fcfa || 0));
-    if (sort === "price-desc") res = [...res].sort((a, b) => (b.price_fcfa || 0) - (a.price_fcfa || 0));
+    if (sort === "price-asc") res = [...res].sort((a, b) => compareCatalogPrices(a, b));
+    if (sort === "price-desc") res = [...res].sort((a, b) => compareCatalogPrices(a, b, true));
     return res;
-  }, [products, search, catSlug, brand, inStockOnly, sort]);
+  }, [products, index, search, catSlug, brand, inStockOnly, sort]);
 
   const reset = () => { setSearch(""); setCatSlug(null); setBrand(""); setInStockOnly(false); setSort("default"); };
 
@@ -434,14 +437,14 @@ function ShopCatalog({
         <div className="flex flex-wrap items-center gap-3 mb-6">
           <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: C.dark, border: `1px solid ${C.border}` }}>
             <Search className="w-4 h-4 text-neutral-500 flex-shrink-0" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher dans le catalogue..."
+            <input value={search} onChange={e => setSearch(e.target.value)} aria-label="Rechercher une pièce, une marque ou un véhicule" placeholder="Pièce, marque, modèle de véhicule…"
               className="bg-transparent text-white text-sm outline-none flex-1 min-w-0 placeholder-neutral-500" />
             {search && <button onClick={() => setSearch("")}><X className="w-4 h-4 text-neutral-500" /></button>}
           </div>
           <select value={sort} onChange={e => setSort(e.target.value as any)}
             className="px-3 py-2 rounded-lg text-sm text-white outline-none cursor-pointer"
             style={{ background: C.dark, border: `1px solid ${C.border}` }}>
-            <option value="default">Tri : défaut</option>
+            <option value="default">Pertinence</option>
             <option value="price-asc">Prix croissant</option>
             <option value="price-desc">Prix décroissant</option>
           </select>
@@ -508,20 +511,22 @@ function ShopCatalog({
 
           {/* Grid / List */}
           <div className="flex-1 min-w-0">
-            <p className="text-xs text-neutral-500 mb-4">{filtered.length} produit{filtered.length !== 1 ? "s" : ""}</p>
+            <p className="text-xs text-neutral-500 mb-2" role="status">{filtered.length} produit{filtered.length !== 1 ? "s" : ""}</p>
+            {search.trim() && <p className="text-xs text-neutral-400 mb-4">La recherche accepte les fautes de frappe. Faites confirmer la compatibilité avec votre véhicule avant l’achat.</p>}
             {filtered.length === 0 ? (
               <div className="text-center py-16">
                 <Package className="w-10 h-10 mx-auto mb-3 text-neutral-700" />
                 <p className="text-neutral-400 text-sm">Aucun produit ne correspond à vos filtres.</p>
+                <CallbackRequest source="boutique" />
                 <button onClick={reset} className="mt-3 text-xs font-bold" style={{ color: C.red }}>Réinitialiser les filtres</button>
               </div>
             ) : view === "grid" ? (
               <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                {filtered.map(p => <ProductCard key={p.id} product={p} cart={cart} onAdd={onAdd} onClick={onProductClick} />)}
+                {filtered.slice(0, visibleCount).map(p => <ProductCard key={p.id} product={p} cart={cart} onAdd={onAdd} onClick={onProductClick} />)}
               </div>
             ) : (
               <div className="space-y-3">
-                {filtered.map(p => (
+                {filtered.slice(0, visibleCount).map(p => (
                   <div key={p.id} className="flex gap-4 rounded-xl border p-3 transition-colors hover:border-red-800"
                     style={{ background: C.dark, borderColor: C.border }}>
                     <div className="w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden" style={{ background: "#0d1117" }}>
@@ -547,6 +552,7 @@ function ShopCatalog({
                 ))}
               </div>
             )}
+            {filtered.length > visibleCount && <button onClick={() => setVisibleCount(n => n + 24)} className="mt-4 rounded-lg border border-neutral-600 px-4 py-2 text-sm text-white">Afficher 24 produits de plus ({Math.min(visibleCount, filtered.length)} / {filtered.length})</button>}
           </div>
         </div>
       </div>
@@ -638,6 +644,7 @@ function ProductDetailModal({
               {inCart ? <><CheckCircle2 className="w-4 h-4" /> Ajouté au panier</> : <><ShoppingCart className="w-4 h-4" /> Ajouter au panier</>}
             </button>
 
+            <CallbackRequest source="boutique" productSlug={product.slug} />
             <a href={waLink(`Bonjour DiagAssist, je suis intéressé par le ${product.name}. Pouvez-vous me renseigner ?`)}
               target="_blank" rel="noreferrer"
               className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold text-white border border-neutral-700 hover:bg-white/5 transition-colors">
@@ -1309,7 +1316,9 @@ export default function ShopApp({ adminAuth }: { adminAuth?: { phone: string; na
 
       <CartDrawer cart={cart} open={cartOpen} onClose={() => setCartOpen(false)} onCheckout={() => setPage("checkout")} />
 
+      <div className="max-w-3xl mx-auto px-4 pb-20"><CallbackRequest source="boutique" /></div>
       <FloatingWA />
     </div>
   );
 }
+

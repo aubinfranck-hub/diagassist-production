@@ -1,3 +1,4 @@
+import CallbackAdmin from "../callbacks/CallbackAdmin";
 import React, { useState } from "react";
 import { LifeBuoy, ChevronDown, ChevronUp } from "lucide-react";
 import AdminDashboardView from "./AdminDashboardView";
@@ -14,6 +15,7 @@ const VIEWS = [
   { id: "config", label: "Configuration" },
   { id: "payments", label: "Paiements" },
   { id: "claims", label: "Réclamations" },
+  { id: "callbacks", label: "Rappels WhatsApp" },
 ] as const;
 type ViewId = (typeof VIEWS)[number]["id"];
 
@@ -42,8 +44,10 @@ export default function AssistanceAdmin() {
           {view === "config" && <AdminConfig />}
           {view === "payments" && <AdminPayments />}
           {view === "claims" && <AdminClaims />}
+          {view === "callbacks" && <CallbackAdmin />}
         </>
       )}
     </div>
   );
 }
+
