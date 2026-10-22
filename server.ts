@@ -23,7 +23,7 @@ import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
 import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
 import { getGeminiKeys } from "./src/utils/geminiKeys";
-import { buildDtcReference, dtcKbStats, dtcVoiceSummary, extractDtcCodes, lookupDtc, normalizeDtcCode } from "./src/modules/dtc/dtcKnowledge";
+import { buildDtcReference, dtcKbStats, dtcProcedureComplement, dtcVoiceSummary, extractDtcCodes, lookupDtc, normalizeDtcCode } from "./src/modules/dtc/dtcKnowledge";
 import { decodeVin, extractVin, formatVinForPrompt, normalizeVin, vinDecoderStatus } from "./src/modules/vin/vinDecoder";
 
 // Navigation HP-Web : l'extension du navigateur de l'utilisateur (sa session, sa licence) est
@@ -1544,13 +1544,25 @@ function liveToolGetRepairProcedure(faultType: string, make?: string): string {
     if (normalized.includes(k)) { key = v; break; }
   }
 
+  // Code défaut cité : la base locale apporte la définition propre à la marque et des procédures
+  // de contrôle sourcées (MechanicDB), là où REPAIR_PROCEDURES n'a que des procédures génériques.
+  const dtcCode = extractDtcCodes(faultType, 1)[0];
+  const complement = dtcCode ? dtcProcedureComplement(dtcCode, make || null) : null;
+
+  if (!key && complement) {
+    return `Pas de procédure DiagAssist dédiée pour "${faultType}" ; éléments de la base de codes (en anglais, à reformuler, un seul test à la fois) :\n${complement}`;
+  }
+
   if (!key) {
     return `Procédure non trouvée pour "${faultType}". Procédures disponibles : ratés d'allumage, mélange pauvre, surchauffe, alternateur, démarreur, capteur PMH, MAF encrassé, bougies préchauffage, EGR bouché, turbo, courroie distribution, ABS capteur, injecteurs diesel, réseau CAN, pompe à eau, thermostat.`;
   }
 
   const proc = REPAIR_PROCEDURES[key];
-  const makeNote = make ? ` (${make})` : "";
-  return `Procédure${makeNote} — ${proc.titre}\n${proc.etapes.join("\n")}\nConseil Côte d'Ivoire : ${proc.conseil_ci}`;
+  // Ces procédures sont communes à toutes les marques : on le dit, au lieu d'afficher la marque
+  // comme si les étapes lui étaient propres.
+  const scope = make ? `procédure générique, non spécifique à ${make} : adapter valeurs et emplacements au véhicule` : "procédure générique, valable toutes marques";
+  return `Procédure (${scope}) — ${proc.titre}\n${proc.etapes.join("\n")}\nConseil Côte d'Ivoire : ${proc.conseil_ci}` +
+    (complement ? `\nCompléments de la base de codes (en anglais, à reformuler) :\n${complement}` : "");
 }
 
 // Récupère les N derniers diagnostics enregistrés pour un numéro de téléphone donné.

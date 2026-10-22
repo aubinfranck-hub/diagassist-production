@@ -134,7 +134,10 @@ export function lookupDtc(code: string, brand?: string | null): DtcInfo | null {
   let matchedBrand: string | null = null;
   if (brand && String(brand).trim()) {
     const fam = brandFamily(String(brand));
-    const own = oem.filter(o => fam.has(canonBrand(o.brand)));
+    // Marque exacte d'abord (Toyota avant Lexus pour un véhicule Toyota), puis le reste de la famille.
+    const exact = canonBrand(String(brand));
+    const own = oem.filter(o => fam.has(canonBrand(o.brand)))
+      .sort((a, b) => Number(canonBrand(b.brand) === exact) - Number(canonBrand(a.brand) === exact));
     if (own.length > 0) { oem = own; matchedBrand = own[0].brand; }
     const ownMdb = mdb.filter(m => !m.make || fam.has(canonBrand(m.make)));
     if (ownMdb.length > 0) mdb = ownMdb;
@@ -216,4 +219,19 @@ export function dtcVoiceSummary(code: string, brand?: string | null): string | n
   const info = lookupDtc(code, brand);
   if (!info) return null;
   return formatDtcInfo(info, { maxCauses: 4, maxSymptoms: 2, maxOem: 2, maxDesc: 300, includeFixes: true });
+}
+
+// Compléments « procédure » pour un code : définition propre à la marque, causes classées et
+// procédures de contrôle MechanicDB (filtrées par marque quand elles existent).
+export function dtcProcedureComplement(code: string, brand?: string | null): string | null {
+  const info = lookupDtc(code, brand);
+  if (!info) return null;
+  const out: string[] = [];
+  if (info.matchedBrand) out.push(`Définition ${info.matchedBrand} pour ${info.code} : ${info.oem[0].description}.`);
+  else if (brand && info.oem.length && !isGenericDtc(info.code)) out.push(`Aucune définition ${brand} connue pour ${info.code} : la signification de ce code constructeur dépend de la marque, à confirmer sur la valise.`);
+  if (info.generic?.c?.length) out.push(`Causes classées pour ${info.code} : ` + info.generic.c.slice(0, 5).map(([l, label], i) => `${i + 1}. ${label}${LIKELIHOOD_FR[l] ? ` [${LIKELIHOOD_FR[l]}]` : ""}`).join(" ; ") + ".");
+  for (const f of info.fixes.slice(0, 3)) {
+    out.push(`Contrôle ${f.rank}${f.make ? ` (${f.make})` : ""} — ${f.t}${f.diff ? ` [${f.diff}]` : ""} : ${f.steps.join(" → ")}.`);
+  }
+  return out.length ? out.join("\n") : null;
 }

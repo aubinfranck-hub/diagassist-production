@@ -55,3 +55,12 @@ test("VIN : décodage hors ligne (Corgi + node:sqlite)", async () => {
   const bad = await decodeVin("ABC");
   assert.equal(bad.valid, false);
 });
+
+test("procédures : compléments filtrés par marque", async () => {
+  const { dtcProcedureComplement } = await import("../src/modules/dtc/dtcKnowledge");
+  const toyota = dtcProcedureComplement("P1155", "Toyota") || "";
+  assert.match(toyota, /Définition Toyota pour P1155/);
+  const generic = dtcProcedureComplement("C0031") || "";
+  assert.match(generic, /Contrôle 1/);
+  assert.equal(dtcProcedureComplement("P9ZZZ"), null);
+});
