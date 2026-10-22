@@ -210,8 +210,16 @@ function PartsTab({ auth }: { auth: any }) {
   const [requests, setRequests] = useState<any[]>([]);
   useEffect(() => { shopFetch(auth, "/api/admin/shop/part-requests").then((d) => d.success && setRequests(d.requests)); }, [auth]);
   const update = async (id: number, fields: any) => { await shopFetch(auth, `/api/admin/shop/part-requests/${id}`, { method: "PATCH", body: JSON.stringify(fields) }); setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, ...fields } : r))); };
+  // La carte grise est chargée à la demande (elle n'est plus incluse dans la liste) puis ouverte dans un nouvel onglet.
+  const openCarteGrise = async (id: number) => {
+    const data = await shopFetch(auth, `/api/admin/shop/part-requests/${id}/files`);
+    const m = /^data:((?:image\/(?:jpeg|png|webp))|application\/pdf);base64,(.+)$/.exec(data?.carte_grise_base64 || "");
+    if (!m) return;
+    const bytes = Uint8Array.from(atob(m[2]), (ch) => ch.charCodeAt(0));
+    window.open(URL.createObjectURL(new Blob([bytes], { type: m[1] })), "_blank", "noopener,noreferrer");
+  };
   if (requests.length === 0) return <p className="text-sm text-slate-500 text-center py-10">Aucune demande.</p>;
-  return <div className="space-y-2.5">{requests.map((r) => <div key={r.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-2"><p className="text-sm font-semibold text-white">{r.part_description}</p><p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {r.customer_phone} {r.customer_name && `· ${r.customer_name}`}</p>{/^data:(image\/(jpeg|png|webp)|application\/pdf);base64,/.test(r.carte_grise_base64 || "") && <a href={r.carte_grise_base64} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-400 underline">Voir carte grise</a>}<select value={r.status} onChange={(e) => update(r.id, { status: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white">{PART_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input type="number" placeholder="Cotation FCFA" defaultValue={r.quote_fcfa || ""} onBlur={(e) => update(r.id, { quote_fcfa: e.target.value ? Number(e.target.value) : null })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" /></div>)}</div>;
+  return <div className="space-y-2.5">{requests.map((r) => <div key={r.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-2"><p className="text-sm font-semibold text-white">{r.part_description}</p><p className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {r.customer_phone} {r.customer_name && `· ${r.customer_name}`}</p>{r.has_carte_grise && <button onClick={() => openCarteGrise(r.id)} className="text-xs text-sky-400 underline cursor-pointer">Voir carte grise</button>}<select value={r.status} onChange={(e) => update(r.id, { status: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white">{PART_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input type="number" placeholder="Cotation FCFA" defaultValue={r.quote_fcfa || ""} onBlur={(e) => update(r.id, { quote_fcfa: e.target.value ? Number(e.target.value) : null })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" /></div>)}</div>;
 }
 
 function FollowupsTab({ auth }: { auth: any }) {

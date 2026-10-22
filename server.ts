@@ -215,8 +215,20 @@ async function createSession(phone: string): Promise<string> {
 // ailleurs dans le code (aucun autre changement nécessaire), mais chaque écriture est aussi
 // répercutée dans la base pour survivre aux redémarrages.
 const dbPool = process.env.DATABASE_URL
-  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === "test" ? false : { rejectUnauthorized: false }, connectionTimeoutMillis: 2000, query_timeout: 15000 })
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === "test" ? false : { rejectUnauthorized: false },
+      max: Number(process.env.PG_POOL_MAX) || 10,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5000,
+      query_timeout: 15000,
+      statement_timeout: 15000, // côté serveur : PostgreSQL arrête lui-même la requête (query_timeout ne le fait pas)
+      idle_in_transaction_session_timeout: 30_000,
+    })
   : null;
+// Une connexion inactive coupée (redémarrage de la base, coupure réseau) émet un événement « error » :
+// sans écouteur, Node plante tout le serveur.
+dbPool?.on("error", (err) => console.error("[DB] Connexion inactive perdue (le pool se reconnecte seul) :", err.message));
 
 const usageStore = new UsageStore(dbPool ? (sql, params) => dbPool.query(sql, params) : undefined);
 
@@ -259,6 +271,8 @@ async function initDatabase(): Promise<void> {
       plan TEXT NOT NULL,
       created_at BIGINT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS idx_sessions_phone ON sessions (phone);
+    CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions (created_at);
     CREATE TABLE IF NOT EXISTS connection_history (
       id SERIAL PRIMARY KEY,
       phone TEXT NOT NULL,
@@ -415,6 +429,10 @@ async function initDatabase(): Promise<void> {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_part_requests_customer ON shop_part_requests (customer_phone);
+    CREATE INDEX IF NOT EXISTS idx_part_requests_created ON shop_part_requests (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_shop_orders_product ON shop_orders (product_id);
+    CREATE INDEX IF NOT EXISTS idx_shop_orders_created ON shop_orders (created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_shop_customers_last ON shop_customers (last_interaction_at DESC);
     -- Relances (historique + programmation)
     CREATE TABLE IF NOT EXISTS shop_followups (
       id SERIAL PRIMARY KEY,
@@ -429,6 +447,7 @@ async function initDatabase(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_followups_customer ON shop_followups (customer_phone);
     CREATE INDEX IF NOT EXISTS idx_followups_scheduled ON shop_followups (scheduled_for);
+    CREATE INDEX IF NOT EXISTS idx_followups_due ON shop_followups (scheduled_for) WHERE status = 'programmee';
 
     -- Sessions de coaching/Screening V2 : persistance pour survivre aux redémarrages Render.
     CREATE TABLE IF NOT EXISTS screening_sessions (
@@ -4817,9 +4836,25 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.get("/api/admin/shop/part-requests", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.json({ success: true, requests: [] });
     const { rows } = await dbPool.query(
-      "SELECT r.*, c.name as customer_name FROM shop_part_requests r LEFT JOIN shop_customers c ON c.phone = r.customer_phone ORDER BY r.created_at DESC LIMIT 200"
+      `SELECT r.id, r.customer_phone, r.part_description, r.extra_info, r.status, r.quote_fcfa, r.quote_details,
+              r.estimated_days, r.created_at, r.updated_at,
+              (r.carte_grise_base64 IS NOT NULL) AS has_carte_grise, (r.part_photo_base64 IS NOT NULL) AS has_part_photo,
+              c.name as customer_name
+       FROM shop_part_requests r LEFT JOIN shop_customers c ON c.phone = r.customer_phone ORDER BY r.created_at DESC LIMIT 200`
     );
     res.json({ success: true, requests: rows });
+  });
+
+  // Les fichiers (carte grise, photo) ne sont plus inclus dans la liste (plusieurs Mo chacun) :
+  // l'admin les charge un par un, à la demande.
+  app.get("/api/admin/shop/part-requests/:id/files", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ success: false, message: "Identifiant invalide." });
+    const { rows } = await dbPool.query("SELECT carte_grise_base64, part_photo_base64 FROM shop_part_requests WHERE id = $1", [id]);
+    if (!rows[0]) return res.status(404).json({ success: false, message: "Demande introuvable." });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ success: true, carte_grise_base64: rows[0].carte_grise_base64, part_photo_base64: rows[0].part_photo_base64 });
   });
 
   app.patch("/api/admin/shop/part-requests/:id", requireAdminAuth, async (req, res) => {
@@ -4828,7 +4863,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const sets: string[] = ["updated_at = CURRENT_TIMESTAMP"];
     const values: any[] = [];
     let i = 1;
-    if (status !== undefined) { sets.push(`status = $${i++}`); values.push(status); }
+    if (status !== undefined) {
+      const PART_REQUEST_STATUSES = ["nouvelle", "recherche", "devis_envoye", "devis_accepte", "commandee", "en_transit", "recue", "livree", "annulee"];
+      if (!PART_REQUEST_STATUSES.includes(status)) return res.status(400).json({ success: false, message: "Statut invalide." });
+      sets.push(`status = $${i++}`); values.push(status);
+    }
     if (quote_fcfa !== undefined) { sets.push(`quote_fcfa = $${i++}`); values.push(quote_fcfa); }
     if (quote_details !== undefined) { sets.push(`quote_details = $${i++}`); values.push(quote_details); }
     if (estimated_days !== undefined) { sets.push(`estimated_days = $${i++}`); values.push(estimated_days); }
