@@ -2147,7 +2147,8 @@ async function callOpenRouterFallback(userContent: string | any[], config: any):
   messages.push({ role: "user", content: finalContent });
 
   const model = getOpenRouterModel();
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const baseUrl = ((process.env.OPENROUTER_BASE_URL || "").trim() || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     signal: AbortSignal.timeout(45000),
     method: "POST",
     headers: {
