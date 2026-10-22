@@ -2114,6 +2114,65 @@ async function callDeepSeekFallback(userContent: string | any[], config: any): P
   return { text, modelUsedForGeneration: "deepseek-flash (repli)" };
 }
 
+// Repli OpenRouter (API compatible OpenAI, https://openrouter.ai) : une seule clé donne accès à de
+// nombreux modèles. Utilisé quand tous les modèles Gemini ont échoué, avant DeepSeek. Variables :
+// OPENROUTER_API_KEY (obligatoire), OPENROUTER_MODEL (optionnel, ex. "google/gemini-2.5-flash" ;
+// par défaut "openrouter/auto" qui choisit le modèle automatiquement).
+function getOpenRouterModel(): string {
+  return (process.env.OPENROUTER_MODEL || "").trim() || "openrouter/auto";
+}
+
+async function callOpenRouterFallback(userContent: string | any[], config: any): Promise<any> {
+  const apiKey = (process.env.OPENROUTER_API_KEY || "").trim();
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY non configuré.");
+
+  const schemaHintText = config?.responseSchema
+    ? `\n\nRéponds STRICTEMENT avec un unique objet JSON valide (rien avant, rien après) respectant exactement cette forme :\n${schemaToPromptHint(config.responseSchema)}`
+    : "";
+
+  let finalContent: string | any[];
+  if (typeof userContent === "string") {
+    finalContent = userContent + schemaHintText;
+  } else {
+    finalContent = schemaHintText ? [...userContent, { type: "text", text: schemaHintText }] : userContent;
+  }
+
+  const messages: any[] = [];
+  if (config?.systemInstruction) {
+    messages.push({ role: "system", content: String(config.systemInstruction) });
+  }
+  if (Array.isArray(config?.history)) {
+    for (const h of config.history) messages.push(h);
+  }
+  messages.push({ role: "user", content: finalContent });
+
+  const model = getOpenRouterModel();
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    signal: AbortSignal.timeout(45000),
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+      "HTTP-Referer": process.env.APP_URL || "https://www.diagassist.app",
+      "X-Title": "DiagAssist",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      response_format: config?.responseSchema ? { type: "json_object" } : undefined,
+      temperature: 0.3,
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`OpenRouter a répondu ${res.status} : ${errText.slice(0, 300)}`);
+  }
+  const data: any = await res.json();
+  const text = data?.choices?.[0]?.message?.content || "";
+  if (!text) throw new Error("Réponse OpenRouter vide.");
+  return { text, modelUsedForGeneration: `${data?.model || model} (OpenRouter, repli)` };
+}
+
 // Construit le contenu du repli DeepSeek depuis `contents` (format Gemini) : texte simple, ou
 // tableau de parts façon vision OpenAI (texte + images en data URL base64). Renvoie null si le
 // contenu comprend de l'audio/vidéo (non supporté par DeepSeek) ou une forme trop complexe
@@ -2214,6 +2273,14 @@ async function generateContentWithFallbackAndRetry(
   // Tous les modèles Gemini ont échoué : dernier recours DeepSeek si une clé est configurée et que
   // le contenu est compatible (texte, ou texte+images — voir buildDeepSeekContent).
   const deepSeekContent = buildDeepSeekContent(contents);
+  if (deepSeekContent && (process.env.OPENROUTER_API_KEY || "").trim()) {
+    try {
+      console.warn("[Fallback] Tous les modèles Gemini ont échoué, tentative de repli avec OpenRouter...");
+      return await callOpenRouterFallback(deepSeekContent, activeConfig);
+    } catch (orErr: any) {
+      console.error("[OpenRouter Fallback] Échec:", orErr.message || orErr);
+    }
+  }
   if (deepSeekContent && process.env.DEEPSEEK_API_KEY) {
     try {
       console.warn("[Fallback] Tous les modèles Gemini ont échoué, tentative de repli avec DeepSeek...");
@@ -3407,6 +3474,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       serverStartedAt,
       keys: keys.map((k, i) => ({ index: i + 1, id: "…" + k.slice(-4), active: i === activeIdx, ...getGeminiStats(k) })),
       deepseekConfigured: Boolean((process.env.DEEPSEEK_API_KEY || "").trim()),
+      openrouterConfigured: Boolean((process.env.OPENROUTER_API_KEY || "").trim()),
       live: {
         model: LIVE_MODEL,
         maxSessionMin: Math.round(LIVE_MAX_SESSION_MS / 60000),
@@ -3910,6 +3978,17 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       }
     }
 
+    const openrouterKey = (process.env.OPENROUTER_API_KEY || "").trim();
+    let openrouterTest: { ok: boolean; message: string } = { ok: false, message: "Aucune clé configurée." };
+    if (openrouterKey) {
+      try {
+        const r = await callOpenRouterFallback("Réponds juste \"ok\".", {});
+        openrouterTest = { ok: true, message: `Réponse reçue (${String(r.text).trim().slice(0, 40)}) — ${r.modelUsedForGeneration}` };
+      } catch (err: any) {
+        openrouterTest = { ok: false, message: err.message || "Échec de l'appel de test." };
+      }
+    }
+
     res.json({
       success: true,
       gemini: {
@@ -3920,6 +3999,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       deepseek: {
         configured: Boolean(deepseekKey),
         test: deepseekTest,
+      },
+      openrouter: {
+        configured: Boolean(openrouterKey),
+        model: getOpenRouterModel(),
+        test: openrouterTest,
       },
     });
   });
