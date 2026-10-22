@@ -14,13 +14,16 @@
     "check": "npm run lint && npm test && npm run build"
   },
   "dependencies": {
+    "@cardog/corgi": "2.0.4",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "better-sqlite3": "file:./vendor/better-sqlite3-stub",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "express-rate-limit": "^8.7.0",
     "fast-xml-parser": "^5.11.2",
+    "fuse.js": "^7.5.0",
     "helmet": "^8.3.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.546.0",
@@ -33,6 +36,7 @@
     "react-dom": "^19.0.1",
     "twilio": "^6.0.2",
     "vite": "^6.2.3",
+    "web-push": "^3.6.7",
     "ws": "^8.21.0"
   },
   "devDependencies": {
@@ -44,6 +48,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
@@ -54,5 +59,8 @@
   },
   "engines": {
     "node": ">=22 <25"
+  },
+  "overrides": {
+    "better-sqlite3": "$better-sqlite3"
   }
 }

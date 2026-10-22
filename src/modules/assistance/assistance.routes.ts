@@ -15,6 +15,7 @@ export type AssistanceRouteDeps = {
   isAdminPhone: (phone: string) => boolean;
   getDirectory: () => DirectoryMechanic[];
   sendWhatsApp?: (phone: string, message: string) => Promise<void>;
+  sendPush?: CoreDeps["sendPush"];
   jeko?: CoreDeps["jeko"];
   isProSubscribed: CoreDeps["isProSubscribed"];
   analyze?: CoreDeps["analyze"];
@@ -31,7 +32,7 @@ function decodeBase64(raw: unknown): Buffer | null {
 
 export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCore | null; onExternalWebhook: (ref: string, status: string, body: any) => Promise<boolean>; syncDirectory: () => Promise<void> } {
   const { app, pool } = d;
-  const core = pool ? createAssistanceCore({ pool, sendWhatsApp: d.sendWhatsApp, jeko: d.jeko, isProSubscribed: d.isProSubscribed, analyze: d.analyze, appUrl: process.env.APP_URL }) : null;
+  const core = pool ? createAssistanceCore({ pool, sendWhatsApp: d.sendWhatsApp, sendPush: d.sendPush, jeko: d.jeko, isProSubscribed: d.isProSubscribed, analyze: d.analyze, appUrl: process.env.APP_URL }) : null;
 
   const wrap = (fn: (req: any, res: Response) => Promise<any>) => async (req: Request, res: Response, next: NextFunction) => {
     try {

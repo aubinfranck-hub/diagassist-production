@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createProductSearch } from "../../utils/productSearch";
 import {
   ArrowLeft, ArrowRight, Award, BookOpen, Calendar, CheckCircle2, ChevronDown,
   ChevronRight, Clock, CreditCard, ExternalLink, Filter, GraduationCap,
@@ -408,13 +409,11 @@ function ShopCatalog({
 
   const brands = useMemo(() => [...new Set(products.map(p => p.brand).filter(Boolean) as string[])].sort(), [products]);
 
+  // Recherche floue (Fuse.js) : tous les mots, dans tous les champs, fautes de frappe tolérées.
+  const searchProducts = useMemo(() => createProductSearch(products), [products]);
   const filtered = useMemo(() => {
-    let res = products.filter(p => {
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        if (!p.name.toLowerCase().includes(q) && !(p.brand || "").toLowerCase().includes(q) &&
-          !(p.description || "").toLowerCase().includes(q)) return false;
-      }
+    const base = search.trim() ? searchProducts(search, products.length) : products;
+    let res = base.filter(p => {
       if (catSlug && p.category_slug !== catSlug) return false;
       if (brand && p.brand !== brand) return false;
       if (inStockOnly && !isInStock(p.availability)) return false;
@@ -423,7 +422,7 @@ function ShopCatalog({
     if (sort === "price-asc") res = [...res].sort((a, b) => (a.price_fcfa || 0) - (b.price_fcfa || 0));
     if (sort === "price-desc") res = [...res].sort((a, b) => (b.price_fcfa || 0) - (a.price_fcfa || 0));
     return res;
-  }, [products, search, catSlug, brand, inStockOnly, sort]);
+  }, [products, searchProducts, search, catSlug, brand, inStockOnly, sort]);
 
   const reset = () => { setSearch(""); setCatSlug(null); setBrand(""); setInStockOnly(false); setSort("default"); };
 
