@@ -271,6 +271,17 @@ async function initDatabase(): Promise<void> {
       plan TEXT NOT NULL,
       created_at BIGINT NOT NULL
     );
+    -- Demandes de forfait Wave en attente de validation manuelle (avant : Map en mémoire, perdue au redémarrage)
+    CREATE TABLE IF NOT EXISTS plan_requests (
+      id TEXT PRIMARY KEY,
+      phone TEXT NOT NULL,
+      plan TEXT NOT NULL,
+      amount NUMERIC,
+      note TEXT,
+      requested_at BIGINT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+    );
+    CREATE INDEX IF NOT EXISTS idx_plan_requests_status ON plan_requests (status, requested_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sessions_phone ON sessions (phone);
     CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions (created_at);
     CREATE TABLE IF NOT EXISTS connection_history (
@@ -1001,6 +1012,15 @@ function recordGeminiResult(
   }
 }
 
+// Clé API refusée (révoquée, désactivée, invalide, projet suspendu). Gemini répond parfois 400 « API key not valid »
+// plutôt que 401/403, d'où le test sur le message.
+function isGeminiKeyError(error: any): boolean {
+  if (!error) return false;
+  if (error.status === 401 || error.status === 403) return true;
+  const msg = String(error.message || "").toLowerCase();
+  return msg.includes("api key not valid") || msg.includes("api_key_invalid") || msg.includes("permission_denied") || msg.includes("has been suspended") || msg.includes("api key expired");
+}
+
 function isGeminiQuotaError(error: any): boolean {
   if (!error) return false;
   if (error.status === 429) return true;
@@ -1649,7 +1669,7 @@ async function liveToolSaveDiagnostic(
   symptome: string,
   causeProbable: string,
   actionRecommandee: string
-): Promise<{ toolResult: string; whatsappUrl: string }> {
+): Promise<{ toolResult: string; whatsappUrl: string; saved: boolean }> {
   const message = `Bonjour, voici le récapitulatif de votre diagnostic DiagAssist :\n\nVéhicule : ${vehicule}\nSymptôme : ${symptome}\nCause probable : ${causeProbable}\nAction recommandée : ${actionRecommandee}\n\n— L'équipe DiagAssist 🚗🔧\nhttps://www.diagassist.app`;
   const whatsappUrl = `https://wa.me/${phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(message)}`;
 
@@ -1662,13 +1682,14 @@ async function liveToolSaveDiagnostic(
       );
     } catch (err) {
       console.warn("[Live Tool] Échec de l'enregistrement du diagnostic:", err);
-      return { toolResult: "Le diagnostic n'a pas pu être enregistré en base (erreur serveur).", whatsappUrl };
+      return { toolResult: "Le diagnostic n'a pas pu être enregistré en base (erreur serveur).", whatsappUrl, saved: false };
     }
   }
 
   return {
     toolResult: "Diagnostic enregistré. Un lien WhatsApp prérempli avec le récapitulatif a été affiché au mécanicien pour qu'il l'envoie lui-même au client en un tap.",
     whatsappUrl,
+    saved: true,
   };
 }
 
@@ -2227,8 +2248,18 @@ async function generateContentWithFallbackAndRetry(
         console.error(`[Gemini API] Failed with model ${modelName}:`, error.message || error);
         lastError = error;
         recordGeminiResult(keyUsed, { ok: false, quota: isGeminiQuotaError(error), error: error.message || String(error) });
-        // If it's 400 Bad Request or 401/403, do not try other models as it's a client configuration/syntax error
-        if (error.status === 400 || error.status === 401 || error.status === 403) {
+        // Clé refusée : avant, l'erreur était relancée aussitôt, même si une autre clé valide était configurée, et le repli DeepSeek
+        // n'était jamais tenté. On passe maintenant à la clé suivante ; s'il n'y en a plus, on laisse le repli DeepSeek agir.
+        if (isGeminiKeyError(error)) {
+          console.error(`[Gemini API] CLÉ #${currentGeminiKeyIndex + 1} REFUSÉE (${error.status || "?"}) : ${error.message || error}. Vérifiez cette clé dans les variables d'environnement.`);
+          if (keyRotations < maxKeyRotations && rotateGeminiKey()) {
+            keyRotations++;
+            continue;
+          }
+          break;
+        }
+        // 400 Bad Request (hors clé) : erreur de syntaxe/configuration de la requête, inutile d'essayer d'autres modèles.
+        if (error.status === 400) {
           throw error;
         }
         if (isGeminiQuotaError(error) && keyRotations < maxKeyRotations && rotateGeminiKey()) {
@@ -3418,14 +3449,43 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // et c'est l'admin qui active réellement le forfait via /api/admin/activate-plan après vérification du paiement Wave.
   const pendingActivations = new Map<string, { phone: string; plan: string; amount?: number; note?: string; requestedAt: number }>();
 
-  app.post("/api/user/request-plan", requireAuth, (req: any, res) => {
+  app.post("/api/user/request-plan", requireAuth, async (req: any, res) => {
     const { plan, amount, note } = req.body;
     if (!plan) {
       return res.status(400).json({ success: false, message: "Le plan est requis." });
     }
+    // Validation : sans elle, un compte gratuit pouvait remplir la mémoire du serveur avec des demandes arbitraires.
+    if (typeof plan !== "string" || !(plan in PLAN_LIMITS)) {
+      return res.status(400).json({ success: false, message: "Forfait inconnu." });
+    }
+    const cleanAmount = amount === undefined || amount === null || amount === "" ? undefined : Number(amount);
+    if (cleanAmount !== undefined && (!Number.isFinite(cleanAmount) || cleanAmount < 0 || cleanAmount > 10_000_000)) {
+      return res.status(400).json({ success: false, message: "Montant invalide." });
+    }
+    const cleanNote = typeof note === "string" ? note.slice(0, 200) : undefined;
     const { phone } = req.session;
     const requestId = crypto.randomBytes(8).toString("hex");
-    pendingActivations.set(requestId, { phone, plan, amount, note, requestedAt: Date.now() });
+    const requestedAt = Date.now();
+    try {
+      if (dbPool) {
+        // Plafond de demandes en attente par compte (anti-spam).
+        const pendingCount = await dbPool.query("SELECT count(*)::int AS n FROM plan_requests WHERE phone=$1 AND status='pending'", [phone]);
+        if ((pendingCount.rows[0]?.n || 0) >= 5) {
+          return res.status(429).json({ success: false, message: "Vous avez déjà plusieurs demandes en attente. Merci de patienter ou de nous contacter." });
+        }
+        await dbPool.query(
+          "INSERT INTO plan_requests (id, phone, plan, amount, note, requested_at) VALUES ($1,$2,$3,$4,$5,$6)",
+          [requestId, phone, plan, cleanAmount ?? null, cleanNote ?? null, requestedAt]
+        );
+      } else {
+        pendingActivations.set(requestId, { phone, plan, amount: cleanAmount, note: cleanNote, requestedAt });
+      }
+    } catch (err: any) {
+      // On ne répond « enregistrée » QUE si l'écriture a réussi : sinon le client croit avoir fait sa demande
+      // alors que personne ne la verra jamais.
+      console.error("[request-plan] Enregistrement impossible :", err.message);
+      return res.status(503).json({ success: false, message: "Votre demande n'a pas pu être enregistrée. Réessayez dans un instant ou contactez-nous sur WhatsApp." });
+    }
     console.log(`[Activation en attente] ${phone} demande le forfait "${plan}" (réf: ${requestId}). À valider manuellement après vérification du paiement Wave.`);
     res.json({
       success: true,
@@ -3501,7 +3561,18 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, testedAt: Date.now(), results });
   });
 
-  app.get("/api/admin/pending-activations", adminLimiter, requireAdminAuth, (req, res) => {
+  app.get("/api/admin/pending-activations", adminLimiter, requireAdminAuth, async (req, res) => {
+    if (dbPool) {
+      try {
+        const { rows } = await dbPool.query(
+          "SELECT id, phone, plan, amount, note, requested_at FROM plan_requests WHERE status='pending' ORDER BY requested_at DESC LIMIT 200"
+        );
+        return res.json({ success: true, pending: rows.map(r => ({ id: r.id, phone: r.phone, plan: r.plan, amount: r.amount === null ? undefined : Number(r.amount), note: r.note ?? undefined, requestedAt: Number(r.requested_at) })) });
+      } catch (err: any) {
+        console.error("[pending-activations] Lecture impossible :", err.message);
+        return res.status(503).json({ success: false, message: "Lecture des demandes impossible." });
+      }
+    }
     const list = Array.from(pendingActivations.entries()).map(([id, v]) => ({ id, ...v }));
     res.json({ success: true, pending: list });
   });
@@ -3534,6 +3605,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     if (requestId) {
       pendingActivations.delete(requestId);
+      if (dbPool) await dbPool.query("UPDATE plan_requests SET status='done' WHERE id=$1", [String(requestId)]).catch((err: any) => console.error("[activate-plan] Mise à jour de la demande impossible :", err.message));
     }
     console.log(`[Admin] Forfait "${plan}" activé pour ${phone} (${updated} session(s) active(s) mise(s) à jour).`);
     res.json({ success: true, message: `Forfait "${plan}" activé pour ${phone}.`, sessionsUpdated: updated });
@@ -5767,9 +5839,11 @@ Directives pour ce tour :
     res.json({ success: true });
   });
   app.use("/api", (_req, res) => res.status(404).json({ success: false, message: "Route API introuvable." }));
-  app.use((error: any, _req: any, res: any, _next: any) => {
-    console.error("[API] Requête échouée:", error?.code || error?.name || "Error");
+  app.use((error: any, req: any, res: any, _next: any) => {
     const status = Number(error?.status) || 503;
+    // Avant : seul « Error » était journalisé, impossible de savoir quelle route échouait ni pourquoi.
+    // Le détail reste dans les logs serveur et n'est JAMAIS renvoyé au client pour les erreurs 5xx.
+    console.error(`[API] ${req.method} ${String(req.originalUrl || req.url || "").split("?")[0]} -> ${status} | ${error?.code || error?.name || "Error"} | ${error?.message || ""}` + (status >= 500 && error?.stack ? `\n${String(error.stack).split("\n").slice(1, 4).join("\n")}` : ""));
     res.status(status).json({ success: false, message: status < 500 ? error.message : "Service momentanément indisponible. Réessayez." });
   });
 
@@ -6145,7 +6219,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                     (async () => {
                       const functionResponses = await Promise.all(
                         functionCalls.map(async (fc: any) => {
-                          clientWs.send(JSON.stringify({ type: "toolCall", name: fc.name }));
+                          try { clientWs.send(JSON.stringify({ type: "toolCall", name: fc.name })); } catch {}
                           let result: string;
                           try {
                             if (fc.name === "piloter_diagnostic") {
@@ -6260,22 +6334,34 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                                   String(fc.args?.action_recommandee || "")
                                 );
                                 result = saved.toolResult;
-                                clientWs.send(JSON.stringify({ type: "whatsappLink", url: saved.whatsappUrl }));
+                                // Le lien WhatsApp n'est montré QUE si le diagnostic a bien été enregistré : sinon le mécanicien
+                                // croirait son diagnostic sauvegardé alors qu'il est perdu.
+                                if (saved.saved) clientWs.send(JSON.stringify({ type: "whatsappLink", url: saved.whatsappUrl }));
                               }
                             } else {
                               result = `Outil "${fc.name}" inconnu.`;
                             }
-                          } catch (err) {
+                          } catch (err: any) {
                             console.error(`[Live Tool] Erreur lors de l'exécution de ${fc.name}:`, err);
-                            result = "Une erreur est survenue lors de l'exécution de cet outil.";
+                            // Erreurs « métier » voulues (ex. navigateur HP-Web déjà utilisé) : le modèle reçoit le vrai message pour
+                            // pouvoir l'expliquer au mécanicien. Erreurs techniques (base, réseau) : message générique, détail dans les logs.
+                            const isBusinessError = err instanceof Error && err.name === "Error" && !(err as any).code && typeof err.message === "string" && err.message.length < 300;
+                            result = isBusinessError ? `Échec de l'outil : ${err.message}` : "Une erreur technique est survenue lors de l'exécution de cet outil.";
+                            try { clientWs.send(JSON.stringify({ type: "toolError", name: fc.name })); } catch {}
                           }
                           return { id: fc.id, name: fc.name, response: { result } };
                         })
                       );
                       if (!isClosed && geminiSession) {
-                        geminiSession.sendToolResponse({ functionResponses });
+                        try {
+                          geminiSession.sendToolResponse({ functionResponses });
+                        } catch (err: any) {
+                          // Session fermée pendant l'exécution de l'outil : sans cette protection, Gemini n'obtenait jamais la réponse
+                          // et la conversation restait muette sans aucune trace.
+                          console.error("[Live Tool] Envoi de la réponse d'outil impossible :", err?.message || err);
+                        }
                       }
-                    })();
+                    })().catch((err: any) => console.error("[Live Tool] Échec inattendu du traitement des outils :", err?.message || err));
                   }
                 },
                 onclose: () => {
@@ -6412,9 +6498,19 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
           if (cb) { (clientWs as any)._hpPending.delete(String(message.id)); cb(message); }
         } else if (message.type === "audio") {
           if (geminiSession && typeof message.audio === "string" && message.audio.length <= 200000) {
-            geminiSession.sendRealtimeInput({
-              audio: { data: message.audio, mimeType: "audio/pcm;rate=16000" }
-            });
+            try {
+              geminiSession.sendRealtimeInput({
+                audio: { data: message.audio, mimeType: "audio/pcm;rate=16000" }
+              });
+            } catch (err: any) {
+              // Session Gemini fermée/en reconnexion : chaque morceau d'audio échouait avant en silence (le mécanicien parlait dans le vide).
+              // On journalise au plus une fois toutes les 10 s par connexion pour ne pas inonder les logs.
+              const nowMs = Date.now();
+              if (nowMs - ((clientWs as any)._lastAudioErrLog || 0) > 10_000) {
+                (clientWs as any)._lastAudioErrLog = nowMs;
+                console.warn("[WebSocket] Audio non transmis à Gemini Live (session fermée ou en reconnexion) :", err?.message || err);
+              }
+            }
           }
         } else if (message.type === "image" || message.type === "video" || message.type === "media") {
           if (geminiSession) {
