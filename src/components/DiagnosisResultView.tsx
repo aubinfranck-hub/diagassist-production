@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { PREFS_EVENT } from "../utils/prefs";
 import { 
   AlertOctagon, AlertTriangle, ShieldCheck, CheckCircle2, 
   Wrench, Clock, Euro, HelpCircle, Cpu, Volume2, VolumeX, BookOpen, Lock, Play, Square, Sparkles, Printer, RefreshCw, FileDown,
@@ -40,10 +41,10 @@ export default function DiagnosisResultView({ diagnosis, apiUsage, currentPlan, 
       setSelectedVoiceName(localStorage.getItem("preferred_speech_voice") || "fr-FR-Neural2-B");
     };
     window.addEventListener("storage", handleStorageChange);
-    const interval = setInterval(handleStorageChange, 1000);
+    window.addEventListener(PREFS_EVENT, handleStorageChange);
     return () => {
       window.removeEventListener("storage", handleStorageChange);
-      clearInterval(interval);
+      window.removeEventListener(PREFS_EVENT, handleStorageChange);
     };
   }, []);
 

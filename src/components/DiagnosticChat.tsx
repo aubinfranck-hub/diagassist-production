@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { setPref } from "../utils/prefs";
 import { 
   MessageSquare, Send, Cpu, Sparkles, AlertCircle, HelpCircle, 
   Volume2, VolumeX, Mic, MicOff, Play, Square, Paperclip, Camera,
@@ -226,7 +227,7 @@ export default function DiagnosticChat({ diagnosis, chatHistory, onSendMessage, 
   // Sync preference changes
   const handleVoiceChange = (voiceId: string) => {
     setSelectedVoiceName(voiceId);
-    localStorage.setItem("preferred_speech_voice", voiceId);
+    setPref("preferred_speech_voice", voiceId);
     try { playClickFeedbackSound(); } catch (e) {}
   };
 

@@ -1,7 +1,20 @@
 import crypto from "crypto";
-import type { Express } from "express";
+import type { Express, Request, RequestHandler } from "express";
 
 type Query = (sql: string, params?: any[]) => Promise<any>;
+
+// Requête authentifiée : `session` est posé par requireAuth, `rawBody` par express.json({ verify }) pour la signature du webhook.
+type AuthedRequest = Request & { session: { phone: string }; rawBody?: Buffer };
+
+// Corps du webhook Jèko (seuls les champs réellement lus par ce module sont décrits ; le reste est ignoré).
+export type JekoWebhookBody = {
+  status?: string;
+  reference?: string;
+  transactionType?: string;
+  transactionDetails?: { id?: string | number; reference?: string };
+  amount?: { amount?: number | string };
+  [key: string]: unknown;
+};
 
 const JEKO_API_BASE = "https://api.jeko.africa";
 
@@ -74,22 +87,22 @@ type PendingPayment = {
 export function registerJekoPayments(
   app: Express,
   deps: {
-    requireAuth: any;
-    requireAdminAuth: any;
-    diagnosticWebhook?: (body: any) => Promise<boolean>;
+    requireAuth: RequestHandler;
+    requireAdminAuth: RequestHandler;
+    diagnosticWebhook?: (body: JekoWebhookBody) => Promise<boolean>;
     setUserPlan: (phone: string, plan: string, customDurationMs?: number) => void | Promise<void>;
     onPlanActivated: (phone: string, plan: string, activatedAt?: number) => void;
     dbQuery?: Query;
     dbTransaction?: <T>(work: (query: Query) => Promise<T>) => Promise<T>;
     // Paiements de la boutique (clients sans compte) : le serveur calcule le montant dû.
     shop?: {
-      limiter: any;
+      limiter: RequestHandler;
       quote: (orderRef: string, phone: string, mode: "deposit" | "full") => Promise<{ amountXof: number } | { error: string }>;
       onPaid: (orderRef: string, query?: Query) => Promise<void>;
     };
     // Paiements d'autres modules (références "dgas-…") : le webhook, une fois sa signature vérifiée,
     // leur délègue le traitement. Renvoie true si la référence leur appartient.
-    onExternalWebhook?: (reference: string, status: string, body: any) => Promise<boolean>;
+    onExternalWebhook?: (reference: string, status: string, body: JekoWebhookBody) => Promise<boolean>;
   }
 ) {
   const pending = new Map<string, PendingPayment>();
@@ -299,7 +312,7 @@ export function registerJekoPayments(
 
   // Crée une demande de paiement Jèko (Orange/Wave/MTN/Moov) pour un forfait donné et renvoie
   // l'URL vers laquelle rediriger le mécanicien pour finaliser le paiement sur son opérateur.
-  app.post("/api/payments/jeko/create", deps.requireAuth, async (req: any, res) => {
+  app.post("/api/payments/jeko/create", deps.requireAuth, async (req: AuthedRequest, res) => {
     if (!isConfigured()) {
       return res.status(503).json({ success: false, message: "Le paiement en ligne est momentanément indisponible. Utilisez WhatsApp en attendant." });
     }
@@ -409,7 +422,7 @@ export function registerJekoPayments(
   // Permet au client de savoir si son paiement a été confirmé, pendant qu'il attend après
   // avoir été redirigé vers son opérateur (le webhook est la seule confirmation fiable ;
   // cette route ne fait que refléter ce que notre propre webhook a déjà enregistré).
-  app.get("/api/payments/jeko/status/:reference", deps.requireAuth, async (req: any, res) => {
+  app.get("/api/payments/jeko/status/:reference", deps.requireAuth, async (req: AuthedRequest, res) => {
     const reference = String(req.params.reference || "");
     let record = await findPayment(reference);
     if (!record || record.phone !== req.session.phone) {
@@ -422,7 +435,7 @@ export function registerJekoPayments(
   // Webhook Jèko : notifie la confirmation (ou l'échec) d'un paiement. Le corps DOIT être
   // vérifié avec le secret webhook avant toute action (voir express.json({ verify }) dans
   // server.ts, qui conserve req.rawBody pour ce calcul).
-  app.post("/api/payments/jeko/webhook", async (req: any, res) => {
+  app.post("/api/payments/jeko/webhook", async (req: AuthedRequest, res) => {
     if (!isConfigured()) return res.status(503).end();
 
     const signature = String(req.headers["jeko-signature"] || "");
@@ -444,7 +457,7 @@ export function registerJekoPayments(
 
     // Le corps est la transaction elle-même, sans enveloppe (sauf variante "event"/"payload"
     // pour d'autres types de notification que nous n'utilisons pas ici).
-    const body = req.body || {};
+    const body: JekoWebhookBody = req.body || {};
     if (deps.diagnosticWebhook && await deps.diagnosticWebhook(body)) return res.status(200).end();
     // Jèko envoie la référence dans transactionDetails.reference pour les webhooks
     // TRANSACTION_COMPLETED (la réponse de création, elle, expose reference à la racine).

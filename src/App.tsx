@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from "react";
+import { PREFS_EVENT } from "./utils/prefs";
 import { 
   Sparkles, ShieldCheck, AlertTriangle, Coins, HelpCircle, FileText,
   Settings, MessageSquare, Gauge, Info, ChevronRight, RefreshCw, Layers, Lock, Database, Radio, Wrench, Chrome,
@@ -226,10 +227,10 @@ export default function App() {
       setAssistantName(localStorage.getItem("assistant_name") || "DiagAssist");
     };
     window.addEventListener("storage", handleStorageChange);
-    const interval = setInterval(handleStorageChange, 1000);
+    window.addEventListener(PREFS_EVENT, handleStorageChange);
     return () => {
       window.removeEventListener("storage", handleStorageChange);
-      clearInterval(interval);
+      window.removeEventListener(PREFS_EVENT, handleStorageChange);
     };
   }, []);
 

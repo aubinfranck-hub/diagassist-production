@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { setPref } from "../utils/prefs";
 import {
   Volume2, VolumeX, Mic, MicOff, Play, Pause, Square, RefreshCw, Sparkles,
   ChevronRight, ChevronLeft, HelpCircle, AlertCircle, Paperclip, Camera,
@@ -321,7 +322,7 @@ export default function IntegratedVoiceController({
 
   const handleVoiceChange = (voiceName: string) => {
     setSelectedVoiceName(voiceName);
-    localStorage.setItem("preferred_speech_voice", voiceName);
+    setPref("preferred_speech_voice", voiceName);
     
     // Restart active reading if voice is modified during playback
     if (speechStatus === "playing" || speechStatus === "paused") {
@@ -542,8 +543,11 @@ export default function IntegratedVoiceController({
       
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const authToken = localStorage.getItem("auth_session_token") || "";
-      const wsUrl = `${protocol}//${window.location.host}/api/live-ws?token=${encodeURIComponent(authToken)}`;
-      const ws = new WebSocket(wsUrl);
+      // Le token voyage dans le sous-protocole (pas dans l'URL, donc pas dans les journaux de proxy et de Render).
+      const wsUrl = `${protocol}//${window.location.host}/api/live-ws`;
+      const ws = /^[A-Za-z0-9]+$/.test(authToken)
+        ? new WebSocket(wsUrl, [`auth.${authToken}`])
+        : new WebSocket(`${wsUrl}?token=${encodeURIComponent(authToken)}`);
       wsRef.current = ws;
       
       ws.onopen = () => {
