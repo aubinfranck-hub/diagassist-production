@@ -61,7 +61,24 @@ dotenv.config();
 const otpStorage = new Map<string, { code: string; expiresAt: number }>();
 
 // Sessions actives : token -> { phone, plan, createdAt }
-const sessions = new Map<string, { phone: string; plan: string; createdAt: number }>();
+// Sessions : en mémoire, indexées par le jeton RÉEL (celui du cookie/en-tête). La base de données, elle, ne stocke que
+// l'EMPREINTE SHA-256 du jeton : une fuite de sauvegarde ne donne donc plus de sessions utilisables. Au redémarrage, les
+// sessions rechargées depuis la base sont indexées par leur empreinte ; get/has/delete essaient donc le jeton puis son empreinte.
+const hashSessionToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
+class SessionMap<V> extends Map<string, V> {
+  get(key: string): V | undefined {
+    if (typeof key !== "string" || !key) return undefined;
+    return super.get(key) ?? super.get(hashSessionToken(key));
+  }
+  has(key: string): boolean { return this.get(key) !== undefined; }
+  delete(key: string): boolean {
+    if (typeof key !== "string" || !key) return false;
+    const a = super.delete(key);
+    const b = super.delete(hashSessionToken(key));
+    return a || b;
+  }
+}
+const sessions = new SessionMap<{ phone: string; plan: string; createdAt: number }>();
 
 // Dernière position connue par numéro : soit précise (GPS navigateur, avec consentement),
 // soit estimative (dérivée de l'IP côté serveur quand le client refuse/échoue le GPS).
@@ -199,7 +216,10 @@ async function createSession(phone: string): Promise<string> {
     if (row) userPlans.set(phone, { plan: row.plan, activatedAt: Number(row.activated_at), customDurationMs: row.custom_duration_ms ? Number(row.custom_duration_ms) : undefined });
   }
   const session = { phone, plan: getEffectivePlan(phone), createdAt: Date.now() };
-  if (dbPool) await dbPool.query("INSERT INTO sessions (token,phone,plan,created_at) VALUES ($1,$2,$3,$4)", [token, phone, session.plan, session.createdAt]);
+  if (dbPool) {
+    const tokenHash = hashSessionToken(token);
+    await dbPool.query("INSERT INTO sessions (token,token_hash,phone,plan,created_at) VALUES ($1,$1,$2,$3,$4)", [tokenHash, phone, session.plan, session.createdAt]);
+  }
   sessions.set(token, session);
   return token;
 }
@@ -282,6 +302,10 @@ async function initDatabase(): Promise<void> {
       status TEXT NOT NULL DEFAULT 'pending'
     );
     CREATE INDEX IF NOT EXISTS idx_plan_requests_status ON plan_requests (status, requested_at DESC);
+    -- Jetons de session : seule l'empreinte SHA-256 est stockée. Les anciennes lignes (jeton en clair, token_hash NULL)
+    -- sont converties ici, en une seule instruction : personne n'est déconnecté.
+    ALTER TABLE sessions ADD COLUMN IF NOT EXISTS token_hash TEXT;
+    UPDATE sessions SET token = encode(sha256(convert_to(token, 'UTF8')), 'hex'), token_hash = encode(sha256(convert_to(token, 'UTF8')), 'hex') WHERE token_hash IS NULL;
     CREATE INDEX IF NOT EXISTS idx_sessions_phone ON sessions (phone);
     CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions (created_at);
     CREATE TABLE IF NOT EXISTS connection_history (
@@ -593,6 +617,8 @@ async function loadPersistedData(): Promise<void> {
     });
   }
 
+  // Purge des sessions expirées (elles n'étaient jamais supprimées de la base).
+  await dbPool.query("DELETE FROM sessions WHERE created_at < $1", [Date.now() - SESSION_MAX_AGE_MS]).catch((err: any) => console.error("[Sessions] Purge impossible :", err.message));
   const sessionsRes = await dbPool.query("SELECT * FROM sessions");
   let loadedSessions = 0;
   for (const row of sessionsRes.rows) {
@@ -5834,7 +5860,7 @@ Directives pour ce tour :
   registerHpWebRoutes(app, requireAuth);
 
   app.post("/api/auth/logout", requireAuth, async (req: any, res) => {
-    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [req.sessionToken]);
+    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [hashSessionToken(req.sessionToken)]);
     sessions.delete(req.sessionToken);
     res.json({ success: true });
   });
