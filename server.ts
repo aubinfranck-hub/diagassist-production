@@ -2248,7 +2248,27 @@ async function startServer() {
 
   // Sécurité HTTP standard (headers)
   app.use(helmet({
-    contentSecurityPolicy: false, // désactivé pour ne pas casser Vite en dev ; à durcir en prod si besoin
+    // CSP active en production uniquement (Vite a besoin de scripts inline/eval en dev).
+    // Volontairement large sur images/connexions/cadres (cartes, WhatsApp, Jèko, polices) :
+    // elle bloque surtout les scripts venant de domaines inconnus et l'intégration du site dans un cadre étranger.
+    contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdn.jsdelivr.net"],
+        fontSrc: ["'self'", "data:", "https://fonts.gstatic.com", "https://cdn.jsdelivr.net"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        mediaSrc: ["'self'", "data:", "blob:", "https:"],
+        connectSrc: ["'self'", "ws:", "wss:", "https:", "blob:", "data:"],
+        workerSrc: ["'self'", "blob:"],
+        frameSrc: ["'self'", "https:"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'", "https:"],
+        frameAncestors: ["'self'"],
+      },
+    } : false,
     crossOriginEmbedderPolicy: false,
   }));
 
@@ -5759,7 +5779,8 @@ Directives pour ce tour :
       const reject = (status: string) => { socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); };
       const protoToken = String(request.headers["sec-websocket-protocol"] || "")
         .split(",").map(x => x.trim()).find(x => x.startsWith("auth."))?.slice(5);
-      const token = protoToken || searchParams.get("token") || "";
+      // Le jeton ne passe plus dans l'URL (il finirait dans les journaux des proxys) : sous-protocole uniquement.
+      const token = protoToken || "";
       const session = sessions.get(token);
       if (!sessionIsValid(session)) return reject("401 Unauthorized");
       const plan = getEffectivePlan(session!.phone);

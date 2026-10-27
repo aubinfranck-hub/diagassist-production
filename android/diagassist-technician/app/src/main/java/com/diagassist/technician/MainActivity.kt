@@ -232,7 +232,7 @@ class MainActivity : ComponentActivity() {
 
                     val session = json.optString("sessionId")
                     val pairing = json.optString("pairingCode")
-                    val ws = json.optString("wsUrl", "https://diagassist-production.onrender.com")
+                    val ws = sanitizeWsUrl(json.optString("wsUrl", ""))
                     if (session.isBlank() || pairing.isBlank()) {
                         runOnUiThread {
                             Toast.makeText(this, "Réponse de connexion incomplète.", Toast.LENGTH_LONG).show()
@@ -291,11 +291,21 @@ class MainActivity : ComponentActivity() {
         startAgent()
     }
 
+    private fun sanitizeWsUrl(raw: String?): String {
+        val default = "https://diagassist-production.onrender.com"
+        if (raw.isNullOrBlank()) return default
+        val uri = try { Uri.parse(raw) } catch (e: Exception) { return default }
+        val host = uri.host?.lowercase() ?: return default
+        val trusted = host == "diagassist-production.onrender.com" || host == "diagassist.app" || host.endsWith(".diagassist.app")
+        return if (uri.scheme == "https" && trusted) raw else default
+    }
+
     private fun startAgent() {
         val u = launchUri ?: return
         val session = u.getQueryParameter("sessionId") ?: ""
         val pairing = u.getQueryParameter("pairingCode") ?: ""
-        val ws = u.getQueryParameter("wsUrl") ?: "https://diagassist-production.onrender.com"
+        // Le lien d'appairage peut venir d'un QR code : on n'envoie jamais l'écran vers un serveur inconnu.
+        val ws = sanitizeWsUrl(u.getQueryParameter("wsUrl"))
 
         startForegroundService(Intent(this, ScreenCaptureService::class.java).apply {
             putExtra("resultCode", projectionResult)
