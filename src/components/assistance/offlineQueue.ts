@@ -117,22 +117,6 @@ function releaseLock() {
   try { localStorage.removeItem(LOCK_KEY); } catch { /* ignore */ }
 }
 
-function freshPosition(): Promise<{ lat: number; lng: number; accuracy?: number } | null> {
-  return new Promise((resolve) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) return resolve(null);
-    let done = false;
-    const end = (v: { lat: number; lng: number; accuracy?: number } | null) => { if (!done) { done = true; resolve(v); } };
-    window.setTimeout(() => end(null), 9000);
-    try {
-      navigator.geolocation.getCurrentPosition(
-        (g) => end({ lat: g.coords.latitude, lng: g.coords.longitude, accuracy: g.coords.accuracy }),
-        () => end(null),
-        { enableHighAccuracy: true, timeout: 8000, maximumAge: 120000 }
-      );
-    } catch { end(null); }
-  });
-}
-
 const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
 
 export interface ReplayOutcome {
@@ -162,16 +146,8 @@ export async function replayPending(): Promise<ReplayOutcome> {
 
       try {
         const body: Record<string, any> = { ...item.body };
-        // Position la plus récente possible ; sinon celle d'origine.
-        const fresh = await freshPosition();
-        if (fresh && body.position) {
-          const old = body.position as { lat: number; lng: number; address?: string };
-          const moved = Math.abs(old.lat - fresh.lat) > 0.001 || Math.abs(old.lng - fresh.lng) > 0.001;
-          body.position = {
-            ...old, lat: fresh.lat, lng: fresh.lng, accuracy: fresh.accuracy, source: "gps",
-            address: moved ? undefined : old.address, confirmed: true,
-          };
-        }
+        // Keep the location confirmed by the client: the phone may have moved
+        // while the immobilised vehicle remained at the original location.
         const ids: string[] = Array.isArray(body.mediaIds) ? [...body.mediaIds] : [];
         for (const m of item.media) {
           try {
