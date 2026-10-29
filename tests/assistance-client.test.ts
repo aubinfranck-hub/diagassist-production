@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { canPrepareRequest, requestServices, serviceSelectable } from "../src/components/assistance/clientAvailability";
 import type { AssistanceStatus } from "../src/components/assistance/api";
 import { enqueueRequest, readPending, replayPending } from "../src/components/assistance/offlineQueue";
+import { callbackLink, positionFreshness } from "../src/components/assistance/clientSupport";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import RequestReview from "../src/components/assistance/RequestReview";
 
 const status: AssistanceStatus = {
   enabled: true, dbConfigured: true, whatsappConfigured: false, zones: [],
@@ -27,6 +31,39 @@ test("online service checks respect closures and workshop-only availability", ()
   assert.equal(canPrepareRequest({ ...status, dbConfigured: false }, true), false);
   assert.equal(canPrepareRequest({ ...status, services: [] }, true), false);
 });
+
+test("arrival freshness rejects missing, invalid, old and future timestamps", () => {
+  const now = 1_800_000_000_000;
+  assert.equal(positionFreshness(now - 59999, now).stale, false);
+  assert.match(positionFreshness(now - 59999, now).label, /moins d'une minute/);
+  assert.equal(positionFreshness(now - 299999, now).stale, false);
+  assert.equal(positionFreshness(now - 300000, now).stale, true);
+  for (const invalid of [undefined, 0, NaN, Infinity, now + 120000]) {
+    assert.equal(positionFreshness(invalid, now).stale, true);
+  }
+});
+
+test("WhatsApp callback encodes the dossier reference without private location or session data", () => {
+  const url = new URL(callbackLink("req & #é"));
+  assert.equal(url.hostname, "wa.me");
+  assert.equal(url.pathname, "/2250707312797");
+  assert.match(url.searchParams.get("text")!, /req & #é/);
+  assert.equal([...url.searchParams.keys()].length, 1);
+});
+
+test("review displays client details and consent without implying an accepted quote", () => {
+  const html = renderToStaticMarkup(createElement(RequestReview, {
+    atelier: false, symptoms: "Panne <script>", phone: "0700000000",
+    vehicle: { brand: "Toyota", model: "Corolla" }, address: "", landmark: "Station",
+    position: { lat: 5.36, lng: -4.0083 }, mediaCount: 2, shareDiagnostic: false,
+  }));
+  for (const text of ["0700000000", "Toyota Corolla", "5.36000, -4.00830", "Station", "Non partagé", "ne valide aucun devis"]) {
+    assert.ok(html.includes(text), text);
+  }
+  assert.ok(!html.includes("<script>"));
+  assert.ok(html.includes("&lt;script&gt;"));
+});
+
 
 test("offline queue preserves the confirmed vehicle location and retries server failures", async () => {
   const keys = ["localStorage", "navigator", "window", "fetch"] as const;

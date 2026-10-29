@@ -9,7 +9,8 @@ import {
 import { canPrepareRequest, requestServices, serviceSelectable } from "./clientAvailability";
 import { LatLng, MapScreen, useAddress } from "./AssistanceMaps";
 import { enqueueRequest, isOfflineError } from "./offlineQueue";
-import { btnPrimary, errText, inputCls, Notice } from "./ui";
+import RequestReview from "./RequestReview";
+import { btnPrimary, btnSecondary, errText, inputCls, Notice } from "./ui";
 
 /** Données reprises depuis un diagnostic IA (écran de résultat). */
 export interface AssistancePrefill {
@@ -82,6 +83,7 @@ export default function ClientWizard({
   const [share, setShare] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [reviewing, setReviewing] = useState(false);
   const uploaded = useRef<Map<Attach, string>>(new Map());
 
   const tile = TILES.find((t) => t.id === tileId);
@@ -198,7 +200,7 @@ export default function ClientWizard({
 
   // ---- Validation ----
   const phoneOk = phone.replace(/\D/g, "").length >= 8;
-  const canSend = canPrepareRequest(status, online) && immobilised !== null && !!tile && !!serviceCode && tileAvailable(tile) && svcOk(serviceInfo) && !!pos && phoneOk && !sending;
+  const canSend = canPrepareRequest(status, online) && immobilised !== null && !!tile && !!serviceCode && tileAvailable(tile) && svcOk(serviceInfo) && !!pos && phoneOk && !sending && !recording;
 
   const symptomsText = useMemo(() => {
     const base = tile ? (tile.id === "autre" ? serviceLabel : tile.label) : "";
@@ -207,7 +209,7 @@ export default function ClientWizard({
   }, [tile, description, serviceLabel]);
 
   const send = async () => {
-    if (!canSend || !pos || !tile) return;
+    if (!reviewing || !canSend || !pos || !tile) return;
     setSending(true); setError("");
     let body: Record<string, unknown> | null = null;
     try {
@@ -276,6 +278,24 @@ export default function ClientWizard({
   const range = tariffs[serviceCode];
   const tariff = serviceInfo ? (serviceInfo.tariff ?? serviceInfo.indicativeAmount ?? null) : null;
 
+  if (reviewing && pos) {
+    return <MapScreen client={pos} onBack={() => { if (!sending) setReviewing(false); }} backLabel="Modifier"
+      footer={<>
+        {error && <Notice tone="error">{error}</Notice>}
+        <button className={btnPrimary} disabled={!canSend} onClick={send}>
+          {sending ? "Traitement en cours…" : online ? "Confirmer et envoyer" : "Confirmer l'enregistrement hors ligne"}
+        </button>
+        <button className={btnSecondary} disabled={sending} onClick={() => setReviewing(false)}>Modifier ma demande</button>
+      </>}>
+      {!online && <Notice tone="warn">La demande sera conservée sur ce téléphone et transmise au retour du réseau lorsque cette page est ouverte. Aucun professionnel n'est encore prévenu.</Notice>}
+      {online && !sending && !canSend && <Notice tone="warn">La disponibilité du service doit être vérifiée. Revenez au formulaire pour vérifier votre choix.</Notice>}
+      <RequestReview atelier={atelier} symptoms={symptomsText} phone={phone.trim()}
+        vehicle={{ brand: brand.trim(), model: model.trim(), year: prefill?.vehicle?.year }}
+        address={address} landmark={landmark} position={pos} mediaCount={attachments.length}
+        shareDiagnostic={!!(prefill?.summary && share)} />
+    </MapScreen>;
+  }
+
   return (
     <MapScreen
       client={pos}
@@ -287,9 +307,10 @@ export default function ClientWizard({
       footer={
         <>
           {error && <Notice tone="error">{error}</Notice>}
-          <button className={`${btnPrimary} !min-h-[58px] !text-lg`} onClick={send} disabled={!canSend}>
-            {sending ? <><Loader2 className="w-5 h-5 animate-spin" /> {online ? "Envoi en cours…" : "Enregistrement…"}</> : online ? "Envoyer ma demande" : "Enregistrer pour envoi au retour du réseau"}
+          <button className={`${btnPrimary} !min-h-[58px] !text-lg`} onClick={() => setReviewing(true)} disabled={!canSend}>
+            Vérifier ma demande
           </button>
+          {recording && <p className="text-xs text-amber-300 text-center">Terminez votre note vocale avant de continuer.</p>}
           {!sending && (immobilised === null || !tile || !pos || !phoneOk) && (
             <p className="text-xs text-slate-500 text-center">
               {immobilised === null ? "Dites-nous d'abord si votre véhicule peut encore rouler." : !tile ? "Choisissez le type de panne." : !pos ? "Placez le point rouge sur la carte." : "Indiquez votre numéro de téléphone."}

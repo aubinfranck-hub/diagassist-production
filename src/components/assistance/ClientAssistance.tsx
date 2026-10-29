@@ -171,7 +171,7 @@ export default function ClientAssistance({
               Voir ma demande en cours <ChevronRight className="w-5 h-5" />
             </button>
           ) : (
-            <button className={`${btnPrimary} !min-h-[60px] !text-lg`} disabled={!anyAvailable} onClick={() => { setWizardPrefill(null); setView({ name: "wizard" }); }}>
+            <button className={`${btnPrimary} !min-h-[60px] !text-lg`} disabled={!anyAvailable} onClick={() => { autoOpened.current = true; setWizardPrefill(null); setView({ name: "wizard" }); }}>
               <LifeBuoy className="w-6 h-6" /> Je suis en panne
             </button>
           )

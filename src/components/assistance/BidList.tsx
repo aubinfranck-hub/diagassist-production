@@ -42,7 +42,7 @@ function BidCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-base font-black text-white truncate">{name}</span>
-            {best && <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full"><Sparkles className="w-3 h-3" /> Meilleur rapport</span>}
+            {best && <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full"><Sparkles className="w-3 h-3" /> Bon compromis prix / délai</span>}
             {bid.isRevised && <span className="text-[11px] font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">Offre révisée</span>}
           </div>
           <div className="text-sm text-slate-400 flex items-center gap-x-2 flex-wrap">
@@ -65,6 +65,7 @@ function BidCard({
       {p.trainings && p.trainings.length > 0 && (
         <div className="text-xs text-slate-500 truncate">Formations : {p.trainings.map((t) => t.title).join(", ")}</div>
       )}
+      <p className="text-xs text-slate-400">Montant proposé : le détail déplacement, diagnostic, main-d’œuvre et pièces n’est pas renseigné dans cette offre. Faites préciser ce qui est compris avant de confirmer.</p>
       <div className="flex items-center gap-3">
         <span className="text-xs text-slate-500 shrink-0 w-[4.5rem] leading-tight"><Countdown until={bid.validUntil} onEnd={onExpire} /></span>
         <button className={`${btnPrimary} !min-h-[48px] !py-2.5 flex-1`} disabled={disabled} onClick={() => onChoose(bid)}>
@@ -124,6 +125,7 @@ export default function BidList({
               {conf.pro.displayName || "Ce mécanicien"}{conf.pro.garageName ? ` · ${conf.pro.garageName}` : ""}.{" "}
               {atelier ? "Votre visite sera confirmée avec ce garage." : "Les autres offres seront annulées."}
             </p>
+            <p className="text-sm text-amber-300">Vous acceptez le montant affiché. Vérifiez ce qu’il couvre ; les travaux supplémentaires devront faire l’objet d’un devis à valider.</p>
             <div className="grid grid-cols-2 gap-3">
               <button className={`${btnSecondary} !px-3`} disabled={!!busyId} onClick={() => setConfirm(null)}>Retour</button>
               <button className={`${btnPrimary} !px-3`} disabled={!!busyId} onClick={() => { onSelect(conf); setConfirm(null); }}>Oui, choisir</button>

@@ -9,6 +9,8 @@ import {
 } from "./api";
 import { MapScreen, PriceMarker } from "./AssistanceMaps";
 import BidList from "./BidList";
+import WaitingHelp from "./WaitingHelp";
+import { positionFreshness } from "./clientSupport";
 import {
   btnGreen, btnPrimary, btnSecondary, Card, ChatPanel, errText, inputCls, Notice, Spinner, StateBox, Stars,
 } from "./ui";
@@ -151,6 +153,8 @@ export default function ClientTracking({
   const photo = ((pro as any)?.photoUrl || (pro as any)?.photo || (pro as any)?.avatarUrl) as string | undefined;
   const phaseIdx = phases.findIndex((p) => p.st === st);
   const searching = st === "recherche" || st === "brouillon";
+  const positionAge = positionFreshness(pro?.location?.updatedAt);
+  const arrivalReliable = online && !lastError && !positionAge.stale;
   const etaMin = pro?.eta ? Math.max(1, Math.round(pro.eta.minutes)) : null;
 
   const cancelBtn = allowed.cancel ? (
@@ -175,6 +179,10 @@ export default function ClientTracking({
       {notice && <Notice tone="ok">{notice}</Notice>}
     </>
   );
+
+  const waitingHelp = <WaitingHelp requestId={requestId} requested={r.manualRequested === true}
+    canRequest={!!allowed.manual} busy={!!busy} online={online}
+    onRequest={() => act("manual", () => api(`/requests/${requestId}/manual`, { body: {} }), "Demande d'aide transmise à l'équipe DiagAssist.")} />;
 
   // ===================== Recherche en cours : offres des mécaniciens =====================
   if (searching) {
@@ -214,6 +222,7 @@ export default function ClientTracking({
         ) : (
           <BidList bids={bids} atelier={atelier} busyId={bidBusy} error={bidError} onSelect={selectBid} onExpire={() => { void load(); }} />
         )}
+        {st !== "brouillon" && waitingHelp}
       </MapScreen>
     );
   }
@@ -230,7 +239,7 @@ export default function ClientTracking({
               Aucun mécanicien n'est disponible près de vous pour le moment. Vous pouvez relancer la recherche, ou demander à l'équipe DiagAssist de trouver quelqu'un manuellement.
             </Notice>
             {allowed.retry && <button className={btnPrimary} disabled={!!busy} onClick={() => act("retry", () => api(`/requests/${requestId}/retry`, { body: {} }), "Nous relançons la recherche.")}>Relancer la recherche</button>}
-            {allowed.manual && <button className={btnSecondary} disabled={!!busy} onClick={() => act("manual", () => api(`/requests/${requestId}/manual`, { body: {} }), "Demande transmise à l'équipe DiagAssist, elle vous rappellera.")}>Demander une prise en charge manuelle</button>}
+            {waitingHelp}
             {cancelBtn}
           </>
         ) : (
@@ -356,9 +365,12 @@ export default function ClientTracking({
         </div>
       )}
 
+      {!atelier && live && pro?.location && <Notice tone={arrivalReliable ? "info" : "warn"}>
+        {positionAge.label}.{!arrivalReliable && " La position affichée est la dernière connue, pas une position en direct."}
+      </Notice>}
       {/* Temps d'arrivée / trajet */}
       {atelier && ["affectee", "en_route"].includes(st) && etaLine}
-      {!atelier && etaMin !== null && ["affectee", "en_route"].includes(st) && pro?.eta && (
+      {!atelier && arrivalReliable && etaMin !== null && ["affectee", "en_route"].includes(st) && pro?.eta && (
         <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 flex items-center gap-3">
           <Clock className="w-7 h-7 text-emerald-400 shrink-0" />
           <div>
@@ -367,8 +379,8 @@ export default function ClientTracking({
           </div>
         </div>
       )}
-      {!atelier && ["affectee", "en_route"].includes(st) && !pro?.eta && (
-        <p className="text-sm text-slate-400">{pro?.location ? "Votre mécanicien arrive." : "Le temps d'arrivée s'affichera dès que la position du mécanicien est connue."}</p>
+      {!atelier && ["affectee", "en_route"].includes(st) && (!pro?.eta || !arrivalReliable) && (
+        <p className="text-sm text-slate-400">{pro?.location ? "Le délai d’arrivée doit être actualisé. Vous pouvez contacter le mécanicien." : "Le temps d’arrivée s’affichera dès que la position du mécanicien est connue."}</p>
       )}
       {atelier && st === "affectee" && allowed.leaving && (
         <Notice tone="ok">Visite confirmée. Appuyez sur « Je pars » quand vous quittez l'endroit où vous êtes.</Notice>
