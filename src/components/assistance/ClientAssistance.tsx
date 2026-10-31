@@ -6,6 +6,7 @@ import {
 } from "./api";
 import ClientWizard, { AssistancePrefill } from "./ClientWizard";
 import ClientTracking from "./ClientTracking";
+import { canPrepareRequest } from "./clientAvailability";
 import { LatLng, MapScreen, useAddress } from "./AssistanceMaps";
 import { SosButton } from "./Sos";
 import PendingBanner from "./PendingBanner";
@@ -113,7 +114,7 @@ export default function ClientAssistance({
   const pending = usePendingRequests(view.name === "home", (id) => { void loadAll(); setView({ name: "track", id }); });
 
   // ----- Indisponible -----
-  if (unavailable) {
+  if (unavailable && online && view.name !== "wizard") {
     return (
       <Wrap>
         <StateBox icon={<AlertTriangle className="w-7 h-7" />} title="Assistance momentanément indisponible" text={unavailable}>
@@ -123,7 +124,7 @@ export default function ClientAssistance({
     );
   }
 
-  if (view.name === "wizard" && status) {
+  if (view.name === "wizard") {
     return (
       <Wrap>
         <ClientWizard
@@ -151,7 +152,7 @@ export default function ClientAssistance({
   }
 
   // ----- Accueil : carte plein écran + panneau du bas -----
-  const anyAvailable = !!status?.services.some((s) => s.available);
+  const anyAvailable = canPrepareRequest(status, online);
   const active = requests?.find(isActive);
   const toPay = (requests || []).find((r) => r.status === "terminee" && Number(r.amountAgreed) > 0 && r.paymentStatus !== "paye");
   const past = (requests || []).filter((r) => r !== active);
@@ -170,13 +171,13 @@ export default function ClientAssistance({
               Voir ma demande en cours <ChevronRight className="w-5 h-5" />
             </button>
           ) : (
-            <button className={`${btnPrimary} !min-h-[60px] !text-lg`} disabled={!status || !anyAvailable} onClick={() => { setWizardPrefill(null); setView({ name: "wizard" }); }}>
+            <button className={`${btnPrimary} !min-h-[60px] !text-lg`} disabled={!anyAvailable} onClick={() => { autoOpened.current = true; setWizardPrefill(null); setView({ name: "wizard" }); }}>
               <LifeBuoy className="w-6 h-6" /> Je suis en panne
             </button>
           )
         }
       >
-        {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Vous êtes hors ligne. Vous pouvez quand même faire votre demande : elle sera envoyée dès que le réseau revient.</span></Notice>}
+        {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Vous êtes hors ligne. Préparez votre demande sur ce téléphone : aucun mécanicien ne la recevra avant le retour du réseau et la confirmation de son envoi.</span></Notice>}
         <PendingBanner items={pending.items} busy={pending.busy} notices={pending.notices} onCancel={pending.cancel} onDismiss={pending.dismissNotices} />
         {loadError && online && <Notice tone="warn" action={<button className={btnSecondary} onClick={() => void loadAll()}>Réessayer</button>}>{loadError}</Notice>}
 
@@ -196,8 +197,8 @@ export default function ClientAssistance({
           <p className="text-xs text-slate-500 -mt-2">{geoMsg || "Ce n'est pas le bon endroit ? Faites glisser le point rouge."}</p>
         )}
 
-        {!status ? <Spinner /> : !anyAvailable ? (
-          <Notice tone="warn">Aucun mécanicien n'est disponible dans votre zone pour le moment. Bientôt disponible.</Notice>
+        {online && !status ? <Spinner /> : !anyAvailable ? (
+          <Notice tone="warn">Aucun service d'assistance n'est disponible pour le moment. Réessayez plus tard.</Notice>
         ) : (
           !active && <p className="text-sm text-slate-400">Dépannage chez vous ou garage proche : vous choisissez à l'étape suivante.</p>
         )}

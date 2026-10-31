@@ -4,11 +4,13 @@ import {
   LocateFixed, MapPin, Camera, Video, Mic, Square, X, ChevronDown, Loader2, ShieldCheck, Car, Wrench,
 } from "lucide-react";
 import {
-  api, authToken, AssistanceError, AssistanceStatus, compressImage, referenceTariffText, knownPhone, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
+  api, authToken, AssistanceError, AssistanceStatus, compressImage, referenceTariffText, knownPhone, useOnline, MAX_BYTES, readAsBase64, SERVICE_FALLBACK_LABEL,
 } from "./api";
+import { canPrepareRequest, requestServices, serviceSelectable } from "./clientAvailability";
 import { LatLng, MapScreen, useAddress } from "./AssistanceMaps";
 import { enqueueRequest, isOfflineError } from "./offlineQueue";
-import { btnPrimary, errText, inputCls, Notice } from "./ui";
+import RequestReview from "./RequestReview";
+import { btnPrimary, btnSecondary, errText, inputCls, Notice } from "./ui";
 
 /** Données reprises depuis un diagnostic IA (écran de résultat). */
 export interface AssistancePrefill {
@@ -38,7 +40,7 @@ type GeoState = "idle" | "loading" | "denied" | "unavailable" | "timeout";
 export default function ClientWizard({
   status, prefill, initialPos, initialAccuracy, onCreated, onClose, onQueued,
 }: {
-  status: AssistanceStatus;
+  status: AssistanceStatus | null;
   prefill?: AssistancePrefill | null;
   initialPos?: LatLng | null;
   initialAccuracy?: number;
@@ -47,6 +49,9 @@ export default function ClientWizard({
   /** Appelé quand la demande a été gardée hors ligne (file d'attente locale). */
   onQueued?: () => void;
 }) {
+  const online = useOnline();
+  const services = requestServices(status, online);
+
   // --- Parcours : le véhicule peut-il encore rouler ? (null = pas encore répondu) ---
   const [immobilised, setImmobilised] = useState<boolean | null>(null);
   const atelier = immobilised === false;
@@ -78,20 +83,21 @@ export default function ClientWizard({
   const [share, setShare] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [reviewing, setReviewing] = useState(false);
   const uploaded = useRef<Map<Attach, string>>(new Map());
 
   const tile = TILES.find((t) => t.id === tileId);
   const serviceCode = tile ? (tile.service || otherService) : "";
-  const serviceInfo = status.services.find((s) => s.code === serviceCode);
+  const serviceInfo = services.find((s) => s.code === serviceCode);
   const serviceLabel = serviceInfo?.label || SERVICE_FALLBACK_LABEL[serviceCode] || serviceCode;
 
   // Dépannage : mécaniciens mobiles ; atelier : garages (repli sur `available` si le serveur ne le précise pas).
   const svcOk = (s?: AssistanceStatus["services"][number]) =>
-    !!s && (atelier ? (s.atelierAvailable ?? s.available) : s.available);
+    serviceSelectable(s, atelier, online);
   const tileAvailable = (t: Tile) => {
     if (atelier && t.id === "remorquage") return false;
-    if (!t.service) return status.services.some((s) => svcOk(s));
-    return svcOk(status.services.find((x) => x.code === t.service));
+    if (!t.service) return services.some((s) => svcOk(s));
+    return svcOk(services.find((x) => x.code === t.service));
   };
 
   useEffect(() => {
@@ -194,7 +200,7 @@ export default function ClientWizard({
 
   // ---- Validation ----
   const phoneOk = phone.replace(/\D/g, "").length >= 8;
-  const canSend = immobilised !== null && !!tile && !!serviceCode && tileAvailable(tile) && svcOk(serviceInfo) && !!pos && phoneOk && !sending;
+  const canSend = canPrepareRequest(status, online) && immobilised !== null && !!tile && !!serviceCode && tileAvailable(tile) && svcOk(serviceInfo) && !!pos && phoneOk && !sending && !recording;
 
   const symptomsText = useMemo(() => {
     const base = tile ? (tile.id === "autre" ? serviceLabel : tile.label) : "";
@@ -203,7 +209,7 @@ export default function ClientWizard({
   }, [tile, description, serviceLabel]);
 
   const send = async () => {
-    if (!pos || !tile || sending) return;
+    if (!reviewing || !canSend || !pos || !tile) return;
     setSending(true); setError("");
     let body: Record<string, unknown> | null = null;
     try {
@@ -272,6 +278,24 @@ export default function ClientWizard({
   const range = tariffs[serviceCode];
   const tariff = serviceInfo ? (serviceInfo.tariff ?? serviceInfo.indicativeAmount ?? null) : null;
 
+  if (reviewing && pos) {
+    return <MapScreen client={pos} onBack={() => { if (!sending) setReviewing(false); }} backLabel="Modifier"
+      footer={<>
+        {error && <Notice tone="error">{error}</Notice>}
+        <button className={btnPrimary} disabled={!canSend} onClick={send}>
+          {sending ? "Traitement en cours…" : online ? "Confirmer et envoyer" : "Confirmer l'enregistrement hors ligne"}
+        </button>
+        <button className={btnSecondary} disabled={sending} onClick={() => setReviewing(false)}>Modifier ma demande</button>
+      </>}>
+      {!online && <Notice tone="warn">La demande sera conservée sur ce téléphone et transmise au retour du réseau lorsque cette page est ouverte. Aucun professionnel n'est encore prévenu.</Notice>}
+      {online && !sending && !canSend && <Notice tone="warn">La disponibilité du service doit être vérifiée. Revenez au formulaire pour vérifier votre choix.</Notice>}
+      <RequestReview atelier={atelier} symptoms={symptomsText} phone={phone.trim()}
+        vehicle={{ brand: brand.trim(), model: model.trim(), year: prefill?.vehicle?.year }}
+        address={address} landmark={landmark} position={pos} mediaCount={attachments.length}
+        shareDiagnostic={!!(prefill?.summary && share)} />
+    </MapScreen>;
+  }
+
   return (
     <MapScreen
       client={pos}
@@ -283,9 +307,10 @@ export default function ClientWizard({
       footer={
         <>
           {error && <Notice tone="error">{error}</Notice>}
-          <button className={`${btnPrimary} !min-h-[58px] !text-lg`} onClick={send} disabled={!canSend}>
-            {sending ? <><Loader2 className="w-5 h-5 animate-spin" /> Envoi en cours…</> : "Envoyer ma demande"}
+          <button className={`${btnPrimary} !min-h-[58px] !text-lg`} onClick={() => setReviewing(true)} disabled={!canSend}>
+            Vérifier ma demande
           </button>
+          {recording && <p className="text-xs text-amber-300 text-center">Terminez votre note vocale avant de continuer.</p>}
           {!sending && (immobilised === null || !tile || !pos || !phoneOk) && (
             <p className="text-xs text-slate-500 text-center">
               {immobilised === null ? "Dites-nous d'abord si votre véhicule peut encore rouler." : !tile ? "Choisissez le type de panne." : !pos ? "Placez le point rouge sur la carte." : "Indiquez votre numéro de téléphone."}
@@ -294,6 +319,8 @@ export default function ClientWizard({
         </>
       }
     >
+      {!online && <Notice tone="warn">Votre demande sera enregistrée sur ce téléphone, puis envoyée au retour du réseau lorsque cette page est ouverte. Aucun mécanicien n'est encore prévenu. La disponibilité sera vérifiée à l'envoi.</Notice>}
+      {online && !canPrepareRequest(status, online) && <Notice tone="warn">{status ? "Le service est momentanément indisponible. Vos informations restent dans ce formulaire." : "Vérification du service en cours. Vos informations restent dans ce formulaire."}</Notice>}
       {/* Position confirmée */}
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-red-600/15 text-red-500 flex items-center justify-center shrink-0"><MapPin className="w-5 h-5" /></div>
@@ -371,15 +398,15 @@ export default function ClientWizard({
         {tile?.id === "autre" && (
           <select value={otherService} onChange={(e) => setOtherService(e.target.value)} className={`${inputCls} mt-3`} aria-label="Type d'aide">
             <option value="">Quel type d'aide ?</option>
-            {status.services.map((s) => (
-              <option key={s.code} value={s.code} disabled={!s.available}>{s.label}{s.available ? "" : " (bientôt disponible)"}</option>
+            {services.map((s) => (
+              <option key={s.code} value={s.code} disabled={!svcOk(s)}>{s.label}{svcOk(s) ? "" : " (bientôt disponible)"}</option>
             ))}
           </select>
         )}
       </div>
 
       {/* Tarif connu à l'avance */}
-      {serviceInfo && (
+      {online && serviceInfo && (
         <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-sm">
           <div className="font-black text-amber-300">{referenceTariffText(tariff, range?.min, range?.max)}</div>
           <div className="text-xs text-slate-400 mt-0.5">

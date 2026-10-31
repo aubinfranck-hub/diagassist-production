@@ -22,8 +22,9 @@ export default function PendingBanner({
             {busy ? <Loader2 className="w-4 h-4 mt-0.5 shrink-0 animate-spin text-amber-300" /> : <Clock className="w-4 h-4 mt-0.5 shrink-0 text-amber-300" />}
             <div className="min-w-0 flex-1">
               <div className="text-sm font-black text-amber-300">
-                {busy ? "Envoi de votre demande…" : "Demande en attente : elle sera envoyée dès que le réseau revient."}
+                {busy ? "Envoi de votre demande…" : "Demande enregistrée sur ce téléphone — en attente de transmission."}
               </div>
+              <p className="text-xs text-amber-200 mt-1">Aucune prise en charge n'est confirmée. Gardez cette page ouverte au retour du réseau pour permettre l'envoi.</p>
               {typeof p.body.symptoms === "string" && p.body.symptoms && (
                 <div className="text-xs text-slate-400 truncate">{p.body.symptoms}</div>
               )}
