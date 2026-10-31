@@ -10,7 +10,7 @@ import {
 import { MapScreen, PriceMarker } from "./AssistanceMaps";
 import BidList from "./BidList";
 import WaitingHelp from "./WaitingHelp";
-import { positionFreshness } from "./clientSupport";
+import { callbackLink, positionFreshness } from "./clientSupport";
 import {
   btnGreen, btnPrimary, btnSecondary, Card, ChatPanel, errText, inputCls, Notice, Spinner, StateBox, Stars,
 } from "./ui";
@@ -234,14 +234,22 @@ export default function ClientTracking({
         {banners}
         <h2 className="text-xl font-black text-white">{STATUS_LABEL[st]}</h2>
         {st === "sans_disponibilite" ? (
-          <>
-            <Notice tone="warn">
-              Aucun mécanicien n'est disponible près de vous pour le moment. Vous pouvez relancer la recherche, ou demander à l'équipe DiagAssist de trouver quelqu'un manuellement.
-            </Notice>
-            {allowed.retry && <button className={btnPrimary} disabled={!!busy} onClick={() => act("retry", () => api(`/requests/${requestId}/retry`, { body: {} }), "Nous relançons la recherche.")}>Relancer la recherche</button>}
-            {waitingHelp}
-            {cancelBtn}
-          </>
+          <section className="rounded-3xl border border-emerald-400/25 bg-gradient-to-br from-emerald-950/70 to-slate-950 p-5 space-y-4 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+              <MessageCircle className="h-7 w-7" aria-hidden="true" />
+            </div>
+            <p className="text-sm leading-relaxed text-slate-300">
+              Aucun mécanicien n'est disponible près de vous pour le moment. Contactez directement le service DiagAssist sur WhatsApp pour obtenir de l'aide.
+            </p>
+            <a href={callbackLink(requestId)} target="_blank" rel="noopener noreferrer"
+              className="flex w-full min-h-[60px] items-center justify-center gap-3 rounded-2xl bg-[#25D366] px-5 py-4 text-base font-black text-slate-950 shadow-lg shadow-emerald-500/20 transition hover:bg-[#20BD5A] active:scale-[0.98] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400">
+              <MessageCircle className="h-6 w-6 shrink-0" aria-hidden="true" />
+              <span>Contacter DiagAssist sur WhatsApp</span>
+            </a>
+            <p className="text-xs leading-relaxed text-slate-400">
+              Un message avec la référence de votre demande s'ouvre. Envoyez-le ou lancez un appel depuis WhatsApp.
+            </p>
+          </section>
         ) : (
           <p className="text-sm text-slate-400">Cette demande a été annulée. Vous pouvez en faire une nouvelle depuis l'accueil.</p>
         )}
