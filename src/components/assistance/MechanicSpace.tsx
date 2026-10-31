@@ -5,6 +5,7 @@ import {
 } from "./api";
 import BidForm, { BidRange } from "./BidForm";
 import MechanicEarnings from "./MechanicEarnings";
+import MechanicHistory from "./MechanicHistory";
 import MechanicMission, { normalizeMission, ProMission } from "./MechanicMission";
 import MechanicProfile, { ProProfile } from "./MechanicProfile";
 import { btnGreen, btnPrimary, btnSecondary, Card, errText, Notice, Spinner, StateBox, useCountdown } from "./ui";
@@ -266,8 +267,8 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
       )}
 
       {/* Onglets */}
-      <div className="grid grid-cols-4 gap-2 bg-slate-950/60 p-1 rounded-2xl border border-white/[0.06]" role="tablist">
-        {([["mission", "Missions"], ["gains", "Mes gains"], ["profil", "Mon profil"], ["historique", "Historique"]] as const).map(([k, l]) => (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-950/60 p-1 rounded-2xl border border-white/[0.06]" role="tablist">
+        {([["mission", "Missions"], ["gains", "Mes gains"], ["profil", "Mon profil"], ["historique", "Mes interventions"]] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
             className={`min-h-[44px] rounded-xl text-sm font-black transition cursor-pointer ${tab === k ? "bg-red-600 text-[#ffffff]" : "text-slate-400"}`}>{l}</button>
         ))}
@@ -275,7 +276,7 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
 
       {tab === "profil" && <MechanicProfile key={profile?.phone || "new"} profile={profile} status={status} onSaved={loadMe} />}
 
-      {tab === "historique" && <History />}
+      {tab === "historique" && <MechanicHistory />}
 
       {tab === "gains" && <MechanicEarnings />}
 
@@ -391,37 +392,6 @@ function OfferCard({
       )}
       {live && left === 0 && <p className="text-xs text-slate-500 text-center">Délai dépassé.</p>}
     </Card>
-  );
-}
-
-function History() {
-  const [list, setList] = useState<any[] | null>(null);
-  const [err, setErr] = useState("");
-  const load = useCallback(async () => {
-    try {
-      const d = await api<{ missions: any[] }>("/pro/missions");
-      setList(d.missions || []);
-      setErr("");
-    } catch (e) { setErr(errText(e)); }
-  }, []);
-  usePolling(load, 30000, true);
-
-  if (err && !list) return <Notice tone="error" action={<button className={btnSecondary} onClick={() => void load()}>Réessayer</button>}>{err}</Notice>;
-  if (!list) return <Spinner />;
-  return (
-    <div className="space-y-5">
-      <section className="space-y-2">
-        <h3 className="text-sm font-black uppercase tracking-wider text-slate-500">Missions</h3>
-        {list.length === 0 && <p className="text-sm text-slate-500 py-3">Aucune mission pour le moment.</p>}
-        {list.map((m) => (
-          <Card key={m.id} className="!p-4 space-y-1">
-            <div className="flex justify-between gap-2"><span className="font-black text-white truncate">{m.serviceLabel || m.service}</span><span className="text-xs text-slate-500 shrink-0">{formatDate(m.createdAt)}</span></div>
-            <div className="text-sm text-slate-400 truncate">{vehicleLabel(m.vehicle)}{m.symptoms ? ` · ${m.symptoms}` : ""}</div>
-            <div className="text-xs font-bold text-slate-300">{STATUS_SHORT[m.status] || m.status}</div>
-          </Card>
-        ))}
-      </section>
-    </div>
   );
 }
 
