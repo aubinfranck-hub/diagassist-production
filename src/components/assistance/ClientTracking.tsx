@@ -9,6 +9,7 @@ import {
 } from "./api";
 import { MapScreen, PriceMarker } from "./AssistanceMaps";
 import BidList from "./BidList";
+import ClientAlerts from "./ClientAlerts";
 import WaitingHelp from "./WaitingHelp";
 import { callbackLink, positionFreshness } from "./clientSupport";
 import {
@@ -173,6 +174,7 @@ export default function ClientTracking({
 
   const banners = (
     <>
+      <ClientAlerts detail={detail} online={online && !lastError} />
       {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Hors ligne : les informations peuvent ne pas être à jour.</span></Notice>}
       {online && lastError && <Notice tone="warn">{lastError}</Notice>}
       {actionError && <Notice tone="error">{actionError}</Notice>}
@@ -220,7 +222,7 @@ export default function ClientTracking({
         {st === "brouillon" ? (
           <button className={btnPrimary} disabled={!!busy} onClick={() => act("submit", () => api(`/requests/${requestId}/submit`, { body: {} }))}>Envoyer la demande</button>
         ) : (
-          <BidList bids={bids} atelier={atelier} busyId={bidBusy} error={bidError} onSelect={selectBid} onExpire={() => { void load(); }} />
+          <div id="assistance-offers" tabIndex={-1} className="scroll-mt-4"><BidList bids={bids} atelier={atelier} busyId={bidBusy} error={bidError} onSelect={selectBid} onExpire={() => { void load(); }} /></div>
         )}
         {st !== "brouillon" && waitingHelp}
       </MapScreen>
@@ -454,7 +456,7 @@ export default function ClientTracking({
 
       {/* Devis */}
       {quotes.length > 0 && (
-        <div className="space-y-3">
+        <div id="assistance-quotes" tabIndex={-1} className="space-y-3 scroll-mt-4">
           {quotes.map((q, i) => (
             <QuoteCard
               key={q.id} quote={q} index={i}
