@@ -781,9 +781,11 @@ export default function App() {
       {/* Parcours : page d'accueil, puis connexion. Le choix de profil (mécanicien /
           propriétaire) est temporairement désactivé — l'app est mécanicien uniquement. */}
       {!loggedInUser && showLandingPage ? (
-        <LandingPage onGetStarted={() => setShowLandingPage(false)} />
+        <LandingPage onGetStarted={() => setShowLandingPage(false)} onRequestHelp={() => { chooseMode("driver"); setShowLandingPage(false); }} />
       ) : !loggedInUser ? (
         <PhoneAuth
+          assistance={userMode === "driver"}
+          onBack={() => setShowLandingPage(true)}
           onLoginSuccess={(phone) => {
             setLoggedInUser(phone);
             localStorage.setItem("auth_user_phone", phone);

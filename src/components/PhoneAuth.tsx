@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Phone, ShieldCheck, ArrowRight, RefreshCw, Sparkles, CheckCircle, AlertCircle, Lock, Eye, EyeOff, User } from "lucide-react";
 
 interface PhoneAuthProps {
+  assistance?: boolean;
+  onBack?: () => void;
   onLoginSuccess: (phoneNumber: string) => void;
 }
 
@@ -19,7 +21,7 @@ const COUNTRY_CODES = [
   { code: "+33", country: "France 🇫🇷" },
 ];
 
-export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
+export default function PhoneAuth({ onLoginSuccess, assistance = false, onBack }: PhoneAuthProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedCountry, setSelectedCountry] = useState("+225");
   const [password, setPassword] = useState("");
@@ -241,6 +243,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
 
       <div className="w-full max-w-md premium-glass-card rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden animate-fade-in">
 
+        {onBack && <button type="button" onClick={onBack} className="relative mb-5 min-h-[44px] text-sm font-bold text-slate-400 hover:text-red-500">← Retour à l’accueil</button>}
         <div className="text-center mb-8 relative">
           <div className="inline-flex items-center justify-center w-14 h-14 bg-white rounded-2xl shadow-lg shadow-red-600/20 border border-white/[0.08] mb-4 overflow-hidden">
             <img src="/icon-logo-192.png" alt="DiagAssist" className="w-full h-full object-cover" />
@@ -249,7 +252,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
             DiagAssist <span className="text-red-500">v1</span>
           </h1>
           <p className="text-xs text-slate-400 mt-1.5 font-medium tracking-wide">
-            DiagAssist, assistant mécanique pro
+            {assistance ? "DiagAssist Assistance · Automobilistes" : "DiagAssist · Diagnostic et assistance automobile"}
           </p>
         </div>
 
@@ -257,10 +260,10 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
           <div className="space-y-6 animate-fade-in relative">
             <div className="text-center space-y-2.5">
               <h2 className="text-base font-black text-slate-200 uppercase tracking-wide">
-                Connexion
+                {assistance ? "Connexion pour votre dépannage" : "Connexion"}
               </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Utilisez votre numéro de téléphone et votre mot de passe.
+                {assistance ? "Connectez-vous ou créez un compte pour décrire la panne, confirmer votre position et rechercher un mécanicien." : "Utilisez votre numéro de téléphone et votre mot de passe."}
               </p>
             </div>
 
@@ -665,7 +668,7 @@ export default function PhoneAuth({ onLoginSuccess }: PhoneAuthProps) {
       </div>
 
       <div className="mt-6 text-center text-slate-600 text-[10px] max-w-sm leading-relaxed">
-        Ce module d'identification permet de préserver votre historique de pannes de voiture, d'associer votre pass Wave ou abonnements LITE/PREMIUM, et de bloquer le vol de vos crédits.
+        {assistance ? "Votre compte vous permet de suivre votre demande et les offres des mécaniciens. La connexion ne lance aucune demande : vous vérifierez les informations avant de confirmer." : "Votre compte vous permet de retrouver vos diagnostics, vos demandes d’assistance et vos services DiagAssist."}
       </div>
     </div>
   );
