@@ -3,7 +3,7 @@ import {
   Wrench, Camera, Mic, MessageCircle, ShieldCheck, Smartphone, Clock, ArrowRight, ArrowUp, MapPin, Phone, Search, ListChecks, FlaskConical, Stethoscope, CheckCircle2, Menu, X, FileSearch, Play, Sun, Moon
 } from "lucide-react";
 
-interface LandingPageProps { onGetStarted: () => void; }
+interface LandingPageProps { onGetStarted: () => void; onRequestHelp: () => void; }
 
 const WHATSAPP_NUMBER = "2250707312797";
 const waLink = (message: string) => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
@@ -24,7 +24,7 @@ const METHOD_STEPS = [
   { icon: CheckCircle2, title: "Vérification post-réparation", desc: "Contrôle final pour confirmer que la panne est bien résolue avant de rendre le véhicule." },
 ];
 
-export default function LandingPage({ onGetStarted }: LandingPageProps) {
+export default function LandingPage({ onGetStarted, onRequestHelp }: LandingPageProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [lightMode, setLightMode] = useState(false);
 
@@ -68,6 +68,18 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
       </header>
 
       <main id="top" className="w-full relative">
+        <section aria-labelledby="assistance-entry-title" className={`border-b ${lightMode ? "bg-white border-slate-200" : "bg-slate-900 border-white/10"}`}>
+          <div className="max-w-7xl mx-auto px-5 sm:px-7 lg:px-10 py-6 sm:py-8 flex flex-col md:flex-row md:items-center gap-5">
+            <div className="flex-1">
+              <p className="text-xs font-black uppercase tracking-widest text-red-500">DiagAssist Assistance · Automobilistes</p>
+              <h2 id="assistance-entry-title" className="mt-2 text-2xl sm:text-3xl font-black">Une panne ? Trouvez un mécanicien.</h2>
+              <p className={`mt-2 text-sm sm:text-base ${lightMode ? "text-slate-600" : "text-slate-300"}`}>Véhicule immobilisé : demandez un dépannage sur place. S’il peut rouler : trouvez un mécanicien en atelier.</p>
+            </div>
+            <button onClick={onRequestHelp} className="min-h-[52px] shrink-0 inline-flex items-center justify-center gap-3 rounded-2xl bg-red-600 hover:bg-red-700 !text-white px-6 py-4 font-black shadow-lg shadow-red-600/20">
+              <MapPin className="w-5 h-5" aria-hidden="true" /> Demander un dépannage <ArrowRight className="w-5 h-5" aria-hidden="true" />
+            </button>
+          </div>
+        </section>
         <section className="relative overflow-hidden bg-[#020817] min-h-0">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_35%,rgba(239,68,68,.20),transparent_28%),radial-gradient(circle_at_25%_75%,rgba(30,41,59,.75),transparent_48%)]" />
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,8,23,.96)_0%,rgba(2,8,23,.86)_42%,rgba(2,8,23,.42)_72%,rgba(2,8,23,.75)_100%)]" />
