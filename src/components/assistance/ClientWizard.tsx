@@ -279,7 +279,7 @@ export default function ClientWizard({
   const tariff = serviceInfo ? (serviceInfo.tariff ?? serviceInfo.indicativeAmount ?? null) : null;
 
   if (reviewing && pos) {
-    return <MapScreen client={pos} onBack={() => { if (!sending) setReviewing(false); }} backLabel="Modifier"
+    return <MapScreen expandable client={pos} onBack={() => { if (!sending) setReviewing(false); }} backLabel="Modifier"
       footer={<>
         {error && <Notice tone="error">{error}</Notice>}
         <button className={btnPrimary} disabled={!canSend} onClick={send}>
@@ -289,6 +289,7 @@ export default function ClientWizard({
       </>}>
       {!online && <Notice tone="warn">La demande sera conservée sur ce téléphone et transmise au retour du réseau lorsque cette page est ouverte. Aucun professionnel n'est encore prévenu.</Notice>}
       {online && !sending && !canSend && <Notice tone="warn">La disponibilité du service doit être vérifiée. Revenez au formulaire pour vérifier votre choix.</Notice>}
+      <RequestSteps reviewing />
       <RequestReview atelier={atelier} symptoms={symptomsText} phone={phone.trim()}
         vehicle={{ brand: brand.trim(), model: model.trim(), year: prefill?.vehicle?.year }}
         address={address} landmark={landmark} position={pos} mediaCount={attachments.length}
@@ -298,6 +299,7 @@ export default function ClientWizard({
 
   return (
     <MapScreen
+      expandable
       client={pos}
       accuracy={source === "gps" ? accuracy : undefined}
       editable
@@ -310,6 +312,7 @@ export default function ClientWizard({
           <button className={`${btnPrimary} !min-h-[58px] !text-lg`} onClick={() => setReviewing(true)} disabled={!canSend}>
             Vérifier ma demande
           </button>
+          <p className="text-xs text-slate-400 text-center">Vous relisez les informations avant l’envoi.</p>
           {recording && <p className="text-xs text-amber-300 text-center">Terminez votre note vocale avant de continuer.</p>}
           {!sending && (immobilised === null || !tile || !pos || !phoneOk) && (
             <p className="text-xs text-slate-500 text-center">
@@ -321,12 +324,17 @@ export default function ClientWizard({
     >
       {!online && <Notice tone="warn">Votre demande sera enregistrée sur ce téléphone, puis envoyée au retour du réseau lorsque cette page est ouverte. Aucun mécanicien n'est encore prévenu. La disponibilité sera vérifiée à l'envoi.</Notice>}
       {online && !canPrepareRequest(status, online) && <Notice tone="warn">{status ? "Le service est momentanément indisponible. Vos informations restent dans ce formulaire." : "Vérification du service en cours. Vos informations restent dans ce formulaire."}</Notice>}
+      <RequestSteps reviewing={false} />
+      <div>
+        <h1 className="text-2xl font-black text-white">Votre demande de dépannage</h1>
+        <p className="mt-1 text-sm text-slate-400">Quelques informations pour aider les mécaniciens à vous proposer une offre adaptée.</p>
+      </div>
       {/* Position confirmée */}
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-red-600/15 text-red-500 flex items-center justify-center shrink-0"><MapPin className="w-5 h-5" /></div>
         <div className="min-w-0 flex-1">
           <div className="text-xs font-bold uppercase tracking-wider text-slate-500">{atelier ? "Pour trouver un garage près de vous" : "Le mécanicien vient ici"}</div>
-          <div className="text-sm font-black text-white truncate">
+          <div className="text-sm font-black text-white break-words">
             {geo === "loading" ? "Recherche de votre position…" : pos ? (address || "Point rouge sur la carte") : "Position non trouvée"}
           </div>
         </div>
@@ -343,7 +351,7 @@ export default function ClientWizard({
 
       {/* Le véhicule peut-il rouler ? */}
       <div>
-        <h2 className="text-xl font-black text-white mb-2">Votre véhicule peut-il encore rouler ?</h2>
+        <h2 className="text-lg font-black text-white mb-3">1. Votre véhicule peut-il rouler ?</h2>
         <div className="grid grid-cols-1 gap-2.5">
           {([
             { v: true, title: "Non, il est immobilisé", icon: <Truck className="w-7 h-7" />, hint: "Un mécanicien vient jusqu'à vous (dépannage)." },
@@ -358,7 +366,7 @@ export default function ClientWizard({
                 <span className={sel ? "text-red-500" : "text-slate-400"}>{o.icon}</span>
                 <span>
                   <span className="block text-base font-black text-white leading-tight">{o.title}</span>
-                  <span className="block text-xs text-slate-400 mt-0.5">{o.hint}</span>
+                  <span className="block text-sm text-slate-400 mt-1 leading-relaxed">{o.hint}</span>
                 </span>
               </button>
             );
@@ -369,7 +377,7 @@ export default function ClientWizard({
       {immobilised !== null && (<>
       {/* Type de panne */}
       <div>
-        <h2 className="text-xl font-black text-white mb-2">Que se passe-t-il ?</h2>
+        <h2 className="text-lg font-black text-white mb-3">2. Quel est le problème ?</h2>
         {prefill?.summary && (
           <div className="mb-3"><Notice tone="info">Votre diagnostic DiagAssist peut être joint à la demande (pistes à vérifier, pas une certitude). Vous décidez plus bas.</Notice></div>
         )}
@@ -421,7 +429,8 @@ export default function ClientWizard({
 
       {/* Description + médias */}
       <div className="space-y-2.5">
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} maxLength={500} placeholder="En deux mots, que constatez-vous ? (facultatif)" className={inputCls} />
+        <label htmlFor="assistance-description" className="block text-sm font-bold text-slate-300">Précisions sur la panne <span className="font-normal text-slate-400">(facultatif)</span></label>
+        <textarea id="assistance-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} maxLength={500} placeholder="En deux mots, que constatez-vous ? (facultatif)" className={inputCls} />
         <div className="grid grid-cols-3 gap-2.5">
           <label className="inline-flex items-center justify-center gap-2 min-h-[48px] rounded-2xl bg-slate-950/80 border border-white/[0.1] text-sm font-bold text-slate-200 cursor-pointer">
             <Camera className="w-4 h-4" /> Photo
@@ -450,15 +459,17 @@ export default function ClientWizard({
 
       {/* Repère + téléphone */}
       <div className="space-y-2.5">
+        <h2 className="text-lg font-black text-white">3. Comment vous retrouver ?</h2>
         {atelier ? (
           <details>
             <summary className="cursor-pointer text-sm font-bold text-slate-400 min-h-[44px] flex items-center">Ajouter un repère (facultatif)</summary>
-            <input value={landmark} onChange={(e) => setLandmark(e.target.value)} placeholder="Un repère près de vous" className={inputCls} />
+            <input aria-label="Repère pour retrouver le véhicule" value={landmark} onChange={(e) => setLandmark(e.target.value)} placeholder="Un repère près de vous" className={inputCls} />
           </details>
         ) : (
-          <input value={landmark} onChange={(e) => setLandmark(e.target.value)} placeholder="Un repère pour vous trouver (facultatif)" className={inputCls} />
+          <input aria-label="Repère pour retrouver le véhicule" value={landmark} onChange={(e) => setLandmark(e.target.value)} placeholder="Un repère pour vous trouver (facultatif)" className={inputCls} />
         )}
-        <input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Votre téléphone : 07 00 00 00 00" className={inputCls} aria-label="Votre numéro de téléphone" />
+        <label htmlFor="assistance-contact" className="block text-sm font-bold text-slate-300">Téléphone de contact</label>
+        <input id="assistance-contact" autoComplete="tel" type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Votre téléphone : 07 00 00 00 00" className={inputCls} aria-label="Votre numéro de téléphone" />
         {!phoneOk && <p className="text-xs text-amber-400">{atelier ? "Il ne sera transmis au garage qu'après votre confirmation." : "Le mécanicien en aura besoin pour vous joindre."}</p>}
       </div>
 
@@ -497,4 +508,16 @@ export default function ClientWizard({
       </>)}
     </MapScreen>
   );
+}
+
+function RequestSteps({ reviewing }: { reviewing: boolean }) {
+  return <ol aria-label="Étapes de votre demande" className="flex items-center gap-2 text-xs font-bold">
+    {["Votre panne", "Vérification", "Recherche"].map((label, index) => {
+      const current = index === (reviewing ? 1 : 0);
+      const done = reviewing && index === 0;
+      return <li key={label} aria-current={current ? "step" : undefined} className={`flex-1 min-w-0 border-t-2 pt-2 ${current || done ? "border-red-500 text-red-500" : "border-slate-700 text-slate-400"}`}>
+        {index + 1}. {label}
+      </li>;
+    })}
+  </ol>;
 }
