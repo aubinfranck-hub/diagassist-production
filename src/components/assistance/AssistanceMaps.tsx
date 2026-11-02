@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import React, { useEffect, useId, useRef, useState } from "react";
+import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -300,16 +300,19 @@ function FullMap({
 
 /** Écran carte plein cadre avec panneau du bas. `children` = contenu défilant, `footer` = zone fixe (bouton principal). */
 export function MapScreen({
-  client, pro, accuracy, editable, onChange, pulse, onBack, backLabel = "Retour", topRight, children, footer, markers, tall,
+  client, pro, accuracy, editable, onChange, pulse, onBack, backLabel = "Retour", topRight, children, footer, markers, tall, expandable = false,
 }: {
   /** Feuille plus haute (comparaison d'offres) : la liste prime sur la carte. */
   tall?: boolean;
+  expandable?: boolean;
   markers?: PriceMarker[];
   client?: LatLng | null; pro?: LatLng | null; accuracy?: number; editable?: boolean;
   onChange?: (p: LatLng) => void; pulse?: boolean; onBack?: () => void; backLabel?: string;
   topRight?: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode;
 }) {
   const sheet = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const panelId = useId();
   const [inset, setInset] = useState(220);
   useEffect(() => {
     const node = sheet.current;
@@ -332,9 +335,12 @@ export function MapScreen({
         </button>
       )}
       {topRight && <div className="absolute top-3 right-3 z-10">{topRight}</div>}
-      <div ref={sheet} className={`absolute inset-x-0 bottom-0 z-10 flex flex-col ${tall ? "max-h-[74%]" : "max-h-[64%]"} bg-slate-900/95 backdrop-blur-md border-t border-white/[0.1] rounded-t-3xl shadow-[0_-12px_40px_rgba(0,0,0,0.5)]`}>
-        <div className="pt-2.5 pb-1 flex justify-center shrink-0"><span className="w-10 h-1.5 rounded-full bg-slate-700" /></div>
-        <div className="overflow-y-auto px-5 pb-4 pt-1 space-y-4 min-h-0">{children}</div>
+      <div ref={sheet} className={`absolute inset-x-0 bottom-0 z-10 flex flex-col ${expanded ? "max-h-[90%]" : tall ? "max-h-[74%]" : "max-h-[64%]"} bg-slate-900/95 backdrop-blur-md border-t border-white/[0.1] rounded-t-3xl shadow-[0_-12px_40px_rgba(0,0,0,0.5)]`}>
+        {expandable ? <button type="button" aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpanded(v => !v)} className="shrink-0 min-h-[44px] flex items-center justify-center gap-2 text-xs font-bold text-slate-300 cursor-pointer hover:text-red-500">
+          {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+          {expanded ? "Voir davantage la carte" : "Agrandir le panneau"}
+        </button> : <div className="pt-2.5 pb-1 flex justify-center shrink-0"><span className="w-10 h-1.5 rounded-full bg-slate-700" /></div>}
+        <div id={panelId} className="overflow-y-auto overscroll-contain px-5 pb-4 pt-1 space-y-4 min-h-0">{children}</div>
         {footer && <div className="shrink-0 px-5 pb-3 pt-2 border-t border-white/[0.06] space-y-2">{footer}</div>}
       </div>
     </div>

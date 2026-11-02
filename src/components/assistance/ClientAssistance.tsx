@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronRight, LifeBuoy, LocateFixed, MapPin, WifiOff, Wrench } from "lucide-react";
+import { AlertTriangle, ChevronRight, LifeBuoy, LocateFixed, MapPin, WifiOff, Wrench, ShieldCheck, MessageCircle, CheckCircle2 } from "lucide-react";
 import {
   api, agreedPriceText, AssistanceError, AssistanceStatus, formatDate, formatXOF, isFinalStatus, paymentShort, RequestSummary,
   STATUS_SHORT, useOnline, usePolling, vehicleLabel,
@@ -160,6 +160,7 @@ export default function ClientAssistance({
   return (
     <Wrap>
       <MapScreen
+        expandable
         client={homePos}
         accuracy={homeAcc}
         editable
@@ -172,11 +173,16 @@ export default function ClientAssistance({
             </button>
           ) : (
             <button className={`${btnPrimary} !min-h-[60px] !text-lg`} disabled={!anyAvailable} onClick={() => { autoOpened.current = true; setWizardPrefill(null); setView({ name: "wizard" }); }}>
-              <LifeBuoy className="w-6 h-6" /> Je suis en panne
+              <LifeBuoy className="w-6 h-6" /> Demander un dépannage <ChevronRight className="w-5 h-5" />
             </button>
           )
         }
       >
+        <div className="space-y-2">
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-red-500">DiagAssist Assistance</p>
+          <h1 className="text-2xl font-black text-white leading-tight">{active ? "Votre dépannage, étape par étape" : "Une panne ? On vous accompagne."}</h1>
+          <p className="text-sm leading-relaxed text-slate-400">{active ? "Retrouvez l’avancement de votre demande et les informations de votre intervention." : "Décrivez le problème, comparez les offres reçues et choisissez votre mécanicien."}</p>
+        </div>
         {!online && <Notice tone="warn"><span className="inline-flex items-center gap-2"><WifiOff className="w-4 h-4" /> Vous êtes hors ligne. Préparez votre demande sur ce téléphone : aucun mécanicien ne la recevra avant le retour du réseau et la confirmation de son envoi.</span></Notice>}
         <PendingBanner items={pending.items} busy={pending.busy} notices={pending.notices} onCancel={pending.cancel} onDismiss={pending.dismissNotices} />
         {loadError && online && <Notice tone="warn" action={<button className={btnSecondary} onClick={() => void loadAll()}>Réessayer</button>}>{loadError}</Notice>}
@@ -184,13 +190,13 @@ export default function ClientAssistance({
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 rounded-full bg-red-600/15 text-red-500 flex items-center justify-center shrink-0"><MapPin className="w-5 h-5" /></div>
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Vous êtes ici</div>
-            <div className="text-base font-black text-white truncate">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Position du véhicule</div>
+            <div className="text-sm font-bold text-white break-words">
               {homeAddr || (homePos ? "Position sur la carte" : geoMsg.startsWith("Recherche") ? "Recherche de votre position…" : "Position non trouvée")}
             </div>
           </div>
-          <button onClick={locate} className="shrink-0 inline-flex items-center gap-1.5 min-h-[44px] px-3 rounded-full bg-slate-950/80 border border-white/[0.1] text-sm font-bold text-slate-200 cursor-pointer">
-            <LocateFixed className="w-4 h-4 text-red-500" /> Me localiser
+          <button onClick={locate} aria-label="Me localiser" className="shrink-0 inline-flex items-center justify-center min-h-[44px] w-11 rounded-full bg-slate-950/80 border border-white/[0.1] text-sm font-bold text-slate-200 cursor-pointer">
+            <LocateFixed className="w-5 h-5 text-red-500" />
           </button>
         </div>
         {(geoMsg || homePos) && (
@@ -200,7 +206,15 @@ export default function ClientAssistance({
         {online && !status ? <Spinner /> : !anyAvailable ? (
           <Notice tone="warn">Aucun service d'assistance n'est disponible pour le moment. Réessayez plus tard.</Notice>
         ) : (
-          !active && <p className="text-sm text-slate-400">Dépannage chez vous ou garage proche : vous choisissez à l'étape suivante.</p>
+          !active && <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-bold text-white"><ShieldCheck className="w-5 h-5 text-red-500" /> Vous gardez le choix</div>
+            <ol className="grid grid-cols-3 gap-3 text-xs text-slate-300">
+              <li className="space-y-2"><LifeBuoy className="w-5 h-5 text-red-500" /><span className="block">1. Décrivez la panne</span></li>
+              <li className="space-y-2"><MessageCircle className="w-5 h-5 text-red-500" /><span className="block">2. Comparez les offres</span></li>
+              <li className="space-y-2"><CheckCircle2 className="w-5 h-5 text-red-500" /><span className="block">3. Choisissez votre mécanicien</span></li>
+            </ol>
+            <p className="text-xs text-slate-400">Sur place si le véhicule est immobilisé, en atelier s’il peut rouler.</p>
+          </div>
         )}
 
         {active && (
@@ -220,6 +234,7 @@ export default function ClientAssistance({
           </button>
         )}
 
+        {requests && past.length === 0 && !active && <p className="text-xs text-slate-400">Vos demandes et leur suivi apparaîtront ici.</p>}
         {past.length > 0 && (
           <details className="text-sm">
             <summary className="cursor-pointer font-bold text-slate-400 min-h-[44px] flex items-center">Mes dernières demandes ({past.length})</summary>
