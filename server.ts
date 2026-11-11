@@ -23,6 +23,8 @@ import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
 import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
 import { getGeminiKeys } from "./src/utils/geminiKeys";
+import { buildDtcReference, dtcKbStats, dtcProcedureComplement, dtcVoiceSummary, extractDtcCodes, lookupDtc, normalizeDtcCode } from "./src/modules/dtc/dtcKnowledge";
+import { decodeVin, extractVin, formatVinForPrompt, normalizeVin, vinDecoderStatus } from "./src/modules/vin/vinDecoder";
 
 // Navigation HP-Web : l'extension du navigateur de l'utilisateur (sa session, sa licence) est
 // prioritaire ; le gateway serveur ne sert que de repli, Cloudflare le bloque souvent.
@@ -1465,11 +1467,17 @@ const OBD_CODES: Record<string, { cause: string; action: string }> = {
 };
 
 // Recherche instantanée d'un code OBD dans la table locale embarquée.
-function liveToolLookupOBDCode(code: string): string {
-  const normalized = code.trim().toUpperCase();
+function liveToolLookupOBDCode(code: string, brand?: string): string {
+  const normalized = normalizeDtcCode(code) || code.trim().toUpperCase();
   const entry = OBD_CODES[normalized];
+  // Base complète hors ligne (OBDex + codes constructeur + MechanicDB) : complète la fiche locale
+  // en français, ou la remplace quand le code n'y figure pas.
+  const kbText = dtcVoiceSummary(normalized, brand || null);
   if (entry) {
-    return `Code ${normalized} : ${entry.cause}. Action : ${entry.action}.`;
+    return `Code ${normalized} : ${entry.cause}. Action : ${entry.action}.` + (kbText ? `\nFiche détaillée (base DiagAssist, en anglais, à reformuler en français en 2 phrases) :\n${kbText}` : "");
+  }
+  if (kbText) {
+    return `Fiche base DiagAssist (en anglais, à reformuler en français en 2 phrases, sans citer de prix) :\n${kbText}`;
   }
   // Recherche partielle si le code exact n'est pas dans la table
   const partialMatches = Object.entries(OBD_CODES).filter(([k]) => k.startsWith(normalized.slice(0, 3)));
@@ -1536,13 +1544,25 @@ function liveToolGetRepairProcedure(faultType: string, make?: string): string {
     if (normalized.includes(k)) { key = v; break; }
   }
 
+  // Code défaut cité : la base locale apporte la définition propre à la marque et des procédures
+  // de contrôle sourcées (MechanicDB), là où REPAIR_PROCEDURES n'a que des procédures génériques.
+  const dtcCode = extractDtcCodes(faultType, 1)[0];
+  const complement = dtcCode ? dtcProcedureComplement(dtcCode, make || null) : null;
+
+  if (!key && complement) {
+    return `Pas de procédure DiagAssist dédiée pour "${faultType}" ; éléments de la base de codes (en anglais, à reformuler, un seul test à la fois) :\n${complement}`;
+  }
+
   if (!key) {
     return `Procédure non trouvée pour "${faultType}". Procédures disponibles : ratés d'allumage, mélange pauvre, surchauffe, alternateur, démarreur, capteur PMH, MAF encrassé, bougies préchauffage, EGR bouché, turbo, courroie distribution, ABS capteur, injecteurs diesel, réseau CAN, pompe à eau, thermostat.`;
   }
 
   const proc = REPAIR_PROCEDURES[key];
-  const makeNote = make ? ` (${make})` : "";
-  return `Procédure${makeNote} — ${proc.titre}\n${proc.etapes.join("\n")}\nConseil Côte d'Ivoire : ${proc.conseil_ci}`;
+  // Ces procédures sont communes à toutes les marques : on le dit, au lieu d'afficher la marque
+  // comme si les étapes lui étaient propres.
+  const scope = make ? `procédure générique, non spécifique à ${make} : adapter valeurs et emplacements au véhicule` : "procédure générique, valable toutes marques";
+  return `Procédure (${scope}) — ${proc.titre}\n${proc.etapes.join("\n")}\nConseil Côte d'Ivoire : ${proc.conseil_ci}` +
+    (complement ? `\nCompléments de la base de codes (en anglais, à reformuler) :\n${complement}` : "");
 }
 
 // Récupère les N derniers diagnostics enregistrés pour un numéro de téléphone donné.
@@ -2390,7 +2410,16 @@ async function startServer() {
         files,       // Nouveau : plusieurs pièces jointes { data, mimeType }[] — un mécanicien peut
                      // joindre plusieurs photos/vidéos/audio en une seule fois (voyant + moteur + code OBD...)
         accountType, // "mechanic" (défaut) ou "owner" — adapte le niveau technique de la réponse
+        vehicleVin,  // Optionnel : VIN (17 caractères) — décodé hors ligne si fourni ou présent dans la description
       } = req.body;
+
+      // Base locale de codes défauts + décodage VIN hors ligne (aucun appel réseau, aucun quota).
+      const localDtcReference = buildDtcReference(extractDtcCodes(String(textDescription || "")), vehicleBrand || null);
+      let vinContext = "";
+      const vinToDecode = normalizeVin(String(vehicleVin || "")) || extractVin(String(textDescription || ""));
+      if (vinToDecode) {
+        try { vinContext = formatVinForPrompt(await decodeVin(vinToDecode)); } catch (e: any) { console.warn("[VIN] Décodage impossible :", e?.message || e); }
+      }
 
       // Construct parts array for Gemini 3.5 Flash
       const parts: any[] = [];
@@ -2476,10 +2505,15 @@ Description du problème par l'utilisateur :
 Analyse-les attentivement pour y repérer des voyants, des codes d'erreur DTC textuels (comme EPB C112A, C2006, etc.), des bruits moteurs anormaux ou des indices de pannes visuels afin d'établir un diagnostic d'expert.`;
       }
 
+      if (vinContext) promptText += `\n\n${vinContext}`;
+      if (localDtcReference.text) promptText += `\n\n${localDtcReference.text}`;
+
       if (groundedFindings) {
         promptText += `\n\nINFORMATIONS VÉRIFIÉES VIA RECHERCHE WEB (bases ouvertes, forums techniques, bulletins constructeur — à privilégier sur ta seule mémoire d'entraînement pour ce diagnostic) :\n"""\n${groundedFindings}\n"""\nBase ton diagnostic en priorité sur ces éléments vérifiés quand ils sont pertinents.
 
 RÈGLE DE TRANSPARENCE (IMPORTANTE) : Dans "probableCauses" et "explanationText", distingue EXPLICITEMENT ce qui est confirmé par la recherche ci-dessus de ce qui reste ton estimation générale. Préfixe chaque cause selon son statut réel, par exemple : "Confirmé (bulletin constructeur / base DTC) : ..." ou "Cause probable, non confirmée pour ce modèle précis : ...". Ne présente jamais une simple estimation comme un fait établi. Si les informations vérifiées ne couvrent pas le cas précis, dis-le et complète avec ton expertise générale en le signalant clairement.`;
+      } else if (localDtcReference.found.length > 0) {
+        promptText += `\n\nPas de recherche web disponible pour ce diagnostic : appuie-toi sur les fiches de la base locale ci-dessus pour les codes ${localDtcReference.found.join(", ")}, et signale dans "explanationText" que les particularités propres à ce modèle restent à confirmer sur le véhicule.`;
       } else {
         promptText += `\n\nAUCUNE RECHERCHE WEB VÉRIFIÉE DISPONIBLE POUR CE DIAGNOSTIC : tu réponds uniquement à partir de ta connaissance générale, potentiellement générique ou datée. Dans "explanationText", précise en une phrase que ce diagnostic n'a pas pu être recoupé avec des sources ouvertes et qu'une confirmation par lecture de codes sur le véhicule reste nécessaire.`;
       }
@@ -2977,10 +3011,23 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
           ? `\n\nDERNIER SCAN DU PROFIL (${new Date(chatLastScan.completedAt).toLocaleDateString("fr-FR")}) : ${chatLastScan.summary}. Codes DTC : ${chatLastScan.dtcs.length > 0 ? chatLastScan.dtcs.join(", ") : "aucun"}.`
           : "");
 
+      // Fiches de la base locale pour les codes cités dans le message (ou dans le dernier scan) et
+      // décodage hors ligne d'un VIN collé dans le message.
+      const chatContextText = `${message} ${typeof diagnosticContext === "string" ? diagnosticContext : JSON.stringify(diagnosticContext || "").slice(0, 4000)}`;
+      const chatCodes = extractDtcCodes(chatContextText, 5);
+      const chatBrand = typeof diagnosticContext === "object" && diagnosticContext ? (diagnosticContext.vehicleBrand || diagnosticContext.brand || null) : null;
+      const chatDtcRef = buildDtcReference(chatCodes, chatBrand, { maxCauses: 5, maxSymptoms: 3, maxDesc: 500 });
+      let chatVin = "";
+      const chatVinCode = extractVin(message);
+      if (chatVinCode) {
+        try { chatVin = formatVinForPrompt(await decodeVin(chatVinCode)); } catch (e: any) { console.warn("[VIN] Décodage impossible :", e?.message || e); }
+      }
+      const chatLocalKnowledge = (chatVin ? `\n\n${chatVin}` : "") + (chatDtcRef.text ? `\n\n${chatDtcRef.text}` : "");
+
       const response = await generateContentWithFallbackAndRetry(
         contentsPayload,
         {
-          systemInstruction: systemInstruction + chatMemory,
+          systemInstruction: systemInstruction + chatMemory + chatLocalKnowledge,
           tools: [{ googleSearch: {} }],
         }
       );
@@ -3935,6 +3982,30 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   };
   // Paramètre de requête texte : une seule valeur, 80 caractères au plus (rejette tableaux et objets).
   const queryText = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 && v.length <= 80 ? v : undefined);
+
+  // --- Base de codes défauts hors ligne + décodage VIN (Corgi) ---
+  app.get("/api/dtc/:code", requireAuth, (req, res) => {
+    const code = normalizeDtcCode(String(req.params.code || ""));
+    if (!code) return res.status(400).json({ success: false, message: "Code défaut invalide (ex. P0301, C112A, U0100)." });
+    const info = lookupDtc(code, queryText(req.query.brand) || null);
+    if (!info) return res.status(404).json({ success: false, message: `Code ${code} absent de la base locale.` });
+    const local = OBD_CODES[code];
+    res.json({ success: true, code, fr: local || null, info });
+  });
+
+  app.get("/api/vin/:vin", requireAuth, asyncRoute(async (req, res) => {
+    const vin = normalizeVin(String(req.params.vin || ""));
+    if (!vin) return res.status(400).json({ success: false, message: "VIN invalide : 17 caractères, sans I, O ni Q." });
+    try {
+      res.json({ success: true, vehicle: await decodeVin(vin) });
+    } catch (e: any) {
+      res.status(503).json({ success: false, message: "Décodeur VIN momentanément indisponible." });
+    }
+  }));
+
+  app.get("/api/admin/knowledge/status", adminLimiter, requireAdminAuth, (req, res) => {
+    res.json({ success: true, dtc: dtcKbStats(), vin: vinDecoderStatus() });
+  });
 
   app.get("/api/vehicles/brands", requireAuth, asyncRoute(async (req, res) => {
     if (!dbPool) return res.json({ success: true, brands: [] });
@@ -5379,6 +5450,13 @@ Instructions Tour 0 :
 2. Ouvre la Phase 1 (Action avant DTC) : pose la première question prioritaire sur ce qui a été fait sur le véhicule juste avant ou autour de l'apparition du code/symptôme.
 3. Propose les premières hypothèses avec leurs scores de confiance initiaux.`;
 
+      const loopDtcRef = buildDtcReference(
+        Array.from(new Set([...state.codes_dtc.map((c: any) => String(c)), ...extractDtcCodes(String(state.symptome_initial))])),
+        state.vehicule.marque !== "Inconnu" ? state.vehicule.marque : null,
+        { maxCauses: 6, maxSymptoms: 3, maxDesc: 500 }
+      );
+      if (loopDtcRef.text) promptText += `\n\n${loopDtcRef.text}`;
+
       parts.push({ text: promptText });
 
       const loopNameInstruction = getNameInstruction(phone);
@@ -5626,9 +5704,10 @@ Directives pour ce tour :
       return userAccounts.get(phone)?.isAdmin === true || ["payg_active", "lite", "premium"].includes(getEffectivePlan(phone));
     },
     analyze: async ({ service, vehicle, symptoms, faultCodes, media }) => {
+      const assistDtcRef = buildDtcReference(extractDtcCodes(`${faultCodes || ""} ${symptoms || ""}`, 4), vehicle?.brand || null, { maxCauses: 4, maxSymptoms: 2, maxDesc: 300, includeFixes: false });
       if (getGeminiKeys().length === 0) return null;
       const parts: any[] = [{
-        text: `Tu es DiagAssist, assistant des mécaniciens professionnels (Abidjan, Côte d'Ivoire). Un automobiliste en panne demande une assistance (${service}). Véhicule : ${[vehicle?.brand, vehicle?.model, vehicle?.year, vehicle?.engine].filter(Boolean).join(" ") || "non précisé"}. Symptômes : ${symptoms || "non précisés"}. Codes défaut : ${faultCodes || "aucun"}. Analyse le texte et les médias joints (photos, vidéos, note vocale du client dans laquelle il décrit la panne à l'oral : écoute-la et tiens-en compte). Réponds en 3 phrases maximum, sans markdown, vocabulaire de garage : pistes probables de panne puis premières vérifications à faire sur place. Ce sont des pistes à vérifier, pas un diagnostic certain. Si une pièce est probablement défectueuse, termine par : Pour des pièces garanties, contactez-nous au 0707312797.`,
+        text: `Tu es DiagAssist, assistant des mécaniciens professionnels (Abidjan, Côte d'Ivoire). Un automobiliste en panne demande une assistance (${service}). Véhicule : ${[vehicle?.brand, vehicle?.model, vehicle?.year, vehicle?.engine].filter(Boolean).join(" ") || "non précisé"}. Symptômes : ${symptoms || "non précisés"}. Codes défaut : ${faultCodes || "aucun"}. Analyse le texte et les médias joints (photos, vidéos, note vocale du client dans laquelle il décrit la panne à l'oral : écoute-la et tiens-en compte). Réponds en 3 phrases maximum, sans markdown, vocabulaire de garage : pistes probables de panne puis premières vérifications à faire sur place. Ce sont des pistes à vérifier, pas un diagnostic certain. Si une pièce est probablement défectueuse, termine par : Pour des pièces garanties, contactez-nous au 0707312797.${assistDtcRef.text ? `\n\n${assistDtcRef.text}` : ""}`,
       }];
       for (const m of media.slice(0, 4)) parts.push({ inlineData: { mimeType: m.mime, data: m.data.toString("base64") } });
       const r = await getAIClient().models.generateContent({ model: "gemini-flash-latest", contents: [{ role: "user", parts }] });
@@ -6115,7 +6194,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                                 clientWs.send(JSON.stringify({ type: "orderRequestCreated", url: partResult.waConfirmUrl }));
                               }
                             } else if (fc.name === "rechercher_code_obd") {
-                              result = liveToolLookupOBDCode(String(fc.args?.code || ""));
+                              result = liveToolLookupOBDCode(String(fc.args?.code || ""), liveAgentState?.vehicle || undefined);
                             } else if (fc.name === "commander_piece") {
                               const orderPhone = (clientWs as any)._authPhone || "";
                               const waUrl = liveToolOrderPart(
