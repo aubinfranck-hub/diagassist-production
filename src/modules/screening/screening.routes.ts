@@ -173,6 +173,12 @@ Regarde l'écran et choisis la prochaine action. Utilise exactement un des outil
 
   if (toolName === "wait") return;
 
+  if (PILOT_FORBIDDEN.test(`${reason} ${args.text || ""}`)) {
+    s.autoPilotActive = false;
+    sendAll(sid, { type: "pilot_done", reason: "needs_human", summary: "Action sensible détectée : l'autopilote s'est arrêté. Une validation humaine est nécessaire pour continuer.", dtcs: s.pilotDtcs || [] });
+    return;
+  }
+
   const commandAction = toolName === "click" ? "click"
     : toolName === "scroll" ? "scroll"
     : toolName === "input" ? "input"
@@ -187,6 +193,11 @@ Regarde l'écran et choisis la prochaine action. Utilise exactement un des outil
     sendAll(sid, { type: "command", sessionId: sid, payload });
   }
 }
+
+// Garde-fous de l'autopilote : l'IA ne doit jamais toucher aux actions irréversibles ou dangereuses
+// (programmation, codage, effacement, réinitialisation, airbag, antidémarrage...). Dans ce cas on
+// bloque l'action, on arrête le pilotage et on demande à un humain de reprendre la main.
+const PILOT_FORBIDDEN = /(programm|coding|codage|flash|reflash|r[ée]initialis|reset|effac|supprim|delete|erase|clear|airbag|srs|antid[ée]marr|immobili|cl[ée]s?\b|key\s*learn|adaptation|calibr|mise\s+[àa]\s+jour|update|firmware|format|activation\s+des?\s+(pompe|injecteur)|test\s+actif)/i;
 
 export function registerScreening(
   app: Express,

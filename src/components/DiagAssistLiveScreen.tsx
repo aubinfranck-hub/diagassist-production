@@ -746,9 +746,7 @@ export default function DiagAssistLiveScreen({
       const authToken = localStorage.getItem("auth_session_token") || "";
       // Le token voyage dans le sous-protocole (pas dans l'URL, donc pas dans les journaux de proxy).
       const wsUrl = `${protocol}//${window.location.host}/api/live-ws`;
-      const ws = /^[A-Za-z0-9]+$/.test(authToken)
-        ? new WebSocket(wsUrl, [`auth.${authToken}`])
-        : new WebSocket(`${wsUrl}?token=${encodeURIComponent(authToken)}`);
+      const ws = new WebSocket(wsUrl, [`auth.${authToken}`]);
       wsRef.current = ws;
       attachHpWebBridge(ws); // navigation HP-Web via l'extension du navigateur, si installée
 
