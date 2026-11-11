@@ -16,6 +16,7 @@ export interface ProMission {
   vehicle?: any;
   symptoms?: string;
   faultCodes?: string[] | string;
+  faultCodeInfo?: { code: string; title: string; brandDefinition: string | null }[];
   description?: string;
   clientPhone?: string;
   contactPhone?: string;
@@ -130,6 +131,9 @@ export default function MechanicMission({
           <div><span className="text-slate-500">Panne :</span> {mission.symptoms || "—"}</div>
           {mission.description && <div><span className="text-slate-500">Détails :</span> {mission.description}</div>}
           {faultCodesList(mission.faultCodes).length > 0 && <div><span className="text-slate-500">Codes défaut :</span> {faultCodesList(mission.faultCodes).join(", ")}</div>}
+          {(mission.faultCodeInfo || []).map((f) => (
+            <div key={f.code} className="text-xs text-slate-400"><span className="font-mono text-slate-300">{f.code}</span> — {f.brandDefinition || f.title}</div>
+          ))}
         </div>
 
         <div className="text-sm font-bold text-amber-300">{agreed > 0 ? `Prix convenu : ${formatXOF(agreed)}` : tariff ? `Tarif : ${formatXOF(tariff)}` : indicativeText(null)}</div>

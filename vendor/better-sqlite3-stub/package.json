@@ -1,0 +1,7 @@
+{
+  "name": "better-sqlite3",
+  "version": "0.0.0-diagassist-stub",
+  "description": "Stub : DiagAssist utilise Corgi via node:sqlite (adaptateur D1), sans module natif better-sqlite3.",
+  "main": "index.js",
+  "license": "ISC"
+}
