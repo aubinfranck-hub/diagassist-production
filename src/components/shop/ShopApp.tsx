@@ -111,10 +111,10 @@ function ShopHeader({
         </button>
 
         {/* Search */}
-        <form onSubmit={handleSearch} className="flex-1 max-w-xl flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.07)", border: `1px solid ${C.border}` }}>
+        <form onSubmit={handleSearch} className="min-w-0 flex-1 max-w-xl flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.07)", border: `1px solid ${C.border}` }}>
           <Search className="w-4 h-4 text-neutral-400 flex-shrink-0" />
           <input
-            type="search" value={q} onChange={e => setQ(e.target.value)}
+            type="search" aria-label="Rechercher dans la boutique" value={q} onChange={e => setQ(e.target.value)}
             placeholder="Rechercher un scanner, outil..."
             className="flex-1 bg-transparent text-white text-sm outline-none placeholder-neutral-500 min-w-0"
           />
