@@ -822,12 +822,20 @@ function requireAuth(req: any, res: any, next: any) {
 // --- Administration : protection par secret serveur (jamais exposé au client) ---
 // Définissez ADMIN_SECRET dans vos variables d'environnement en production.
 // Sans ADMIN_SECRET configuré, toutes les routes admin refusent l'accès (fail-closed).
+// Comparaison en temps constant : évite qu'un attaquant déduise le secret par mesure de latence.
+function secretsMatch(provided: unknown, expected: string | undefined): boolean {
+  if (!expected || typeof provided !== "string" || provided.length === 0) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 function requireAdminAuth(req: any, res: any, next: any) {
   const adminSecret = process.env.ADMIN_SECRET;
   const providedCode = req.headers["x-admin-code"] || req.body?.code;
 
   // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
-  if (adminSecret && providedCode && providedCode === adminSecret) {
+  if (secretsMatch(providedCode, adminSecret)) {
     return next();
   }
 
@@ -3290,19 +3298,6 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
         return res.status(429).json({ success: false, message: "Trop de tentatives pour ce numéro. Veuillez réessayer plus tard." });
       }
 
-      // Dev master OTP check (never active in production unless DEV_MASTER_OTP is explicitly set)
-      const DEV_MASTER_OTP = process.env.DEV_MASTER_OTP;
-      if (process.env.NODE_ENV !== "production" && DEV_MASTER_OTP && code === DEV_MASTER_OTP) {
-        if (password) {
-          await createAccount(fullPhone, password, userAccounts.get(fullPhone)?.isAdmin ?? false, undefined, typeof name === "string" ? name.trim() : undefined);
-        }
-        const token = await createSession(fullPhone);
-        return res.json({
-          success: true,
-          message: "Connexion test (dev uniquement).",
-          sessionToken: token,
-        });
-      }
  
       const stored = otpStorage.get(fullPhone);
       if (!stored) {
@@ -5110,7 +5105,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!adminSecret) {
       return res.status(503).json({ success: false, message: "Accès admin non configuré sur le serveur." });
     }
-    if (code !== adminSecret) {
+    if (!secretsMatch(code, adminSecret)) {
       return res.status(401).json({ success: false, message: "Code invalide." });
     }
     res.json({ success: true });
