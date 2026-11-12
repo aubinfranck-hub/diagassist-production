@@ -4284,9 +4284,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (rawItems.length > MAX_ORDER_LINES) return { error: `Maximum ${MAX_ORDER_LINES} articles par commande.` };
     const quantities = new Map<number, number>();
     for (const it of rawItems) {
-      const id = Number(it?.product_id);
-      const q = it?.quantity === undefined ? 1 : Number(it.quantity);
-      if (!Number.isInteger(id) || id <= 0) return { error: "Produit invalide." };
+      const parseInteger = (value: unknown) => typeof value === "number" || (typeof value === "string" && /^\d+$/.test(value.trim())) ? Number(value) : NaN;
+      const id = parseInteger(it?.product_id);
+      const q = it?.quantity === undefined ? 1 : parseInteger(it.quantity);
+      if (!Number.isInteger(id) || id <= 0 || id > 2147483647) return { error: "Produit invalide." };
       if (!Number.isInteger(q) || q < 1 || q > MAX_LINE_QUANTITY) return { error: `Quantité invalide (1 à ${MAX_LINE_QUANTITY}).` };
       quantities.set(id, Math.min(MAX_LINE_QUANTITY, (quantities.get(id) || 0) + q));
     }
@@ -4406,8 +4407,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
     // Le serveur impose les frais : le client ne choisit que le mode de livraison.
     const fees = shippingFees();
-    const shippingMethod = body.shipping_method === undefined ? "abidjan" : String(body.shipping_method);
-    if (!(shippingMethod in fees)) return res.status(400).json({ success: false, message: "Mode de livraison invalide." });
+    const shippingMethod = body.shipping_method === undefined ? "abidjan" : body.shipping_method;
+    if (typeof shippingMethod !== "string" || !Object.prototype.hasOwnProperty.call(fees, shippingMethod)) return res.status(400).json({ success: false, message: "Mode de livraison invalide." });
 
     const loaded = await loadOrderLines(body.items);
     if ("error" in loaded) return res.status(400).json({ success: false, message: loaded.error });
