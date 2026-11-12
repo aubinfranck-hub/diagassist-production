@@ -8,6 +8,7 @@ import {
   Wrench, X, Zap, Cpu, Settings, Code2, Car
 } from "lucide-react";
 import ShopAdmin from "./ShopAdmin";
+import { readCart, saveCart, type CartItem } from "../../modules/shop/cart";
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
 const C = {
@@ -33,7 +34,7 @@ interface ShopProduct {
   deposit_pct?: number | null; lead_time_days?: number | null;
 }
 interface ShopCategory { id: number; name: string; slug: string; type: string; }
-interface CartItem { product_id: number; name: string; price_fcfa: number | null; photo: string | null; quantity: number; }
+
 type Page = "home" | "catalog" | "product" | "checkout" | "tracking" | "formations";
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
@@ -47,10 +48,11 @@ function waLink(msg: string) {
 
 // ─── Cart hook ────────────────────────────────────────────────────────────────
 function useCart() {
-  const [items, setItems] = useState<CartItem[]>(() => {
-    try { return JSON.parse(localStorage.getItem("shop_cart") || "[]"); } catch { return []; }
-  });
-  useEffect(() => localStorage.setItem("shop_cart", JSON.stringify(items)), [items]);
+  const [items, setItems] = useState<CartItem[]>(() => readCart(() => localStorage.getItem("shop_cart")));
+  const [saved, setSaved] = useState(true);
+  useEffect(() => {
+    setSaved(saveCart(items, value => localStorage.setItem("shop_cart", value)));
+  }, [items]);
   const add = (p: ShopProduct, qty = 1) => setItems(prev => {
     const found = prev.find(i => i.product_id === p.id);
     return found
@@ -62,7 +64,7 @@ function useCart() {
   const clear = () => setItems([]);
   const count = items.reduce((s, i) => s + i.quantity, 0);
   const total = items.reduce((s, i) => s + (i.price_fcfa || 0) * i.quantity, 0);
-  return { items, add, remove, setQty, clear, count, total };
+  return { items, add, remove, setQty, clear, count, total, saved };
 }
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
@@ -1297,6 +1299,7 @@ export default function ShopApp({ adminAuth }: { adminAuth?: { phone: string; na
       <ShopHeader page={page} setPage={setPage} cartCount={cart.count}
         onCartOpen={() => setCartOpen(true)} onSearch={handleSearch} categories={categories} />
 
+      {!cart.saved && <p role="status" className="px-4 py-2 text-center">Votre panier reste disponible dans cet onglet. La sauvegarde sur cet appareil a échoué.</p>}
       {catalogError && (page === "home" || page === "catalog") ? (
         <section role="alert" className="mx-auto max-w-xl px-5 py-12 text-center">
           <p>Impossible de charger le catalogue. Vérifiez votre connexion.</p>
