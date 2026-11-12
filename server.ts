@@ -2340,11 +2340,13 @@ async function startServer() {
 
   app.get("/api/ready", async (_req, res) => {
     if (!dbPool) return res.status(503).json({ status: "unavailable" });
-    const client = await dbPool.connect();
     try {
-      await client.query({ text: "SELECT 1", query_timeout: 2000 } as any);
+      const readinessQuery = { text: "SELECT 1", query_timeout: 2000 };
+      await dbPool.query(readinessQuery);
       res.json({ status: "ready" });
-    } finally { client.release(); }
+    } catch {
+      res.status(503).json({ status: "unavailable" });
+    }
   });
 
   const aiLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false });
@@ -3978,7 +3980,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // --- Public : catalogue ---
   app.get("/api/shop/categories", async (req, res) => {
-    if (!dbPool) return res.json({ success: true, categories: [] });
+    if (!dbPool) return res.status(503).json({ success: false, message: "Catalogue temporairement indisponible." });
     const { rows } = await dbPool.query("SELECT * FROM shop_categories ORDER BY name ASC");
     res.json({ success: true, categories: rows });
   });
@@ -3989,7 +3991,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     return rest;
   };
   app.get("/api/shop/products", async (req, res) => {
-    if (!dbPool) return res.json({ success: true, products: [] });
+    if (!dbPool) return res.status(503).json({ success: false, message: "Catalogue temporairement indisponible." });
     const { category } = req.query as { category?: string };
     let query = "SELECT p.*, c.name as category_name, c.slug as category_slug FROM shop_products p LEFT JOIN shop_categories c ON c.id = p.category_id WHERE p.is_active = true";
     const params: any[] = [];

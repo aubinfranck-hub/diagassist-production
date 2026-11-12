@@ -28,4 +28,7 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm test
+      - run: npm run test:assistance
+        env:
+          ASSISTANCE_TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
       - run: npm audit --omit=dev --audit-level=high
