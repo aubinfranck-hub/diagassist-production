@@ -2341,7 +2341,8 @@ async function startServer() {
   app.get("/api/ready", async (_req, res) => {
     if (!dbPool) return res.status(503).json({ status: "unavailable" });
     try {
-      await dbPool.query({ text: "SELECT 1", query_timeout: 2000 });
+      const readinessQuery = { text: "SELECT 1", query_timeout: 2000 };
+      await dbPool.query(readinessQuery);
       res.json({ status: "ready" });
     } catch {
       res.status(503).json({ status: "unavailable" });
