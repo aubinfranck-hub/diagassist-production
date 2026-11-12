@@ -66,8 +66,8 @@ function useCart() {
 }
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
-async function fetchJSON(path: string) {
-  const r = await fetch(BASE + path);
+async function fetchJSON(path: string, signal?: AbortSignal) {
+  const r = await fetch(BASE + path, { signal });
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
@@ -127,14 +127,14 @@ function ShopHeader({
             style={{ background: "#16a34a" }}>
             <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
           </a>
-          <button onClick={onCartOpen} className="relative p-2 rounded-lg text-white hover:bg-white/10 transition-colors">
+          <button aria-label={`Ouvrir le panier (${cartCount})`} onClick={onCartOpen} className="relative p-2 rounded-lg text-white hover:bg-white/10 transition-colors">
             <ShoppingCart className="w-5 h-5" />
             {cartCount > 0 && (
               <span className="absolute -top-1 -right-1 w-4.5 h-4.5 rounded-full text-[10px] font-black flex items-center justify-center text-white"
                 style={{ background: C.red, minWidth: "18px", minHeight: "18px" }}>{cartCount}</span>
             )}
           </button>
-          <button onClick={() => setMenuOpen(!menuOpen)} className="sm:hidden p-2 text-white">
+          <button aria-label="Menu boutique" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)} className="sm:hidden p-2 text-white">
             <Menu className="w-5 h-5" />
           </button>
         </div>
@@ -1258,15 +1258,27 @@ export default function ShopApp({ adminAuth }: { adminAuth?: { phone: string; na
   const [searchQ, setSearchQ] = useState("");
   const cart = useCart();
 
+  const [catalogError, setCatalogError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
-    Promise.all([fetchJSON("/api/shop/products"), fetchJSON("/api/shop/categories")])
+    const controller = new AbortController();
+    const { signal } = controller;
+    setLoading(true);
+    setCatalogError(false);
+    Promise.all([fetchJSON("/api/shop/products", signal), fetchJSON("/api/shop/categories", signal)])
       .then(([pd, cd]) => {
-        setProducts(pd.products || []);
-        setCategories(cd.categories || []);
+        if (signal.aborted) return;
+        if (!Array.isArray(pd.products) || !Array.isArray(cd.categories)) {
+          throw new Error("Catalogue invalide");
+        }
+        setProducts(pd.products);
+        setCategories(cd.categories);
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+      .catch(() => { if (!signal.aborted) setCatalogError(true); })
+      .finally(() => { if (!signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [attempt]);
 
   if (adminAuth) return <ShopAdmin />;
 
@@ -1285,7 +1297,12 @@ export default function ShopApp({ adminAuth }: { adminAuth?: { phone: string; na
       <ShopHeader page={page} setPage={setPage} cartCount={cart.count}
         onCartOpen={() => setCartOpen(true)} onSearch={handleSearch} categories={categories} />
 
-      {loading ? (
+      {catalogError && (page === "home" || page === "catalog") ? (
+        <section role="alert" className="mx-auto max-w-xl px-5 py-12 text-center">
+          <p>Impossible de charger le catalogue. Vérifiez votre connexion.</p>
+          <button className="mt-4 min-h-12 rounded-xl bg-red-700 px-5 font-bold text-white" onClick={() => setAttempt(value => value + 1)}>Réessayer</button>
+        </section>
+      ) : loading ? (
         <div className="flex items-center justify-center min-h-[60vh]">
           <div className="text-center space-y-3">
             <div className="w-8 h-8 border-2 border-red-600 border-t-transparent rounded-full animate-spin mx-auto" />
