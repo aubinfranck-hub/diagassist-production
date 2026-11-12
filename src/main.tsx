@@ -16,18 +16,6 @@ const isShopAdminRoute = window.location.pathname.startsWith('/boutique/admin');
 
 // Register PWA Service Worker for offline support and mobile install prompt
 if ('serviceWorker' in navigator) {
-  // Proactively clear old caches to free users from any previously stuck v1 caches
-  if ('caches' in window) {
-    caches.keys().then((cacheNames) => {
-      cacheNames.forEach((cacheName) => {
-        if (cacheName !== 'diagassist-cache-v3') {
-          console.log('[Cache Cleanup] Deleting legacy cache:', cacheName);
-          caches.delete(cacheName).catch(err => console.warn('Cache delete failed:', err));
-        }
-      });
-    }).catch(err => console.error('Error listing caches:', err));
-  }
-
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
       .then((registration) => {

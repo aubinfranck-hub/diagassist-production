@@ -27,7 +27,7 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
+          if (key.startsWith("diagassist-cache-") && key !== CACHE_NAME) {
             console.log("[Service Worker] Removing old cache:", key);
             return caches.delete(key);
           }
@@ -43,7 +43,7 @@ self.addEventListener("activate", (event) => {
 // Fetch handler with robust Network-First with Cache Fallback strategy
 self.addEventListener("fetch", (event) => {
   // Only handle GET requests and local scope
-  if (event.request.method !== "GET" || !event.request.url.startsWith(self.location.origin)) {
+  if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) {
     return;
   }
 

@@ -80,6 +80,10 @@ export default function LandingPage({ onGetStarted, onRequestHelp }: LandingPage
             </button>
           </div>
         </section>
+        <nav aria-label="Services DiagAssist" className="mx-auto flex max-w-7xl flex-wrap gap-3 px-5 py-4 sm:px-7 lg:px-10">
+          <a href="/diagnostic" className="inline-flex min-h-12 items-center rounded-xl bg-slate-800 px-5 font-bold !text-white hover:bg-slate-700 focus-visible:outline-offset-4">Réserver un Scan Express</a>
+          <a href="/boutique" className="inline-flex min-h-12 items-center rounded-xl bg-slate-800 px-5 font-bold !text-white hover:bg-slate-700 focus-visible:outline-offset-4">Voir la boutique</a>
+        </nav>
         <section className="relative overflow-hidden bg-[#020817] min-h-0">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_35%,rgba(239,68,68,.20),transparent_28%),radial-gradient(circle_at_25%_75%,rgba(30,41,59,.75),transparent_48%)]" />
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,8,23,.96)_0%,rgba(2,8,23,.86)_42%,rgba(2,8,23,.42)_72%,rgba(2,8,23,.75)_100%)]" />
