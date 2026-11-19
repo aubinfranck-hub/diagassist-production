@@ -94,7 +94,11 @@ function StockTab({ code }: { code: string }) {
   const [pForm, setPForm] = useState({ kind: "scanner", name: "", brand: "", model: "", sale_price_fcfa: "", duration_months: "", track_serial: true });
   const [buy, setBuy] = useState({ supplier: "", reference: "", product_id: "", qty: "1", unit_cost_fcfa: "", serials: "" });
   const [msg, setMsg] = useState("");
-  const load = () => api(code, "/products").then((r) => r.success && setProducts(r.products));
+  const [purchases, setPurchases] = useState<any[]>([]);
+  const load = () => {
+    api(code, "/products").then((r) => r.success && setProducts(r.products));
+    api(code, "/purchases").then((r) => r.success && setPurchases(r.purchases));
+  };
   useEffect(() => { load(); }, []);
 
   const saveProduct = async () => {
@@ -152,6 +156,9 @@ function StockTab({ code }: { code: string }) {
         </table>
         {products.length === 0 && <p className="text-xs text-slate-500 py-6 text-center">Aucun produit. Créez-en un avec « + Produit ».</p>}
       </div>
+      <h3 className="text-sm font-semibold text-slate-300 pt-2">Achats passés</h3>
+      {purchases.length === 0 && <p className="text-xs text-slate-500">Aucun achat enregistré.</p>}
+      {purchases.map((p) => <div key={p.id} className="flex flex-wrap justify-between gap-2 text-xs text-slate-400 border-t border-slate-800 py-2"><span>{dateFr(p.purchased_at)} · {p.supplier || "fournisseur non précisé"}{p.reference ? ` · ${p.reference}` : ""} · {p.lines_label}</span><span className="text-slate-300">{money(p.total_fcfa)}</span></div>)}
     </div>
   );
 }
@@ -248,7 +255,7 @@ function SalesTab({ code }: { code: string }) {
               {products.map((p) => <option key={p.id} value={p.id}>{p.name} (stock : {p.in_stock})</option>)}
             </select>
             <input className={input + " col-span-2"} type="number" min={1} value={l.qty} onChange={(e) => { const n = [...lines]; n[i] = { ...n[i], qty: e.target.value }; setLines(n); }} />
-            <input className={input + " col-span-3"} type="number" placeholder="Prix FCFA" value={l.unit_price_fcfa} onChange={(e) => { const n = [...lines]; n[i] = { ...n[i], unit_price_fcfa: e.target.value }; setLines(n); }} />
+            <input className={input + " col-span-3"} type="number" placeholder="Prix" value={l.unit_price_fcfa} onChange={(e) => { const n = [...lines]; n[i] = { ...n[i], unit_price_fcfa: e.target.value }; setLines(n); }} />
             <button onClick={() => setLines(lines.filter((_, j) => j !== i))} disabled={lines.length === 1} className="col-span-1 text-slate-500 text-xs cursor-pointer">✕</button>
           </div>
         ))}
@@ -318,7 +325,7 @@ function ClientsTab({ code }: { code: string }) {
             <div key={u.id} className={card + " text-xs text-slate-400 space-y-1"}>
               <p className="text-white font-semibold">{u.product_name}</p>
               <p>N° de série : {u.serial_number || "—"} · Identifiant : {u.login || "—"} · Vendu le {dateFr(u.sold_at)} · Échéance {dateFr(u.expires_at)}</p>
-              {u.has_secret && (secret[u.id] !== undefined ? <p>Mot de passe : <span className="text-white">{secret[u.id]}</span></p> : <button onClick={() => reveal(u.id)} className="text-red-400 cursor-pointer">Afficher le mot de passe</button>)}
+              {u.has_secret && (secret[u.id] !== undefined ? <p>Mot de passe : <span className="text-white">{secret[u.id]}</span></p> : <p><button onClick={() => reveal(u.id)} className="text-red-400 cursor-pointer">Afficher le mot de passe</button></p>)}
               <CredentialsForm code={code} unit={u} onSaved={() => openClient(c.id)} />
             </div>
           ))}
@@ -353,7 +360,7 @@ function ExpiryTab({ code }: { code: string }) {
   useEffect(() => { load(); }, [days]);
   const relance = async (id: number) => {
     const d = await api(code, `/units/${id}/relance`, { method: "POST" });
-    if (d.success) { setLinks({ ...links, [id]: d.link || "" }); if (d.link) window.open(d.link, "_blank"); }
+    if (d.success) setLinks({ ...links, [id]: d.link || "" });
   };
   return (
     <div className="space-y-4">
@@ -366,6 +373,7 @@ function ExpiryTab({ code }: { code: string }) {
             <p className="text-[11px] text-slate-500">{it.client_name} · {it.phone || "sans téléphone"} · {it.serial_number || it.login || ""}</p></div>
           <button onClick={() => relance(it.id)} className={btn}>Relancer (WhatsApp)</button>
           {links[it.id] === "" && <span className="text-[11px] text-slate-500 w-full">Pas de téléphone : relance journalisée uniquement.</span>}
+          {links[it.id] && <a href={links[it.id]} target="_blank" rel="noreferrer" className="text-[12px] text-emerald-400 underline w-full">Relance enregistrée : ouvrir WhatsApp avec le message prêt</a>}
         </div>
       ))}
     </div>

@@ -214,7 +214,11 @@ export function registerGestionRoutes(app: any, pool: any, requireAdminAuth: any
       await handler(req, res);
     } catch (err: any) {
       console.error("[gestion]", err?.message || err);
-      res.status(400).json({ success: false, message: err?.message || "Erreur" });
+      // Message clair en français pour les erreurs de base de données courantes.
+      const message = err?.code === "23505" && String(err?.constraint || "").includes("serial")
+        ? "Ce numéro de série existe déjà dans le stock."
+        : err?.message || "Erreur";
+      res.status(400).json({ success: false, message });
     }
   };
 
@@ -317,7 +321,12 @@ export function registerGestionRoutes(app: any, pool: any, requireAdminAuth: any
   }));
 
   app.get(`${base}/purchases`, requireAdminAuth, guard(async (_req: any, res: any) => {
-    const { rows } = await pool.query("SELECT * FROM gestion_purchases ORDER BY purchased_at DESC LIMIT 200");
+    const { rows } = await pool.query(
+      `SELECT pu.*, COALESCE(string_agg(p.name || ' × ' || l.qty, ', ' ORDER BY l.id), '') AS lines_label
+       FROM gestion_purchases pu
+       LEFT JOIN gestion_purchase_lines l ON l.purchase_id = pu.id
+       LEFT JOIN gestion_products p ON p.id = l.product_id
+       GROUP BY pu.id ORDER BY pu.purchased_at DESC LIMIT 200`);
     res.json({ success: true, purchases: rows });
   }));
 
