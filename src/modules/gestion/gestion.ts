@@ -285,11 +285,21 @@ export function registerGestionRoutes(app: any, pool: any, requireAdminAuth: any
         if (prod[0].track_serial && serials.length !== qty) throw new Error(`Ce produit demande ${qty} numéro(s) de série (reçu ${serials.length}).`);
         if (new Set(serials).size !== serials.length) throw new Error("Numéros de série en double dans l'achat.");
         await client.query("INSERT INTO gestion_purchase_lines (purchase_id, product_id, qty, unit_cost_fcfa) VALUES ($1,$2,$3,$4)", [purchaseId, productId, qty, cost]);
+        // Accès optionnels par numéro de série : [{ serial, login, password }]
+        const accesses: any[] = Array.isArray(line.accesses) ? line.accesses : [];
         for (let i = 0; i < qty; i++) {
-          await client.query(
-            "INSERT INTO gestion_units (product_id, serial_number, purchase_id, purchase_cost_fcfa) VALUES ($1,$2,$3,$4)",
+          const { rows: unit } = await client.query(
+            "INSERT INTO gestion_units (product_id, serial_number, purchase_id, purchase_cost_fcfa) VALUES ($1,$2,$3,$4) RETURNING id",
             [productId, serials[i] || null, purchaseId, cost]
           );
+          const access = accesses.find((a: any) => serials[i] && String(a.serial).trim() === serials[i]);
+          if (access && (access.login || access.password)) {
+            await client.query("UPDATE gestion_units SET login = $1, secret_enc = $2 WHERE id = $3", [
+              access.login || null,
+              access.password ? encryptSecret(String(access.password)) : null,
+              unit[0].id,
+            ]);
+          }
         }
         total += qty * cost;
         touched.add(productId);

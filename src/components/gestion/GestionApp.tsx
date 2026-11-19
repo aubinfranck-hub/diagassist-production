@@ -103,8 +103,11 @@ function StockTab({ code }: { code: string }) {
   };
   const savePurchase = async () => {
     const qty = Number(buy.qty || 0);
-    const serials = buy.serials.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
-    const d = await api(code, "/purchases", { method: "POST", body: JSON.stringify({ supplier: buy.supplier, reference: buy.reference, lines: [{ product_id: Number(buy.product_id), qty, unit_cost_fcfa: Number(buy.unit_cost_fcfa || 0), serials }] }) });
+    // Une ligne par appareil : numéro de série;identifiant;mot de passe (identifiant et mot de passe facultatifs)
+    const rows = buy.serials.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => l.split(";").map((x) => x.trim()));
+    const serials = rows.map((r) => r[0]).filter(Boolean);
+    const accesses = rows.filter((r) => r[1] || r[2]).map((r) => ({ serial: r[0], login: r[1] || "", password: r[2] || "" }));
+    const d = await api(code, "/purchases", { method: "POST", body: JSON.stringify({ supplier: buy.supplier, reference: buy.reference, lines: [{ product_id: Number(buy.product_id), qty, unit_cost_fcfa: Number(buy.unit_cost_fcfa || 0), serials, accesses }] }) });
     setMsg(d.success ? `Achat enregistré : ${money(d.total_fcfa)}.` : d.message); if (d.success) { setShowPurchase(false); load(); }
   };
 
@@ -134,7 +137,7 @@ function StockTab({ code }: { code: string }) {
           <select className={input} value={buy.product_id} onChange={(e) => setBuy({ ...buy, product_id: e.target.value })}><option value="">Produit…</option>{products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
           <input className={input} type="number" placeholder="Quantité" value={buy.qty} onChange={(e) => setBuy({ ...buy, qty: e.target.value })} />
           <input className={input} type="number" placeholder="Coût unitaire payé FCFA" value={buy.unit_cost_fcfa} onChange={(e) => setBuy({ ...buy, unit_cost_fcfa: e.target.value })} />
-          <textarea className={input + " md:col-span-3"} rows={2} placeholder="Numéros de série (un par ligne ou séparés par des virgules)" value={buy.serials} onChange={(e) => setBuy({ ...buy, serials: e.target.value })} />
+          <textarea className={input + " md:col-span-3"} rows={2} placeholder="Une ligne par appareil : numéro de série;identifiant;mot de passe (les deux derniers facultatifs)" value={buy.serials} onChange={(e) => setBuy({ ...buy, serials: e.target.value })} />
           <button onClick={savePurchase} className={btn}>Enregistrer l'achat</button>
         </div>
       )}
