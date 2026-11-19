@@ -266,6 +266,30 @@ function SalesTab({ code }: { code: string }) {
   );
 }
 
+// Accès client d'un équipement : identifiant et mot de passe (chiffré côté serveur).
+function CredentialsForm({ code, unit, onSaved }: { code: string; unit: any; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [login, setLogin] = useState(unit.login || "");
+  const [password, setPassword] = useState("");
+  const [note, setNote] = useState("");
+  const save = async () => {
+    const body: any = { login };
+    if (password) body.password = password;
+    const d = await api(code, `/units/${unit.id}`, { method: "PATCH", body: JSON.stringify(body) });
+    setNote(d.success ? "Accès enregistrés." : d.message);
+    if (d.success) { setPassword(""); setOpen(false); onSaved(); }
+  };
+  if (!open) return <button onClick={() => setOpen(true)} className="text-slate-300 underline cursor-pointer">{unit.login ? "Modifier l'accès" : "Ajouter l'accès (identifiant / mot de passe)"}</button>;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-2">
+      <input className={input} placeholder="Identifiant" value={login} onChange={(e) => setLogin(e.target.value)} />
+      <input className={input} type="password" placeholder={unit.has_secret ? "Nouveau mot de passe (laisser vide = inchangé)" : "Mot de passe"} value={password} onChange={(e) => setPassword(e.target.value)} />
+      <div className="flex gap-2"><button onClick={save} className={btn}>Enregistrer</button><button onClick={() => setOpen(false)} className={btnGhost}>Annuler</button></div>
+      {note && <p className="md:col-span-3 text-[11px] text-slate-400">{note}</p>}
+    </div>
+  );
+}
+
 function ClientsTab({ code }: { code: string }) {
   const [clients, setClients] = useState<any[]>([]);
   const [search, setSearch] = useState("");
@@ -292,6 +316,7 @@ function ClientsTab({ code }: { code: string }) {
               <p className="text-white font-semibold">{u.product_name}</p>
               <p>N° de série : {u.serial_number || "—"} · Identifiant : {u.login || "—"} · Vendu le {dateFr(u.sold_at)} · Échéance {dateFr(u.expires_at)}</p>
               {u.has_secret && (secret[u.id] !== undefined ? <p>Mot de passe : <span className="text-white">{secret[u.id]}</span></p> : <button onClick={() => reveal(u.id)} className="text-red-400 cursor-pointer">Afficher le mot de passe</button>)}
+              <CredentialsForm code={code} unit={u} onSaved={() => openClient(c.id)} />
             </div>
           ))}
         </div>
