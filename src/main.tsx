@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import ShopApp from './components/shop/ShopApp.tsx';
 import ShopAdmin from './components/shop/ShopAdmin.tsx';
+import GestionApp from './components/gestion/GestionApp.tsx';
 import './index.css';
 const DiagnosticApp = lazy(() => import('./components/diagnostic/DiagnosticApp'));
 const isDiagnostic = window.location.hostname === 'diagnostic.diagassist.app' || /^\/diagnostic(?:\/|$)/.test(window.location.pathname);
@@ -13,6 +14,7 @@ const isDiagnostic = window.location.hostname === 'diagnostic.diagassist.app' ||
 const isShopRoute = window.location.pathname.startsWith('/boutique');
 // Administration de la boutique : /boutique/admin (code admin ou compte administrateur).
 const isShopAdminRoute = window.location.pathname.startsWith('/boutique/admin');
+const isGestionRoute = window.location.pathname.startsWith('/gestion');
 
 // Register PWA Service Worker for offline support and mobile install prompt
 if ('serviceWorker' in navigator) {
@@ -29,7 +31,7 @@ if ('serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {isDiagnostic ? <Suspense fallback={<div style={{padding:40}}>Chargement de DiagAssist…</div>}><DiagnosticApp /></Suspense> : isShopAdminRoute ? <ShopAdmin /> : isShopRoute ? <ShopApp /> : <App />}
+    {isDiagnostic ? <Suspense fallback={<div style={{padding:40}}>Chargement de DiagAssist…</div>}><DiagnosticApp /></Suspense> : isShopAdminRoute ? <ShopAdmin /> : isGestionRoute ? <GestionApp /> : isShopRoute ? <ShopApp /> : <App />}
   </StrictMode>,
 );
 
