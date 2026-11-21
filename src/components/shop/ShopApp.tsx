@@ -842,7 +842,7 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
   const [orderRef, setOrderRef] = useState("");
   const [depositInfo, setDepositInfo] = useState<{ amount: number; days: number | null } | null>(null);
   const [placed, setPlaced] = useState<{ phone: string; total: number; deposit: number } | null>(null);
-  const [fees, setFees] = useState<Record<string, number>>({ showroom: 0, jour_j: 1000, j_plus_1: 1500 });
+  const [fees, setFees] = useState<Record<string, number>>({ showroom: 0, jour_j: 1500, j_plus_1: 1000 });
   const [err, setErr] = useState("");
 
   // Tarifs de livraison définis par le serveur (le serveur recalcule de toute façon le total).

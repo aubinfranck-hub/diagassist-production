@@ -4310,9 +4310,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   // --- Règles communes aux commandes publiques ---
   const MAX_ORDER_LINES = 20, MAX_LINE_QUANTITY = 100;
-  // Livraison : retrait showroom gratuit, livraison Abidjan le jour même (1 000 FCFA) ou le lendemain (1 500 FCFA).
+  // Livraison : retrait showroom gratuit, livraison Abidjan le jour même (1 500 FCFA) ou le lendemain (1 000 FCFA).
   // Les tarifs sont modifiables dans l'admin boutique (table shop_settings) ; SHOP_SHIPPING_FEES reste un repli.
-  const DEFAULT_SHIPPING_FEES: Record<string, number> = { showroom: 0, jour_j: 1000, j_plus_1: 1500 };
+  const DEFAULT_SHIPPING_FEES: Record<string, number> = { showroom: 0, jour_j: 1500, j_plus_1: 1000 };
   const SHIPPING_FEE_MAX = 100000;
   async function shippingFees(): Promise<Record<string, number>> {
     const fees = { ...DEFAULT_SHIPPING_FEES };
