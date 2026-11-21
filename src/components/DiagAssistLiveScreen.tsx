@@ -113,6 +113,23 @@ interface CaptureItem {
   fileName?: string;
 }
 
+// Rapport de défaut complet envoyé à l'IA du Live (avant : seulement véhicule, résumé et codes).
+function buildReportContext(d: Diagnosis | null | undefined): string {
+  if (!d) return "SITUATION VÉHICULE EN DIRECT:\nAucun rapport de défaut chargé : demande le véhicule et le symptôme.";
+  const dtc = d.dtcCodesDetected?.length ? d.dtcCodesDetected.map(c => `${c.code}: ${c.description}`).join(", ") : "Aucun code OBD";
+  const lines = [
+    "RAPPORT DE DÉFAUT CHARGÉ PAR LE MÉCANICIEN (à utiliser dès le début) :",
+    `Modèle: ${d.brandModelInfo || "Véhicule non précisé"}`,
+    `Gravité: ${d.severity}${d.severityDescription ? " — " + d.severityDescription : ""}`,
+    `Codes DTC: ${dtc}`,
+    `Panne principale: ${d.explanationText || "Recherche de panne en cours"}`,
+  ];
+  if (d.probableCauses?.length) lines.push("Causes probables:\n" + d.probableCauses.map(c => `- ${c}`).join("\n"));
+  if (d.immediateRecommendations?.length) lines.push("Recommandations immédiates:\n" + d.immediateRecommendations.map(c => `- ${c}`).join("\n"));
+  if (d.repairGuideSteps?.length) lines.push("Étapes de réparation prévues:\n" + d.repairGuideSteps.map(r => `${r.stepNumber}. ${r.title}`).join("\n"));
+  return lines.join("\n").slice(0, 3800);
+}
+
 export default function DiagAssistLiveScreen({
   diagnosis,
   chatHistory,
@@ -365,6 +382,16 @@ export default function DiagAssistLiveScreen({
 
   // Refs for Web Audio Live & WebSocket
   const wsRef = useRef<WebSocket | null>(null);
+  // Rapport chargé ou changé PENDANT l'appel : on le transmet tout de suite à l'IA.
+  const lastReportSentRef = useRef<Diagnosis | null | undefined>(diagnosis);
+  useEffect(() => {
+    if (lastReportSentRef.current === diagnosis) return;
+    lastReportSentRef.current = diagnosis;
+    const ws = wsRef.current;
+    if (diagnosis && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "context", diagnosticContext: buildReportContext(diagnosis) }));
+    }
+  }, [diagnosis]);
   // Reconnexion automatique si la connexion WebSocket coupe de façon inattendue (courant en
   // 4G dégradée/3G) pendant un appel toujours en cours — jusqu'à 2 tentatives.
   const reconnectAttemptsRef = useRef(0);
@@ -760,14 +787,7 @@ export default function DiagAssistLiveScreen({
         console.log("[LiveWS] Connected to Gemini Live server.");
         reconnectAttemptsRef.current = 0; // connexion réussie, on réinitialise le compteur
 
-        const brandInfo = diagnosis?.brandModelInfo || "Véhicule non précisé";
-        const explanation = diagnosis?.explanationText || "Recherche de panne en cours";
-        const dtcCodes = diagnosis?.dtcCodesDetected?.map(c => `${c.code}: ${c.description}`).join(", ") || "Aucun code OBD";
-
-        const contextText = `SITUATION VÉHICULE EN DIRECT:
-Modèle: ${brandInfo}
-Panne principale: ${explanation}
-Codes DTC: ${dtcCodes}`;
+        const contextText = buildReportContext(diagnosis);
 
         ws.send(JSON.stringify({
           type: "start",
