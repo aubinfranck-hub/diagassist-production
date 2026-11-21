@@ -5973,9 +5973,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                     // Atelier bruyant : un départ de parole trop sensible faisait couper la voix de l'IA
                     // sur de simples bruits. On garde une fin de parole rapide mais un départ moins nerveux.
                     startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
-                    endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+                    endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW, // laisse le mécano réfléchir sans être coupé
                     prefixPaddingMs: 100,
-                    silenceDurationMs: 500,
+                    silenceDurationMs: 700,
                   },
                 },
               },
@@ -6279,7 +6279,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                   role: "user",
                   parts: [
                     {
-                      text: "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'Je suis DiagAssist, à votre écoute.' puis rappelle brièvement le symptôme majeur ou code défaut de ce véhicule."
+                      text: /RAPPORT DE DÉFAUT CHARGÉ/.test(diagnosticContext)
+                        ? "Un rapport de défaut vient d'être chargé (voir FICHE TECHNIQUE dans tes instructions). Dis : 'Je suis DiagAssist, à votre écoute.' puis résume-le à voix haute en deux phrases : véhicule, code(s) défaut et cause la plus probable. Termine par UNE question ou UNE première vérification à faire. Ne repars jamais de zéro et ne redemande pas ce que le rapport contient déjà."
+                        : "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'Je suis DiagAssist, à votre écoute.' puis demande le véhicule et le symptôme ou le code défaut."
                     }
                   ]
                 }
@@ -6357,6 +6359,17 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             }
           } else {
             clientWs.send(JSON.stringify({ type: "error", message: "Session Gemini Live non active sur le serveur." }));
+          }
+        } else if (message.type === "context") {
+          // Rapport de défaut chargé ou changé pendant l'appel.
+          const ctx = String(message.diagnosticContext || "").slice(0, 4000);
+          if (ctx && geminiSession) {
+            geminiSession.sendClientContent({
+              turns: [{ role: "user", parts: [{ text: "NOUVEAU RAPPORT DE DÉFAUT CHARGÉ PAR LE MÉCANICIEN PENDANT L'APPEL. Il remplace la fiche précédente :\n" + ctx + "\nConfirme en une phrase le véhicule et le code ou la panne principale, puis propose la première vérification." }] }],
+              turnComplete: true,
+            });
+          } else if (ctx && deepSeekFallbackActive) {
+            deepSeekFallbackSystemInstruction += "\n\nNOUVEAU RAPPORT DE DÉFAUT CHARGÉ PENDANT L'APPEL :\n" + ctx;
           }
         } else if (message.type === "triggerVocalAd") {
           if (geminiSession) {
