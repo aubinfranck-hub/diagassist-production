@@ -24,6 +24,17 @@ async function api(code: string, url: string, options: RequestInit = {}) {
   return res.json();
 }
 
+// Télécharge un export CSV (le code admin voyage dans l'en-tête, donc on passe par fetch plutôt qu'un simple lien).
+async function downloadCsv(code: string, what: string) {
+  const res = await fetch(`/api/gestion/export/${what}`, { headers: { "x-admin-code": code } });
+  if (!res.ok) return;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a"); a.href = url; a.download = `${what}.csv`; a.click(); URL.revokeObjectURL(url);
+}
+function ExportButtons({ code, items }: { code: string; items: [string, string][] }) {
+  return <div className="flex flex-wrap gap-2 items-center"><span className="text-[11px] text-slate-500">Exporter (Excel) :</span>{items.map(([what, label]) => <button key={what} onClick={() => downloadCsv(code, what)} className={btnGhost}>{label}</button>)}</div>;
+}
+
 function Gate({ onOk }: { onOk: (code: string) => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -54,7 +65,7 @@ function ComptaTab({ code }: { code: string }) {
   useEffect(() => { api(code, `/accounting?month=${month}`).then((r) => r.success && setD(r)); }, [month]);
   if (!d) return <p className="text-sm text-slate-500">Chargement…</p>;
   const rows: [string, any, boolean][] = [
-    ["Chiffre d'affaires", d.revenue_fcfa, false],
+    [d.refunds_fcfa ? `Chiffre d'affaires (après ${money(d.refunds_fcfa)} de retours)` : "Chiffre d'affaires", d.revenue_fcfa, false],
     ["Encaissé", d.encaisse_fcfa, false],
     ["Coût d'achat des ventes", -d.cost_of_goods_fcfa, false],
     ["Marge brute", d.gross_margin_fcfa, true],
@@ -83,6 +94,7 @@ function ComptaTab({ code }: { code: string }) {
         {d.expenses_by_category.length === 0 && <p className="text-xs text-slate-500">Aucune dépense ce mois-ci.</p>}
         {d.expenses_by_category.map((e: any) => <div key={e.category} className="flex justify-between text-xs text-slate-400"><span>{e.category}</span><span>{money(e.total)}</span></div>)}
       </div>
+      <ExportButtons code={code} items={[["ventes", "Ventes"], ["depenses", "Dépenses"], ["stock", "Stock"], ["clients", "Clients"]]} />
     </div>
   );
 }
@@ -118,7 +130,7 @@ function StockTab({ code }: { code: string }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2 items-center justify-between">
-        <h2 className="text-white font-bold">Stock & achats</h2>
+        <h2 className="text-white font-bold">Stock & achats <span className="ml-2"><ExportButtons code={code} items={[["stock", "Stock"]]} /></span></h2>
         <div className="flex gap-2"><button onClick={() => setShowProduct(!showProduct)} className={btnGhost}>+ Produit</button><button onClick={() => setShowPurchase(!showPurchase)} className={btn}>+ Achat / entrée en stock</button></div>
       </div>
       {msg && <p className="text-xs text-slate-300">{msg}</p>}
@@ -186,7 +198,7 @@ function BoutiqueTab({ code }: { code: string }) {
       {orders.map((o) => (
         <div key={o.id} className={card + " flex flex-wrap justify-between gap-2 items-center"}>
           <div><p className="text-white text-sm font-semibold">{o.product_name_snapshot} × {o.quantity}</p>
-            <p className="text-[11px] text-slate-500">{o.order_ref} · {o.customer_name || o.customer_phone} · {money(o.unit_price_snapshot * o.quantity)} · stock {o.in_stock ?? 0}{!o.gestion_product_id && " · produit non lié"}</p></div>
+            <p className="text-[11px] text-slate-500">{o.order_ref} · {o.customer_name || o.customer_phone} · {money(o.unit_price_snapshot * o.quantity)} · stock {o.in_stock ?? 0} dont {o.reserved ?? 0} réservé(s){!o.gestion_product_id && " · produit non lié"}</p></div>
           <button onClick={() => importOrder(o.id)} disabled={!o.gestion_product_id} className={btn}>Transformer en vente</button>
         </div>
       ))}
@@ -300,6 +312,29 @@ function CredentialsForm({ code, unit, onSaved }: { code: string; unit: any; onS
   );
 }
 
+// Retour d'un article par le client : remboursement (total par défaut), remise en stock ou non.
+function ReturnForm({ code, unit, onDone }: { code: string; unit: any; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [refund, setRefund] = useState("");
+  const [restock, setRestock] = useState(true);
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+  const submit = async () => {
+    const d = await api(code, `/units/${unit.id}/return`, { method: "POST", body: JSON.stringify({ refund_fcfa: refund === "" ? undefined : Number(refund), restock, reason }) });
+    if (d.success) onDone(); else setNote(d.message);
+  };
+  if (!open) return <button onClick={() => setOpen(true)} className="text-amber-300 underline cursor-pointer">Enregistrer un retour</button>;
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-2 pt-2">
+      <input className={input} type="number" placeholder="Montant remboursé (vide = tout)" value={refund} onChange={(e) => setRefund(e.target.value)} />
+      <input className={input} placeholder="Motif" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <label className="text-xs text-slate-400 flex items-center gap-2"><input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} />Remettre en stock</label>
+      <div className="flex gap-2"><button onClick={submit} className={btn}>Valider le retour</button><button onClick={() => setOpen(false)} className={btnGhost}>Annuler</button></div>
+      {note && <p className="md:col-span-4 text-[11px] text-red-400">{note}</p>}
+    </div>
+  );
+}
+
 function ClientsTab({ code }: { code: string }) {
   const [clients, setClients] = useState<any[]>([]);
   const [search, setSearch] = useState("");
@@ -323,10 +358,11 @@ function ClientsTab({ code }: { code: string }) {
           {open.units.length === 0 && <p className="text-xs text-slate-500">Aucun équipement.</p>}
           {open.units.map((u: any) => (
             <div key={u.id} className={card + " text-xs text-slate-400 space-y-1"}>
-              <p className="text-white font-semibold">{u.product_name}</p>
+              <p className="text-white font-semibold">{u.product_name}{u.status !== "vendu" && <span className="ml-2 text-[10px] text-amber-300">{u.status === "retourne" ? "Retourné" : u.status}</span>}</p>
               <p>N° de série : {u.serial_number || "—"} · Identifiant : {u.login || "—"} · Vendu le {dateFr(u.sold_at)} · Échéance {dateFr(u.expires_at)}</p>
               {u.has_secret && (secret[u.id] !== undefined ? <p>Mot de passe : <span className="text-white">{secret[u.id]}</span></p> : <p><button onClick={() => reveal(u.id)} className="text-red-400 cursor-pointer">Afficher le mot de passe</button></p>)}
               <CredentialsForm code={code} unit={u} onSaved={() => openClient(c.id)} />
+              {u.status === "vendu" && <ReturnForm code={code} unit={u} onDone={() => openClient(c.id)} />}
             </div>
           ))}
         </div>
@@ -340,6 +376,7 @@ function ClientsTab({ code }: { code: string }) {
   }
   return (
     <div className="space-y-4">
+      <ExportButtons code={code} items={[["clients", "Clients"], ["ventes", "Ventes"]]} />
       <div className="flex gap-2"><input className={input} placeholder="Rechercher (nom ou téléphone)" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && load()} /><button onClick={() => load()} className={btnGhost}>Chercher</button></div>
       {clients.map((c) => (
         <button key={c.id} onClick={() => openClient(c.id)} className={card + " w-full text-left flex justify-between cursor-pointer"}>
@@ -382,24 +419,31 @@ function ExpiryTab({ code }: { code: string }) {
 
 function ExpensesTab({ code }: { code: string }) {
   const [expenses, setExpenses] = useState<any[]>([]);
-  const [form, setForm] = useState({ label: "", category: "licence", amount_fcfa: "", incurred_at: "", notes: "" });
+  const empty = { label: "", category: "licence", amount_fcfa: "", incurred_at: "", notes: "" };
+  const [form, setForm] = useState(empty);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [msg, setMsg] = useState("");
   const load = () => api(code, "/expenses").then((r) => r.success && setExpenses(r.expenses));
   useEffect(() => { load(); }, []);
   const save = async () => {
-    const d = await api(code, "/expenses", { method: "POST", body: JSON.stringify({ ...form, amount_fcfa: Number(form.amount_fcfa || 0), incurred_at: form.incurred_at || undefined }) });
-    if (d.success) { setForm({ label: "", category: form.category, amount_fcfa: "", incurred_at: "", notes: "" }); load(); }
+    const body = JSON.stringify({ ...form, amount_fcfa: Number(form.amount_fcfa || 0), incurred_at: form.incurred_at || undefined });
+    const d = editId ? await api(code, `/expenses/${editId}`, { method: "PATCH", body }) : await api(code, "/expenses", { method: "POST", body });
+    setMsg(d.success ? (editId ? "Dépense modifiée." : "Dépense ajoutée.") : d.message);
+    if (d.success) { setForm({ ...empty, category: form.category }); setEditId(null); load(); }
   };
+  const edit = (e: any) => { setEditId(e.id); setForm({ label: e.label, category: e.category, amount_fcfa: String(e.amount_fcfa), incurred_at: String(e.incurred_at).slice(0, 10), notes: e.notes || "" }); window.scrollTo({ top: 0, behavior: "smooth" }); };
   return (
     <div className="space-y-4">
-      <h2 className="text-white font-bold">Dépenses</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-white font-bold">Dépenses</h2><ExportButtons code={code} items={[["depenses", "Dépenses"]]} /></div>
+      {msg && <p className="text-xs text-slate-300">{msg}</p>}
       <div className={card + " grid grid-cols-2 md:grid-cols-5 gap-2"}>
         <input className={input} placeholder="Libellé" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} />
         <select className={input} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}><option value="licence">Licence</option><option value="loyer">Loyer</option><option value="transport">Transport</option><option value="salaire">Salaire</option><option value="communication">Communication</option><option value="autre">Autre</option></select>
         <input className={input} type="number" placeholder="Montant FCFA" value={form.amount_fcfa} onChange={(e) => setForm({ ...form, amount_fcfa: e.target.value })} />
         <input className={input} type="date" value={form.incurred_at} onChange={(e) => setForm({ ...form, incurred_at: e.target.value })} />
-        <button onClick={save} className={btn}>Ajouter</button>
+        <div className="flex gap-2"><button onClick={save} className={btn}>{editId ? "Enregistrer" : "Ajouter"}</button>{editId && <button onClick={() => { setEditId(null); setForm(empty); }} className={btnGhost}>Annuler</button>}</div>
       </div>
-      {expenses.map((e) => <div key={e.id} className="flex justify-between text-xs text-slate-400 border-t border-slate-800 py-2"><span>{dateFr(e.incurred_at)} · {e.category} · {e.label}</span><span className="flex gap-3">{money(e.amount_fcfa)}<button onClick={async () => { await api(code, `/expenses/${e.id}`, { method: "DELETE" }); load(); }} className="text-slate-600 hover:text-red-400 cursor-pointer">supprimer</button></span></div>)}
+      {expenses.map((e) => <div key={e.id} className="flex justify-between text-xs text-slate-400 border-t border-slate-800 py-2"><span>{dateFr(e.incurred_at)} · {e.category} · {e.label}</span><span className="flex gap-3">{money(e.amount_fcfa)}<button onClick={() => edit(e)} className="text-slate-400 hover:text-white cursor-pointer">modifier</button><button onClick={async () => { await api(code, `/expenses/${e.id}`, { method: "DELETE" }); load(); }} className="text-slate-600 hover:text-red-400 cursor-pointer">supprimer</button></span></div>)}
     </div>
   );
 }
