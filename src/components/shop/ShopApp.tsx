@@ -835,14 +835,14 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [form, setForm] = useState({
     first_name: "", last_name: "", phone: "", email: "", address: "",
-    city: "Abidjan", shipping_method: "abidjan", payment_method: "wave", notes: ""
+    city: "Abidjan", shipping_method: "jour_j", payment_method: "wave", notes: ""
   });
   const [waConsent, setWaConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [orderRef, setOrderRef] = useState("");
   const [depositInfo, setDepositInfo] = useState<{ amount: number; days: number | null } | null>(null);
   const [placed, setPlaced] = useState<{ phone: string; total: number; deposit: number } | null>(null);
-  const [fees, setFees] = useState<Record<string, number>>({ showroom: 0, abidjan: 3000, interieur: 5000, afrique: 15000 });
+  const [fees, setFees] = useState<Record<string, number>>({ showroom: 0, jour_j: 1000, j_plus_1: 1500 });
   const [err, setErr] = useState("");
 
   // Tarifs de livraison définis par le serveur (le serveur recalcule de toute façon le total).
@@ -968,9 +968,8 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
               <h3 className="text-sm font-black text-white">Livraison</h3>
               {[
                 ["showroom", "Retrait au showroom Abidjan"],
-                ["abidjan", "Livraison Abidjan"],
-                ["interieur", "Livraison intérieur CI"],
-                ["afrique", "Livraison Afrique de l'Ouest"],
+                ["jour_j", "Livraison Abidjan le jour même (jour J)"],
+                ["j_plus_1", "Livraison Abidjan le lendemain (J+1)"],
               ].map(([val, label]) => ({ val, label, price: fees[val] ? fcfa(fees[val]) : "Gratuit" })).map(({ val, label, price }) => (
                 <label key={val} className="flex items-center justify-between cursor-pointer p-2.5 rounded-lg border transition-colors"
                   style={{ borderColor: form.shipping_method === val ? C.red : C.border }}>
