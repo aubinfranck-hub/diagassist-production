@@ -436,7 +436,7 @@ export default function DiagAssistLiveScreen({
   const armLiveInactivityTimer = () => {
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     inactivityTimerRef.current = setTimeout(() => {
-      if (inactivityHandledRef.current || callState !== "live") return;
+      if (inactivityHandledRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
       inactivityHandledRef.current = true;
       const message =
         "Je n'ai pas reçu d'informations de diagnostic depuis quelques instants. " +
@@ -450,7 +450,7 @@ export default function DiagAssistLiveScreen({
       setTimeout(() => {
         if (isLiveActive) stopLiveCallSession();
       }, 9000);
-    }, 20000);
+    }, 180000); // 3 min : un mécano a souvent les mains prises, 20 s coupait l'appel trop vite
   };
 
   const resetLiveInactivityTimer = () => {
@@ -503,7 +503,7 @@ export default function DiagAssistLiveScreen({
       // BUG/AMÉLIORATION : marge de sécurité augmentée (0.02s → 0.12s) pour absorber les à-coups
       // réseau en 4G dégradée/3G. Un peu plus de latence au profit d'une voix qui ne hache plus.
       if (startTime < now) {
-        startTime = now + 0.3;
+        startTime = now + 0.12; // 0.3 s créait un trou audible à chaque à-coup réseau
       }
       source.start(startTime);
       nextStartTimeRef.current = startTime + buffer.duration;
@@ -804,7 +804,7 @@ Codes DTC: ${dtcCodes}`;
             const speaker = msg.type === "outputTranscript" ? "model" : "user";
             const frag = String(msg.text || "");
             if (frag) {
-              if (speaker === "user") resetLiveInactivityTimer();
+              resetLiveInactivityTimer(); // l'IA qui parle compte aussi comme activité
               const sameSpeaker = transcriptSpeakerRef.current === speaker;
               transcriptSpeakerRef.current = speaker;
               setLiveTranscript((prev) =>

@@ -5973,9 +5973,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                     // Atelier bruyant : un départ de parole trop sensible faisait couper la voix de l'IA
                     // sur de simples bruits. On garde une fin de parole rapide mais un départ moins nerveux.
                     startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
-                    endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+                    endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW, // laisse le mécano réfléchir sans être coupé
                     prefixPaddingMs: 100,
-                    silenceDurationMs: 500,
+                    silenceDurationMs: 700,
                   },
                 },
               },
