@@ -4616,6 +4616,113 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     res.json({ success: true, order: ref ? orders[0] : undefined, orders });
   });
 
+  // --- Compte client boutique : historique et factures, protégés par un code reçu sur WhatsApp ---
+  // Le téléphone seul ne suffit pas à voir la liste des commandes : le client prouve qu'il possède le numéro.
+  const shopOtps = new Map<string, { code: string; expiresAt: number; attempts: number; sent: number[] }>();
+  const shopAccountTokens = new Map<string, { phone: string; expiresAt: number }>();
+  const SHOP_ACCOUNT_TTL_MS = 2 * 60 * 60 * 1000;
+  const shopTokenHash = (t: string) => crypto.createHash("sha256").update(t).digest("hex");
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of shopOtps) if (v.expiresAt < now && v.sent.every((t) => now - t > 3600_000)) shopOtps.delete(k);
+    for (const [k, v] of shopAccountTokens) if (v.expiresAt < now) shopAccountTokens.delete(k);
+  }, 10 * 60 * 1000).unref?.();
+
+  app.post("/api/shop/account/request-code", shopPublicLimiter, async (req, res) => {
+    const cleanPhone = cleanShopPhone(req.body?.phone);
+    if (!isValidShopPhone(cleanPhone)) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+    const full = normalizePhone(cleanPhone, "+225");
+    const key = phoneKey(full);
+    const now = Date.now();
+    const entry = shopOtps.get(key) || { code: "", expiresAt: 0, attempts: 0, sent: [] };
+    entry.sent = entry.sent.filter((t) => now - t < 3600_000);
+    if (entry.sent.length >= 5) return res.status(429).json({ success: false, message: "Trop de codes demandés. Réessayez dans une heure." });
+    const hasTwilio = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+    const isProd = process.env.NODE_ENV === "production";
+    if (isProd && !hasTwilio) return res.status(503).json({ success: false, message: "L'envoi de code est temporairement indisponible." });
+    entry.code = crypto.randomInt(100000, 1000000).toString();
+    entry.expiresAt = now + 10 * 60 * 1000;
+    entry.attempts = 0;
+    entry.sent.push(now);
+    shopOtps.set(key, entry);
+    let sent = false;
+    if (hasTwilio) {
+      try {
+        const client = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!);
+        const sender = process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886";
+        await client.messages.create({
+          body: `Votre code DiagAssist Boutique est : ${entry.code}. Il est valable 10 minutes. Ne le partagez jamais.`,
+          from: sender.startsWith("whatsapp:") ? sender : `whatsapp:${sender}`,
+          to: `whatsapp:${full}`,
+        });
+        sent = true;
+      } catch (err: any) { console.error("[Boutique compte] envoi du code impossible:", err?.message || err); }
+    } else {
+      console.log(`[Boutique compte] mode simulation, code pour ${full} : ${entry.code}`);
+    }
+    if (!sent && isProd) return res.status(502).json({ success: false, message: "Le code n'a pas pu être envoyé. Réessayez dans un instant." });
+    res.json({ success: true, message: sent ? "Un code vient d'être envoyé sur votre WhatsApp." : "Mode simulation : utilisez le code affiché.", simulatedCode: !sent && !isProd ? entry.code : undefined });
+  });
+
+  app.post("/api/shop/account/verify", shopPublicLimiter, async (req, res) => {
+    const cleanPhone = cleanShopPhone(req.body?.phone);
+    if (!isValidShopPhone(cleanPhone)) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
+    const key = phoneKey(normalizePhone(cleanPhone, "+225"));
+    const entry = shopOtps.get(key);
+    const code = String(req.body?.code ?? "").trim();
+    if (!entry || !entry.code || entry.expiresAt < Date.now()) return res.status(400).json({ success: false, message: "Code expiré. Demandez-en un nouveau." });
+    if (++entry.attempts > 5) { entry.code = ""; return res.status(429).json({ success: false, message: "Trop d'essais. Demandez un nouveau code." }); }
+    const a = Buffer.from(code), b = Buffer.from(entry.code);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(400).json({ success: false, message: "Code incorrect." });
+    entry.code = "";
+    const token = crypto.randomBytes(32).toString("hex");
+    shopAccountTokens.set(shopTokenHash(token), { phone: key, expiresAt: Date.now() + SHOP_ACCOUNT_TTL_MS });
+    res.json({ success: true, token });
+  });
+
+  function requireShopAccount(req: any, res: any, next: any) {
+    const token = String(req.headers.authorization || "").replace("Bearer ", "");
+    const s = token ? shopAccountTokens.get(shopTokenHash(token)) : undefined;
+    if (!s || s.expiresAt < Date.now()) return res.status(401).json({ success: false, message: "Session expirée. Demandez un nouveau code." });
+    req.shopPhoneKey = s.phone;
+    next();
+  }
+
+  app.get("/api/shop/account/orders", shopPublicLimiter, requireShopAccount, async (req: any, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const found = await dbPool.query(
+      `SELECT order_ref FROM shop_orders WHERE order_ref IS NOT NULL AND ${PHONE_KEY_SQL} = $1 GROUP BY order_ref ORDER BY MAX(created_at) DESC LIMIT 30`,
+      [req.shopPhoneKey]
+    );
+    const orders = [];
+    for (const r of found.rows) {
+      const summary = await loadOrderSummary(r.order_ref, req.shopPhoneKey);
+      if (summary) orders.push(summary);
+    }
+    res.json({ success: true, orders });
+  });
+
+  const escapeHtml = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+  app.get("/api/shop/account/orders/:ref/invoice", shopPublicLimiter, requireShopAccount, async (req: any, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const o = await loadOrderSummary(String(req.params.ref), req.shopPhoneKey);
+    if (!o) return res.status(404).json({ success: false, message: "Commande introuvable." });
+    const f = (n: number) => Number(n || 0).toLocaleString("fr-FR") + " FCFA";
+    const rowsHtml = o.items.map((i: any) => `<tr><td>${escapeHtml(i.product_name)}</td><td class="r">${escapeHtml(i.quantity)}</td><td class="r">${f(i.unit_price)}</td><td class="r">${f(Number(i.unit_price || 0) * Number(i.quantity || 1))}</td></tr>`).join("");
+    const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Facture ${escapeHtml(o.order_ref)}</title>
+<style>body{font-family:Arial,sans-serif;max-width:720px;margin:24px auto;padding:0 16px;color:#111}h1{margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border-bottom:1px solid #ddd;padding:8px;text-align:left}.r{text-align:right}.tot td{font-weight:bold;border-bottom:none}.muted{color:#666;font-size:13px}@media print{button{display:none}}</style></head><body>
+<h1>Facture ${escapeHtml(o.order_ref)}</h1><p class="muted">DiagAssist Boutique · ${escapeHtml(new Date(o.created_at).toLocaleDateString("fr-FR"))}</p>
+<p>Livraison : ${escapeHtml(o.shipping_method || "—")}${o.shipping_address ? " · " + escapeHtml(o.shipping_address) : ""}<br>Paiement : ${escapeHtml(o.payment_status)}</p>
+<table><thead><tr><th>Article</th><th class="r">Qté</th><th class="r">Prix unitaire</th><th class="r">Total</th></tr></thead><tbody>${rowsHtml}</tbody><tfoot>
+<tr><td colspan="3" class="r">Sous-total</td><td class="r">${f(o.items_total_fcfa)}</td></tr>
+<tr><td colspan="3" class="r">Livraison</td><td class="r">${f(o.shipping_fee_fcfa)}</td></tr>
+<tr class="tot"><td colspan="3" class="r">Total</td><td class="r">${f(o.total_fcfa)}</td></tr>
+<tr><td colspan="3" class="r">Déjà payé</td><td class="r">${f(o.paid_fcfa)}</td></tr>
+<tr><td colspan="3" class="r">Reste à payer</td><td class="r">${f(o.remaining_fcfa)}</td></tr></tfoot></table>
+<p><button onclick="window.print()">Imprimer / enregistrer en PDF</button></p></body></html>`;
+    res.type("html").send(html);
+  });
+
   // --- Public : demande de pièce à l'étranger (avec carte grise) ---
   app.post("/api/shop/part-requests", shopPublicLimiter, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
