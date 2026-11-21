@@ -34,7 +34,7 @@ interface ShopProduct {
 }
 interface ShopCategory { id: number; name: string; slug: string; type: string; }
 interface CartItem { product_id: number; name: string; price_fcfa: number | null; photo: string | null; quantity: number; }
-type Page = "home" | "catalog" | "product" | "checkout" | "tracking" | "formations";
+type Page = "home" | "catalog" | "product" | "checkout" | "tracking" | "account" | "formations";
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 const isInStock = (a: string) => a === "in_stock" || a === "available" || a === "disponible";
@@ -174,6 +174,7 @@ function ShopHeader({
             { label: "Scanners", p: "catalog" as Page },
             { label: "Formations", p: "formations" as Page },
             { label: "Suivi commande", p: "tracking" as Page },
+            { label: "Mes commandes", p: "account" as Page },
           ].map(({ label, p }) => (
             <button key={label} onClick={() => setPage(p)}
               className={`px-4 h-10 text-xs font-bold transition-colors ${page === p ? "text-red-400 border-b-2 border-red-400" : "text-neutral-400 hover:text-white"}`}>
@@ -191,6 +192,7 @@ function ShopHeader({
             { label: "Catalogue", p: "catalog" as Page },
             { label: "Formations", p: "formations" as Page },
             { label: "Suivi commande", p: "tracking" as Page },
+            { label: "Mes commandes", p: "account" as Page },
           ].map(({ label, p }) => (
             <button key={label} onClick={() => { setPage(p); setMenuOpen(false); }}
               className="w-full text-left px-4 py-3 text-sm font-bold text-white border-b border-white/5 hover:bg-white/5">
@@ -1063,6 +1065,83 @@ function ShopCheckout({ cart, onDone }: { cart: ReturnType<typeof useCart>; onDo
   );
 }
 
+// ─── COMPTE CLIENT : historique et factures (code reçu sur WhatsApp) ─────────────
+function ShopAccount() {
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [step, setStep] = useState<"phone" | "code" | "orders">("phone");
+  const [token, setToken] = useState("");
+  const [orders, setOrders] = useState<any[]>([]);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const STATUS: Record<string, string> = { nouvelle: "Reçue", a_contacter: "À contacter", contactee: "Client contacté", confirmee: "Confirmée", en_traitement: "En préparation", prete: "Prête", livree: "Livrée", annulee: "Annulée", client_injoignable: "Client injoignable" };
+  const post = async (path: string, body: any) => {
+    const r = await fetch(BASE + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return r.json().catch(() => ({ success: false, message: "Erreur réseau." }));
+  };
+  const requestCode = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true); setMsg("");
+    const d = await post("/api/shop/account/request-code", { phone });
+    setBusy(false);
+    if (d.success) { setStep("code"); setMsg(d.message + (d.simulatedCode ? ` (code : ${d.simulatedCode})` : "")); } else setMsg(d.message || "Erreur.");
+  };
+  const loadOrders = async (tk: string) => {
+    const r = await fetch(BASE + "/api/shop/account/orders", { headers: { Authorization: `Bearer ${tk}` } });
+    const d = await r.json().catch(() => ({}));
+    if (d.success) { setOrders(d.orders); setStep("orders"); setMsg(""); } else { setStep("phone"); setMsg(d.message || "Session expirée."); }
+  };
+  const verify = async (e: React.FormEvent) => {
+    e.preventDefault(); setBusy(true); setMsg("");
+    const d = await post("/api/shop/account/verify", { phone, code });
+    if (d.success) { setToken(d.token); await loadOrders(d.token); } else setMsg(d.message || "Code incorrect.");
+    setBusy(false);
+  };
+  const openInvoice = async (ref: string) => {
+    const w = window.open("", "_blank");
+    const r = await fetch(`${BASE}/api/shop/account/orders/${encodeURIComponent(ref)}/invoice`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) { w?.close(); setMsg("Facture indisponible."); return; }
+    const html = await r.text();
+    if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+  };
+  const input = "w-full rounded-lg px-3 py-3 text-sm text-white border";
+  return (
+    <div style={{ background: C.black }} className="min-h-screen">
+      <div className="max-w-2xl mx-auto px-4 py-10 space-y-6">
+        <div className="text-center space-y-2">
+          <span className="text-xs font-black uppercase tracking-widest" style={{ color: C.red }}>Mon compte</span>
+          <h1 className="text-2xl sm:text-3xl font-black text-white">Mes commandes</h1>
+        </div>
+        {step === "phone" && (
+          <form onSubmit={requestCode} className="space-y-3">
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Votre numéro (ex : 07 07 31 27 97)" inputMode="tel" className={input} style={{ background: C.dark, borderColor: C.border }} />
+            <button disabled={busy || !phone.trim()} className="w-full py-3 rounded-lg font-black text-white text-sm disabled:opacity-50" style={{ background: C.red }}>Recevoir un code sur WhatsApp</button>
+          </form>
+        )}
+        {step === "code" && (
+          <form onSubmit={verify} className="space-y-3">
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code à 6 chiffres" inputMode="numeric" maxLength={6} className={input} style={{ background: C.dark, borderColor: C.border }} />
+            <button disabled={busy || code.length < 6} className="w-full py-3 rounded-lg font-black text-white text-sm disabled:opacity-50" style={{ background: C.red }}>Voir mes commandes</button>
+          </form>
+        )}
+        {msg && <p className="text-sm text-center text-neutral-300">{msg}</p>}
+        {step === "orders" && (orders.length === 0 ? <p className="text-center text-neutral-400 text-sm">Aucune commande avec ce numéro.</p> : orders.map((o) => (
+          <div key={o.order_ref} className="rounded-2xl border p-4 space-y-2" style={{ background: C.dark, borderColor: C.border }}>
+            <div className="flex justify-between items-center">
+              <span className="font-black text-white text-sm">{o.order_ref}</span>
+              <span className="text-xs font-bold text-neutral-300">{STATUS[o.status] || o.status}</span>
+            </div>
+            <p className="text-xs text-neutral-400">{new Date(o.created_at).toLocaleDateString("fr-FR")} · {o.items.map((i: any) => `${i.quantity} × ${i.product_name}`).join(", ")}</p>
+            <div className="flex justify-between items-center">
+              <span className="text-sm font-bold text-white">{fcfa(o.total_fcfa)}</span>
+              <button onClick={() => openInvoice(o.order_ref)} className="text-xs font-bold px-3 py-1.5 rounded-lg text-white" style={{ background: C.red }}>Facture</button>
+            </div>
+          </div>
+        )))}
+      </div>
+    </div>
+  );
+}
+
 // ─── TRACKING ─────────────────────────────────────────────────────────────────
 function ShopTracking() {
   const [ref, setRef] = useState("");
@@ -1314,6 +1393,7 @@ export default function ShopApp({ adminAuth }: { adminAuth?: { phone: string; na
           {page === "catalog" && <ShopCatalog products={products} categories={categories} cart={cart} onAdd={handleAdd} initialSearch={searchQ} onProductClick={handleProductClick} />}
           {page === "checkout" && <ShopCheckout cart={cart} onDone={() => setPage("home")} />}
           {page === "tracking" && <ShopTracking />}
+          {page === "account" && <ShopAccount />}
           {page === "formations" && <ShopFormations />}
         </>
       )}
