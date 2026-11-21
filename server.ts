@@ -184,6 +184,11 @@ async function setUserPlan(phone: string, plan: string, customDurationMs?: numbe
   userPlans.set(phone, record);
 }
 
+// Les jetons de session ne sont jamais stockés en clair : mémoire et base ne gardent que leur empreinte SHA-256.
+function tokenKey(token: string): string {
+  return "h1:" + crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
 async function createSession(phone: string): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
   getEffectivePlan(phone);
@@ -196,8 +201,8 @@ async function createSession(phone: string): Promise<string> {
     if (row) userPlans.set(phone, { plan: row.plan, activatedAt: Number(row.activated_at), customDurationMs: row.custom_duration_ms ? Number(row.custom_duration_ms) : undefined });
   }
   const session = { phone, plan: getEffectivePlan(phone), createdAt: Date.now() };
-  if (dbPool) await dbPool.query("INSERT INTO sessions (token,phone,plan,created_at) VALUES ($1,$2,$3,$4)", [token, phone, session.plan, session.createdAt]);
-  sessions.set(token, session);
+  if (dbPool) await dbPool.query("INSERT INTO sessions (token,phone,plan,created_at) VALUES ($1,$2,$3,$4)", [tokenKey(token), phone, session.plan, session.createdAt]);
+  sessions.set(tokenKey(token), session);
   return token;
 }
 
@@ -565,7 +570,13 @@ async function loadPersistedData(): Promise<void> {
   for (const row of sessionsRes.rows) {
     const createdAt = Number(row.created_at);
     if (Date.now() - createdAt <= SESSION_MAX_AGE_MS) {
-      sessions.set(row.token, { phone: row.phone, plan: row.plan, createdAt });
+      let key = String(row.token);
+      if (!key.startsWith("h1:")) {
+        // Ancienne session stockée en clair : on la convertit en empreinte sans déconnecter personne.
+        key = tokenKey(key);
+        await dbPool.query("UPDATE sessions SET token=$1 WHERE token=$2", [key, row.token]).catch(() => {});
+      }
+      sessions.set(key, { phone: row.phone, plan: row.plan, createdAt });
       loadedSessions++;
     }
   }
@@ -806,9 +817,9 @@ function findPhoneByEmail(email: string): string | null {
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
-  const session = sessions.get(token);
+  const session = sessions.get(tokenKey(token));
   if (!token || !sessionIsValid(session)) {
-    if (token) sessions.delete(token);
+    if (token) sessions.delete(tokenKey(token));
     return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
   }
   // Toujours resynchroniser le plan de la session avec le forfait persistant à jour
@@ -863,7 +874,7 @@ function requireAdminAuth(req: any, res: any, next: any) {
   // tableau de bord admin directement depuis l'app une fois connecté, sans retaper le code.
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
-  const session = token ? sessions.get(token) : undefined;
+  const session = token ? sessions.get(tokenKey(token)) : undefined;
   if (sessionIsValid(session) && userAccounts.get(session!.phone)?.isAdmin) {
     return next();
   }
@@ -3704,7 +3715,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.get("/api/admin/sessions", adminLimiter, requireAdminAuth, (req, res) => {
     const list = Array.from(sessions.entries()).map(([token, s]) => ({
       // Le token lui-même n'est jamais exposé, seule une référence tronquée pour distinguer les entrées
-      tokenRef: token.slice(0, 8),
+      tokenRef: token.slice(3, 11),
       phone: s.phone,
       plan: s.plan,
       createdAt: s.createdAt,
@@ -4263,6 +4274,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     for (const [phone, loc] of lastKnownLocation) if (now - loc.updatedAt > 72 * 3600 * 1000) lastKnownLocation.delete(phone);
     dbPool?.query("DELETE FROM connection_history WHERE timestamp < $1", [now - 90 * 24 * 3600 * 1000])
       .catch((err: any) => console.warn("[Rétention] connection_history:", err?.message || err));
+    for (const [key, sess] of sessions) if (!sessionIsValid(sess)) sessions.delete(key);
+    dbPool?.query("DELETE FROM sessions WHERE created_at < $1", [now - SESSION_MAX_AGE_MS])
+      .catch((err: any) => console.warn("[Rétention] sessions:", err?.message || err));
   };
   const purgeTimer = setInterval(purgePersonalData, 6 * 3600 * 1000);
   purgeTimer.unref?.();
@@ -5713,8 +5727,8 @@ Directives pour ce tour :
   registerHpWebRoutes(app, requireAuth);
 
   app.post("/api/auth/logout", requireAuth, async (req: any, res) => {
-    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [req.sessionToken]);
-    sessions.delete(req.sessionToken);
+    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [tokenKey(req.sessionToken)]);
+    sessions.delete(tokenKey(req.sessionToken));
     res.json({ success: true });
   });
   app.use("/api", (_req, res) => res.status(404).json({ success: false, message: "Route API introuvable." }));
@@ -5801,7 +5815,7 @@ Directives pour ce tour :
       const protoToken = String(request.headers["sec-websocket-protocol"] || "")
         .split(",").map(x => x.trim()).find(x => x.startsWith("auth."))?.slice(5);
       const token = protoToken || searchParams.get("token") || "";
-      const session = sessions.get(token);
+      const session = sessions.get(tokenKey(token));
       if (!sessionIsValid(session)) return reject("401 Unauthorized");
       const plan = getEffectivePlan(session!.phone);
       const dailyCap = LIVE_DAILY_MS[plan] ?? 0;
@@ -5863,7 +5877,7 @@ Directives pour ce tour :
     // Sans listener, une erreur WebSocket (ex : message trop gros avec maxPayload) ferait planter le process.
     clientWs.on("error", (err) => console.warn("[WebSocket] Erreur client:", err.message));
     const heartbeat = setInterval(() => {
-      if (!sessionIsValid(sessions.get((clientWs as any)._token)) || (PLAN_LIMITS[getEffectivePlan(connPhone)] ?? 0) <= 0) { clientWs.close(4001, "Session expirée"); return; }
+      if (!sessionIsValid(sessions.get(tokenKey((clientWs as any)._token))) || (PLAN_LIMITS[getEffectivePlan(connPhone)] ?? 0) <= 0) { clientWs.close(4001, "Session expirée"); return; }
       if (!isAlive) { try { clientWs.terminate(); } catch {} return; }
       isAlive = false;
       try { clientWs.ping(); } catch {}
