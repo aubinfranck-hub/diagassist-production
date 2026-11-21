@@ -113,26 +113,39 @@ export async function initGestionSchema(pool: any) {
 }
 
 // Chiffrement des identifiants/mots de passe des équipements (AES-256-GCM).
-// Clé : variable d'environnement GESTION_SECRET_KEY. Sans clé, aucun mot de passe n'est enregistré.
-function secretKey(): Buffer | null {
-  const raw = process.env.GESTION_SECRET_KEY;
-  return raw ? crypto.createHash("sha256").update(raw).digest() : null;
+// Clé : GESTION_SECRET_KEY si elle est définie ; sinon une clé est dérivée automatiquement d'un secret serveur
+// déjà présent (ADMIN_SECRET), donc aucun réglage obligatoire. Chaque valeur porte un préfixe qui dit quelle clé
+// l'a chiffrée : on peut définir GESTION_SECRET_KEY plus tard, les anciennes données restent lisibles.
+function keyFor(kind: "env" | "auto"): Buffer | null {
+  if (kind === "env") {
+    const raw = process.env.GESTION_SECRET_KEY;
+    return raw ? crypto.createHash("sha256").update(raw).digest() : null;
+  }
+  return crypto.createHash("sha256").update(`diagassist-gestion-auto:${process.env.ADMIN_SECRET || "diagassist"}`).digest();
 }
 function encryptSecret(plain: string): string {
-  const key = secretKey();
-  if (!key) throw new Error("GESTION_SECRET_KEY non configurée : impossible d'enregistrer un mot de passe.");
+  const kind = process.env.GESTION_SECRET_KEY ? "env" : "auto";
+  const key = keyFor(kind)!;
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const data = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  return [iv.toString("hex"), cipher.getAuthTag().toString("hex"), data.toString("hex")].join(":");
+  return [kind === "env" ? "k1" : "a1", iv.toString("hex"), cipher.getAuthTag().toString("hex"), data.toString("hex")].join(":");
 }
 function decryptSecret(enc: string | null): string | null {
-  const key = secretKey();
-  if (!enc || !key) return null;
-  const [ivHex, tagHex, dataHex] = enc.split(":");
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivHex, "hex"));
-  decipher.setAuthTag(Buffer.from(tagHex, "hex"));
-  return Buffer.concat([decipher.update(Buffer.from(dataHex, "hex")), decipher.final()]).toString("utf8");
+  if (!enc) return null;
+  const parts = enc.split(":");
+  // Ancien format sans préfixe (3 éléments) = chiffré avec GESTION_SECRET_KEY.
+  const kind = parts.length === 4 ? (parts[0] === "a1" ? "auto" : "env") : "env";
+  const [ivHex, tagHex, dataHex] = parts.length === 4 ? parts.slice(1) : parts;
+  const key = keyFor(kind);
+  if (!key) return null;
+  try {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivHex, "hex"));
+    decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+    return Buffer.concat([decipher.update(Buffer.from(dataHex, "hex")), decipher.final()]).toString("utf8");
+  } catch {
+    return null;
+  }
 }
 
 function toInt(v: any, fallback = 0): number {
