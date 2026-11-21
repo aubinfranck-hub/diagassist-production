@@ -822,13 +822,41 @@ function requireAuth(req: any, res: any, next: any) {
 // --- Administration : protection par secret serveur (jamais exposé au client) ---
 // Définissez ADMIN_SECRET dans vos variables d'environnement en production.
 // Sans ADMIN_SECRET configuré, toutes les routes admin refusent l'accès (fail-closed).
+// Comparaison à temps constant (évite de deviner le code lettre par lettre grâce au temps de réponse).
+function safeEqualStrings(a: string, b: string): boolean {
+  const ha = crypto.createHash("sha256").update(a).digest();
+  const hb = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// Anti force brute sur le code admin : au-delà de 10 codes faux en 15 minutes depuis une même IP,
+// l'IP est bloquée (toutes les routes admin, y compris celles de la boutique).
+const adminCodeFailures = new Map<string, { count: number; resetAt: number }>();
+const ADMIN_CODE_MAX_FAILURES = 10;
+const ADMIN_CODE_WINDOW_MS = 15 * 60 * 1000;
+
 function requireAdminAuth(req: any, res: any, next: any) {
   const adminSecret = process.env.ADMIN_SECRET;
-  const providedCode = req.headers["x-admin-code"] || req.body?.code;
+  const rawCode = req.headers["x-admin-code"] || req.body?.code;
+  const providedCode = typeof rawCode === "string" ? rawCode : "";
+  const ip = String(req.ip || "inconnu");
+  const failures = adminCodeFailures.get(ip);
+  if (failures && failures.resetAt <= Date.now()) adminCodeFailures.delete(ip);
+  const current = adminCodeFailures.get(ip);
+  if (current && current.count >= ADMIN_CODE_MAX_FAILURES) {
+    return res.status(429).json({ success: false, message: "Trop de tentatives d'accès administrateur. Réessayez plus tard." });
+  }
 
   // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
-  if (adminSecret && providedCode && providedCode === adminSecret) {
+  if (adminSecret && providedCode && safeEqualStrings(providedCode, adminSecret)) {
+    adminCodeFailures.delete(ip);
     return next();
+  }
+  if (providedCode) {
+    const entry = adminCodeFailures.get(ip) || { count: 0, resetAt: Date.now() + ADMIN_CODE_WINDOW_MS };
+    entry.count++;
+    adminCodeFailures.set(ip, entry);
+    if (adminCodeFailures.size > 5000) adminCodeFailures.clear();
   }
 
   // Voie 2 : session utilisateur valide dont le compte est marqué isAdmin — permet d'utiliser le
@@ -2248,7 +2276,18 @@ async function startServer() {
 
   // Sécurité HTTP standard (headers)
   app.use(helmet({
-    contentSecurityPolicy: false, // désactivé pour ne pas casser Vite en dev ; à durcir en prod si besoin
+    // Politique prudente en production : n'interdit ni les scripts ni les images (pour ne rien casser),
+    // mais bloque l'intégration du site dans un autre site, les plugins, les formulaires vers l'extérieur
+    // et le détournement de la base des liens. Désactivée en dev (Vite).
+    contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
+      useDefaults: false,
+      directives: {
+        "object-src": ["'none'"],
+        "base-uri": ["'self'"],
+        "frame-ancestors": ["'self'"],
+        "form-action": ["'self'"],
+      },
+    } : false,
     crossOriginEmbedderPolicy: false,
   }));
 
