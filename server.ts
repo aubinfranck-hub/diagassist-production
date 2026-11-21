@@ -184,6 +184,11 @@ async function setUserPlan(phone: string, plan: string, customDurationMs?: numbe
   userPlans.set(phone, record);
 }
 
+// Les jetons de session ne sont jamais stockés en clair : mémoire et base ne gardent que leur empreinte SHA-256.
+function tokenKey(token: string): string {
+  return "h1:" + crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
 async function createSession(phone: string): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
   getEffectivePlan(phone);
@@ -196,8 +201,8 @@ async function createSession(phone: string): Promise<string> {
     if (row) userPlans.set(phone, { plan: row.plan, activatedAt: Number(row.activated_at), customDurationMs: row.custom_duration_ms ? Number(row.custom_duration_ms) : undefined });
   }
   const session = { phone, plan: getEffectivePlan(phone), createdAt: Date.now() };
-  if (dbPool) await dbPool.query("INSERT INTO sessions (token,phone,plan,created_at) VALUES ($1,$2,$3,$4)", [token, phone, session.plan, session.createdAt]);
-  sessions.set(token, session);
+  if (dbPool) await dbPool.query("INSERT INTO sessions (token,phone,plan,created_at) VALUES ($1,$2,$3,$4)", [tokenKey(token), phone, session.plan, session.createdAt]);
+  sessions.set(tokenKey(token), session);
   return token;
 }
 
@@ -487,6 +492,8 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_method TEXT;
+      CREATE TABLE IF NOT EXISTS shop_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);
+      ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS stock_qty INTEGER; -- NULL = stock non suivi
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_fee_fcfa INTEGER DEFAULT 0; -- porté par la première ligne de la commande
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'non_paye'; -- non_paye | acompte_paye | paye
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS related_order_ref TEXT;
@@ -565,7 +572,13 @@ async function loadPersistedData(): Promise<void> {
   for (const row of sessionsRes.rows) {
     const createdAt = Number(row.created_at);
     if (Date.now() - createdAt <= SESSION_MAX_AGE_MS) {
-      sessions.set(row.token, { phone: row.phone, plan: row.plan, createdAt });
+      let key = String(row.token);
+      if (!key.startsWith("h1:")) {
+        // Ancienne session stockée en clair : on la convertit en empreinte sans déconnecter personne.
+        key = tokenKey(key);
+        await dbPool.query("UPDATE sessions SET token=$1 WHERE token=$2", [key, row.token]).catch(() => {});
+      }
+      sessions.set(key, { phone: row.phone, plan: row.plan, createdAt });
       loadedSessions++;
     }
   }
@@ -806,9 +819,9 @@ function findPhoneByEmail(email: string): string | null {
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
-  const session = sessions.get(token);
+  const session = sessions.get(tokenKey(token));
   if (!token || !sessionIsValid(session)) {
-    if (token) sessions.delete(token);
+    if (token) sessions.delete(tokenKey(token));
     return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
   }
   // Toujours resynchroniser le plan de la session avec le forfait persistant à jour
@@ -863,7 +876,7 @@ function requireAdminAuth(req: any, res: any, next: any) {
   // tableau de bord admin directement depuis l'app une fois connecté, sans retaper le code.
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
-  const session = token ? sessions.get(token) : undefined;
+  const session = token ? sessions.get(tokenKey(token)) : undefined;
   if (sessionIsValid(session) && userAccounts.get(session!.phone)?.isAdmin) {
     return next();
   }
@@ -3704,7 +3717,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.get("/api/admin/sessions", adminLimiter, requireAdminAuth, (req, res) => {
     const list = Array.from(sessions.entries()).map(([token, s]) => ({
       // Le token lui-même n'est jamais exposé, seule une référence tronquée pour distinguer les entrées
-      tokenRef: token.slice(0, 8),
+      tokenRef: token.slice(3, 11),
       phone: s.phone,
       plan: s.plan,
       createdAt: s.createdAt,
@@ -4263,6 +4276,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     for (const [phone, loc] of lastKnownLocation) if (now - loc.updatedAt > 72 * 3600 * 1000) lastKnownLocation.delete(phone);
     dbPool?.query("DELETE FROM connection_history WHERE timestamp < $1", [now - 90 * 24 * 3600 * 1000])
       .catch((err: any) => console.warn("[Rétention] connection_history:", err?.message || err));
+    for (const [key, sess] of sessions) if (!sessionIsValid(sess)) sessions.delete(key);
+    dbPool?.query("DELETE FROM sessions WHERE created_at < $1", [now - SESSION_MAX_AGE_MS])
+      .catch((err: any) => console.warn("[Rétention] sessions:", err?.message || err));
   };
   const purgeTimer = setInterval(purgePersonalData, 6 * 3600 * 1000);
   purgeTimer.unref?.();
@@ -4294,14 +4310,19 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   // --- Règles communes aux commandes publiques ---
   const MAX_ORDER_LINES = 20, MAX_LINE_QUANTITY = 100;
-  const DEFAULT_SHIPPING_FEES: Record<string, number> = { showroom: 0, abidjan: 3000, interieur: 5000, afrique: 15000 };
-  // Tarifs de livraison configurables : SHOP_SHIPPING_FEES='{"abidjan":2500,...}' (FCFA, entiers >= 0).
-  function shippingFees(): Record<string, number> {
+  // Livraison : retrait showroom gratuit, livraison Abidjan le jour même (1 500 FCFA) ou le lendemain (1 000 FCFA).
+  // Les tarifs sont modifiables dans l'admin boutique (table shop_settings) ; SHOP_SHIPPING_FEES reste un repli.
+  const DEFAULT_SHIPPING_FEES: Record<string, number> = { showroom: 0, jour_j: 1500, j_plus_1: 1000 };
+  const SHIPPING_FEE_MAX = 100000;
+  async function shippingFees(): Promise<Record<string, number>> {
     const fees = { ...DEFAULT_SHIPPING_FEES };
+    const apply = (custom: any) => { for (const k of Object.keys(fees)) if (Number.isInteger(custom?.[k]) && custom[k] >= 0 && custom[k] <= SHIPPING_FEE_MAX) fees[k] = custom[k]; };
+    try { if (process.env.SHOP_SHIPPING_FEES) apply(JSON.parse(process.env.SHOP_SHIPPING_FEES)); }
+    catch { console.warn("[Boutique] SHOP_SHIPPING_FEES invalide, tarifs par défaut utilisés."); }
     try {
-      const custom = process.env.SHOP_SHIPPING_FEES ? JSON.parse(process.env.SHOP_SHIPPING_FEES) : {};
-      for (const k of Object.keys(fees)) if (Number.isInteger(custom[k]) && custom[k] >= 0) fees[k] = custom[k];
-    } catch { console.warn("[Boutique] SHOP_SHIPPING_FEES invalide, tarifs par défaut utilisés."); }
+      const r = await dbPool?.query("SELECT value FROM shop_settings WHERE key = 'shipping_fees'");
+      if (r?.rows[0]) apply(JSON.parse(r.rows[0].value));
+    } catch (err: any) { console.warn("[Boutique] tarifs de livraison illisibles:", err?.message || err); }
     return fees;
   }
   // Pièce jointe base64 (data URL) : type de contenu autorisé et taille maximale (5 Mo décodés).
@@ -4335,12 +4356,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     for (const [id, quantity] of quantities) {
       const product = byId.get(id);
       if (!product) return { error: "Un des produits n'est plus disponible." };
-      if (product.availability === "rupture") return { error: `« ${product.name} » est en rupture de stock.` };
+      if (product.availability === "rupture" || (product.stock_qty !== null && product.stock_qty !== undefined && Number(product.stock_qty) <= 0)) return { error: `« ${product.name} » est en rupture de stock.` };
+      if (product.stock_qty !== null && product.stock_qty !== undefined && quantity > Number(product.stock_qty)) return { error: `« ${product.name} » : seulement ${product.stock_qty} en stock.` };
       lines.push({ product, quantity });
     }
     return { lines };
   }
 
+  class ShopStockError extends Error {}
   // Insère toutes les lignes d'une commande dans une seule transaction (tout ou rien).
   async function insertOrder(o: {
     phone: string; orderRef: string; lines: { product: any; quantity: number }[];
@@ -4355,6 +4378,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       await client.query("BEGIN");
       for (let idx = 0; idx < o.lines.length; idx++) {
         const { product, quantity } = o.lines[idx];
+        // Stock suivi : décrément atomique, refusé si un autre client a pris la dernière pièce entre-temps.
+        if (product.stock_qty !== null && product.stock_qty !== undefined) {
+          const st = await client.query(
+            "UPDATE shop_products SET stock_qty = stock_qty - $1, availability = CASE WHEN stock_qty - $1 <= 0 THEN 'rupture' ELSE availability END WHERE id = $2 AND stock_qty >= $1 RETURNING id",
+            [quantity, product.id]
+          );
+          if (st.rowCount === 0) throw new ShopStockError(`« ${product.name} » n'est plus disponible en quantité suffisante.`);
+        }
         const dep = depositFor(product, quantity);
         depositTotal += dep.amount;
         if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
@@ -4378,8 +4409,25 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   }
 
   // Tarifs de livraison pour l'écran de commande.
-  app.get("/api/shop/shipping-options", (_req, res) => {
-    res.json({ success: true, fees: shippingFees() });
+  app.get("/api/shop/shipping-options", async (_req, res) => {
+    res.json({ success: true, fees: await shippingFees() });
+  });
+
+  // Admin : lire et modifier les tarifs de livraison.
+  app.get("/api/admin/shop/shipping-fees", requireAdminAuth, async (_req, res) => {
+    res.json({ success: true, fees: await shippingFees() });
+  });
+  app.put("/api/admin/shop/shipping-fees", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const body = req.body || {};
+    const next: Record<string, number> = {};
+    for (const k of Object.keys(DEFAULT_SHIPPING_FEES)) {
+      const v = Number(body[k]);
+      if (!Number.isInteger(v) || v < 0 || v > SHIPPING_FEE_MAX) return res.status(400).json({ success: false, message: "Tarif invalide (entier de 0 à 100 000 FCFA)." });
+      next[k] = v;
+    }
+    await dbPool.query("INSERT INTO shop_settings (key, value) VALUES ('shipping_fees', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP", [JSON.stringify(next)]);
+    res.json({ success: true, fees: await shippingFees() });
   });
 
   // --- Public : commande d'un seul produit ---
@@ -4395,7 +4443,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const consent = req.body.whatsapp_consent === true;
     await upsertShopCustomer(cleanPhone, name, city, "produit", consent);
     const orderRef = await nextOrderRef();
-    const order = await insertOrder({ phone: cleanPhone, orderRef, lines: loaded.lines, city, notes });
+    let order: Awaited<ReturnType<typeof insertOrder>>;
+    try { order = await insertOrder({ phone: cleanPhone, orderRef, lines: loaded.lines, city, notes }); }
+    catch (err) { if (err instanceof ShopStockError) return res.status(409).json({ success: false, message: err.message }); throw err; }
     const product = loaded.lines[0].product;
     await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order", whatsappConsent: consent });
     const days = product.lead_time_days ? Number(product.lead_time_days) : null;
@@ -4444,8 +4494,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!isValidShopPhone(cleanPhone)) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
 
     // Le serveur impose les frais : le client ne choisit que le mode de livraison.
-    const fees = shippingFees();
-    const shippingMethod = body.shipping_method === undefined ? "abidjan" : String(body.shipping_method);
+    const fees = await shippingFees();
+    const shippingMethod = body.shipping_method === undefined ? "jour_j" : String(body.shipping_method);
     if (!(shippingMethod in fees)) return res.status(400).json({ success: false, message: "Mode de livraison invalide." });
 
     const loaded = await loadOrderLines(body.items);
@@ -4454,11 +4504,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const consent = body.whatsapp_consent === true;
     await upsertShopCustomer(cleanPhone, name, city, "produit", consent);
     const orderRef = await nextOrderRef();
-    const order = await insertOrder({
+    let order: Awaited<ReturnType<typeof insertOrder>>;
+    try { order = await insertOrder({
       phone: cleanPhone, orderRef, lines: loaded.lines, city, address,
       notes: typeof body.notes === "string" ? body.notes.slice(0, 500) : null,
       shippingMethod, shippingFee: fees[shippingMethod],
-    });
+    }); }
+    catch (err) { if (err instanceof ShopStockError) return res.status(409).json({ success: false, message: err.message }); throw err; }
 
     await scheduleShopFollowups(cleanPhone, { orderRef, productName: loaded.lines[0].product.name, kind: "order", whatsappConsent: consent });
     res.json({
@@ -4626,7 +4678,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.patch("/api/admin/shop/products/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const fields = req.body;
-    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active", "deposit_pct", "lead_time_days"];
+    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active", "deposit_pct", "lead_time_days", "stock_qty"];
     const jsonFields = ["photos", "videos"];
     if (fields.price_fcfa !== undefined && fields.price_fcfa !== null && (!Number.isInteger(Number(fields.price_fcfa)) || Number(fields.price_fcfa) < 0)) {
       return res.status(400).json({ success: false, message: "Prix FCFA invalide." });
@@ -4636,6 +4688,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     if (fields.lead_time_days !== undefined && fields.lead_time_days !== null && (!Number.isInteger(Number(fields.lead_time_days)) || Number(fields.lead_time_days) < 0)) {
       return res.status(400).json({ success: false, message: "Délai invalide." });
+    }
+    if (fields.stock_qty === "") fields.stock_qty = null;
+    if (fields.stock_qty !== undefined && fields.stock_qty !== null && (!Number.isInteger(Number(fields.stock_qty)) || Number(fields.stock_qty) < 0 || Number(fields.stock_qty) > 100000)) {
+      return res.status(400).json({ success: false, message: "Stock invalide (entier de 0 à 100 000, vide = non suivi)." });
+    }
+    if (fields.stock_qty !== undefined && fields.stock_qty !== null && fields.availability === undefined) {
+      fields.availability = Number(fields.stock_qty) > 0 ? "disponible" : "rupture";
     }
     const sets: string[] = [];
     const values: any[] = [];
@@ -5713,8 +5772,8 @@ Directives pour ce tour :
   registerHpWebRoutes(app, requireAuth);
 
   app.post("/api/auth/logout", requireAuth, async (req: any, res) => {
-    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [req.sessionToken]);
-    sessions.delete(req.sessionToken);
+    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [tokenKey(req.sessionToken)]);
+    sessions.delete(tokenKey(req.sessionToken));
     res.json({ success: true });
   });
   app.use("/api", (_req, res) => res.status(404).json({ success: false, message: "Route API introuvable." }));
@@ -5801,7 +5860,7 @@ Directives pour ce tour :
       const protoToken = String(request.headers["sec-websocket-protocol"] || "")
         .split(",").map(x => x.trim()).find(x => x.startsWith("auth."))?.slice(5);
       const token = protoToken || searchParams.get("token") || "";
-      const session = sessions.get(token);
+      const session = sessions.get(tokenKey(token));
       if (!sessionIsValid(session)) return reject("401 Unauthorized");
       const plan = getEffectivePlan(session!.phone);
       const dailyCap = LIVE_DAILY_MS[plan] ?? 0;
@@ -5863,7 +5922,7 @@ Directives pour ce tour :
     // Sans listener, une erreur WebSocket (ex : message trop gros avec maxPayload) ferait planter le process.
     clientWs.on("error", (err) => console.warn("[WebSocket] Erreur client:", err.message));
     const heartbeat = setInterval(() => {
-      if (!sessionIsValid(sessions.get((clientWs as any)._token)) || (PLAN_LIMITS[getEffectivePlan(connPhone)] ?? 0) <= 0) { clientWs.close(4001, "Session expirée"); return; }
+      if (!sessionIsValid(sessions.get(tokenKey((clientWs as any)._token))) || (PLAN_LIMITS[getEffectivePlan(connPhone)] ?? 0) <= 0) { clientWs.close(4001, "Session expirée"); return; }
       if (!isAlive) { try { clientWs.terminate(); } catch {} return; }
       isAlive = false;
       try { clientWs.ping(); } catch {}
