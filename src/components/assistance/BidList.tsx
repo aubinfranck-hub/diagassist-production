@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Star, Clock, MapPin, Loader2, Sparkles, RefreshCw } from "lucide-react";
+import { Star, Clock, MapPin, Loader2, Sparkles, RefreshCw, Megaphone } from "lucide-react";
 import { Bid, bestBidId } from "./api";
 import { btnPrimary, btnSecondary, useCountdown } from "./ui";
 
@@ -43,6 +43,7 @@ function BidCard({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-base font-black text-white truncate">{name}</span>
             {best && <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full"><Sparkles className="w-3 h-3" /> Bon compromis prix / délai</span>}
+            {p.boosted && <span className="inline-flex items-center gap-1 text-[11px] font-black text-sky-300 bg-sky-500/10 px-2 py-0.5 rounded-full" title="Ce mécanicien a choisi la mise en avant DiagAssist. Son prix reste dans la fourchette DiagAssist."><Megaphone className="w-3 h-3" /> Mis en avant</span>}
             {bid.isRevised && <span className="text-[11px] font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">Offre révisée</span>}
           </div>
           <div className="text-sm text-slate-400 flex items-center gap-x-2 flex-wrap">
@@ -83,23 +84,26 @@ export default function BidList({
   bids: Bid[]; atelier: boolean; busyId: string; error?: string;
   onSelect: (b: Bid) => void; onExpire: () => void;
 }) {
-  const [sort, setSort] = useState<"price" | "eta">("price");
+  // « Recommandé » = ordre du serveur (mis en avant d'abord, puis prix). Proposé seulement s'il y a un mécanicien mis en avant.
+  const [sort, setSort] = useState<"reco" | "price" | "eta">("reco");
   const [confirm, setConfirm] = useState<Bid | null>(null);
   const best = useMemo(() => bestBidId(bids), [bids]);
-  const sorted = useMemo(() => [...bids].sort((a, b) =>
-    sort === "price" ? a.amount - b.amount || a.etaMinutes - b.etaMinutes : a.etaMinutes - b.etaMinutes || a.amount - b.amount), [bids, sort]);
+  const hasBoosted = bids.some((b) => b.pro.boosted);
+  const effSort = sort === "reco" && !hasBoosted ? "price" : sort;
+  const sorted = useMemo(() => effSort === "reco" ? bids : [...bids].sort((a, b) =>
+    effSort === "price" ? a.amount - b.amount || a.etaMinutes - b.etaMinutes : a.etaMinutes - b.etaMinutes || a.amount - b.amount), [bids, effSort]);
   // Si l'offre en cours de confirmation disparaît (expirée, retirée), on ferme la confirmation.
   const conf = confirm ? bids.find((b) => b.id === confirm.id) || null : null;
-  const chip = (k: "price" | "eta", label: string) => (
-    <button type="button" aria-pressed={sort === k} onClick={() => setSort(k)}
-      className={`min-h-[36px] px-3 rounded-full text-xs font-black border cursor-pointer ${sort === k ? "bg-red-600 border-red-500 text-[#ffffff]" : "border-white/[0.15] text-slate-300"}`}>{label}</button>
+  const chip = (k: "reco" | "price" | "eta", label: string) => (
+    <button type="button" aria-pressed={effSort === k} onClick={() => setSort(k)}
+      className={`min-h-[36px] px-3 rounded-full text-xs font-black border cursor-pointer ${effSort === k ? "bg-red-600 border-red-500 text-[#ffffff]" : "border-white/[0.15] text-slate-300"}`}>{label}</button>
   );
 
   return (
     <section className="space-y-3" aria-label="Offres reçues">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-base font-black text-white">Offres reçues{bids.length ? ` (${bids.length})` : ""}</h3>
-        {bids.length > 1 && <div className="flex gap-2">{chip("price", "Moins cher")}{chip("eta", "Plus rapide")}</div>}
+        {bids.length > 1 && <div className="flex gap-2 flex-wrap">{hasBoosted && chip("reco", "Recommandé")}{chip("price", "Moins cher")}{chip("eta", "Plus rapide")}</div>}
       </div>
       {error && <div role="alert" className="rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-sm text-red-300">{error}</div>}
       {bids.length === 0 ? (

@@ -577,6 +577,68 @@ async function main() {
   ok("Affectation admin (visite à confirmer) puis refus du client : pro libéré et exclu, nouvelle vague, offre, choix = confirmation");
 
 
+  // 29. Mise en avant payante : fermée par défaut, réglée par l'admin, payée via Jèko, badge + tri « recommandé » sans toucher aux prix
+  const BOOST = "/api/assistance/pro/boost";
+  let bv = (await api(T.pro1, "GET", BOOST)).body;
+  assert.equal(bv.enabled, false); assert.deepEqual(bv.plans, []);
+  assert.equal((await api(T.pro1, "POST", BOOST + "/pay", { plan: "semaine", method: "wave" })).status, 409);
+  assert.equal((await api(T.pro1, "PUT", "/api/admin/assistance/boosts/config", { enabled: true, plans: [] })).status, 401);
+  assert.equal((await api(T.admin, "PUT", "/api/admin/assistance/boosts/config", { enabled: true, plans: [] })).status, 400);
+  assert.equal((await api(T.admin, "PUT", "/api/admin/assistance/boosts/config", { enabled: true, plans: [{ label: "x", days: 7, price: 5 }] })).status, 400);
+  assert.equal((await api(T.admin, "PUT", "/api/admin/assistance/boosts/config", { enabled: true, offersFirst: true, plans: [{ label: "1 semaine", days: 7, price: 4000 }, { label: "1 mois", days: 30, price: 12000 }] })).status, 200);
+  bv = (await api(T.pro1, "GET", BOOST)).body;
+  assert.equal(bv.enabled, true); assert.equal(bv.plans.length, 2); assert.equal(bv.active, null);
+  assert.equal((await api(T.pro1, "POST", BOOST + "/pay", { plan: "inconnue", method: "wave" })).status, 400);
+  assert.equal((await api(T.pro1, "POST", BOOST + "/pay", { plan: bv.plans[0].code, method: "bitcoin" })).status, 400);
+  assert.equal((await api(T.out, "POST", BOOST + "/pay", { plan: bv.plans[0].code, method: "wave" })).status, 403); // pas de profil mécanicien
+  const bp = await api(T.pro1, "POST", BOOST + "/pay", { plan: bv.plans[0].code, method: "wave", payerPhone: "0700000011" });
+  assert.equal(bp.status, 200); assert.match(bp.body.reference, /^dgas-boost-/);
+  assert.equal((await pool.query("SELECT amount FROM assistance_boosts WHERE reference=$1", [bp.body.reference])).rows[0].amount, 4000); // montant fixé par le serveur
+  assert.equal((await api(T.pro1, "GET", BOOST)).body.active, null); // pas actif tant que non confirmé
+  jekoStatus = "success";
+  bv = (await api(T.pro1, "GET", BOOST)).body; // réconciliation auprès de Jèko
+  jekoStatus = "pending";
+  assert.ok(bv.active && bv.active.endsAt > Date.now() + 6.9 * 86400000);
+  const firstEnd = bv.active.endsAt;
+  // Webhook rejoué : aucune double activation
+  const whBody = { status: "success", amount: { amount: 400000 }, transactionDetails: { id: "jk-" + bp.body.reference } };
+  assert.equal(await handle.onExternalWebhook(bp.body.reference, "success", whBody), true);
+  assert.equal((await pool.query("SELECT COUNT(*)::int n FROM assistance_boosts WHERE status='actif' AND pro_phone=$1", [PRO1])).rows[0].n, 1);
+  // Un second achat prolonge au lieu d'écraser ; montant de webhook erroné ignoré
+  const bp2 = await api(T.pro1, "POST", BOOST + "/pay", { plan: bv.plans[1].code, method: "orange" });
+  assert.equal(bp2.status, 200);
+  assert.equal(await handle.onExternalWebhook(bp2.body.reference, "success", { status: "success", amount: { amount: 100 } }), true);
+  assert.equal((await api(T.pro1, "GET", BOOST)).body.active.endsAt, firstEnd);
+  assert.equal(await handle.onExternalWebhook(bp2.body.reference, "success", { status: "success", amount: { amount: 1200000 }, transactionDetails: { id: "jk-" + bp2.body.reference } }), true);
+  assert.ok((await api(T.pro1, "GET", BOOST)).body.active.endsAt >= firstEnd + 29.9 * 86400000);
+  // Annuaire public : PRO1 mis en avant passe en premier
+  const boosted = await handle.boostedPhones();
+  assert.ok(boosted.has(PRO1)); assert.ok(!boosted.has(PRO2));
+  // Offres : PRO2 moins cher mais PRO1 mis en avant => « recommandé » (ordre serveur) met PRO1 d'abord, badge posé, prix inchangés
+  r = await api(T.client2, "POST", "/api/assistance/requests", { ...base_req, immobilised: false, position: posAtelier, submit: true });
+  const cId = r.body.id;
+  const co1 = await live(T.pro1), co2 = await live(T.pro2);
+  assert.equal((await api(T.pro1, "POST", bidUrl(co1[0].id), { amount: 17000 })).status, 200);
+  assert.equal((await api(T.pro2, "POST", bidUrl(co2[0].id), { amount: 11000 })).status, 200);
+  cd = (await api(T.client2, "GET", `/api/assistance/requests/${cId}`)).body;
+  assert.deepEqual(cd.bids.map((b: any) => [b.pro.boosted, b.amount]), [[true, 17000], [false, 11000]]);
+  // Admin : réglage « en tête des offres » désactivé => ordre par prix, badge conservé
+  assert.equal((await api(T.admin, "PUT", "/api/admin/assistance/boosts/config", { enabled: true, offersFirst: false, plans: [{ label: "1 semaine", days: 7, price: 4000 }] })).status, 200);
+  cd = (await api(T.client2, "GET", `/api/assistance/requests/${cId}`)).body;
+  assert.deepEqual(cd.bids.map((b: any) => [b.pro.boosted, b.amount]), [[false, 11000], [true, 17000]]);
+  // Admin : offrir à PRO2, liste, retrait immédiat
+  assert.equal((await api(T.admin, "POST", "/api/admin/assistance/boosts/grant", { phone: "07 00 00 00 12", days: 3 })).status, 200);
+  assert.equal((await api(T.admin, "POST", "/api/admin/assistance/boosts/grant", { phone: "0700000012", days: 0 })).status, 400);
+  const al = (await api(T.admin, "GET", "/api/admin/assistance/boosts")).body;
+  assert.equal(al.runningCount, 2); assert.equal(al.revenue, 16000);
+  const gift = al.boosts.find((b: any) => b.provider === "admin");
+  assert.equal((await api(T.admin, "POST", `/api/admin/assistance/boosts/${gift.reference}/revoke`)).status, 200);
+  assert.equal((await pool.query("SELECT status FROM assistance_boosts WHERE reference=$1", [gift.reference])).rows[0].status, "annule");
+  // Le retrait admin est bien pris en compte côté mécanicien
+  assert.equal((await api(T.pro2, "GET", BOOST)).body.active, null);
+  assert.equal((await api(T.client2, "POST", `/api/assistance/requests/${cId}/cancel`, {})).status, 200);
+  ok("Mise en avant : fermée par défaut, formules admin, paiement Jèko (montant serveur, idempotent, cumul), badge et tri recommandé, prix inchangés, offrir / retirer");
+
   console.log(`\n${n} scénarios OK`);
   srv.close();
   await pool.end();

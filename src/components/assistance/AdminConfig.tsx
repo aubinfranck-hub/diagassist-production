@@ -3,6 +3,7 @@ import {
   useAdminLoad, useAction, Loading, ErrorBox, Empty, Feedback, Field,
   inputCls, btnGhost, btnPrimary, btnDanger, cardCls, SERVICE_LABELS,
 } from "./AdminShared";
+import AdminBoosts from "./AdminBoosts";
 
 export default function AdminConfig() {
   return (
@@ -10,6 +11,7 @@ export default function AdminConfig() {
       <ZonesBlock />
       <ServicesBlock />
       <SettingsBlock />
+      <AdminBoosts />
     </div>
   );
 }
