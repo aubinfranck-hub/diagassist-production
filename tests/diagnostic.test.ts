@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { once } from 'node:events';
 import { Pool } from 'pg';
-import { DiagnosticService, OFFERS, slotTimes } from '../src/modules/diagnostic/core';
+import { DiagnosticService, OFFERS, resolveAction, slotTimes } from '../src/modules/diagnostic/core';
 import { registerDiagnostic, makeDiagnosticPdf } from '../src/modules/diagnostic/routes';
 import { registerJekoPayments } from '../src/modules/payments/jeko.routes';
 import { catchAsyncRoutes } from '../src/modules/security/runtime';
@@ -19,6 +19,18 @@ test('diagnostic deposits are rounded up, hours include Sunday, reports require 
   assert.equal(svc.publicBooking(b).report,null); assert.equal('staff_phone' in svc.publicBooking(b),false);
   assert.equal(svc.canReadReport({...b,paid:5000}),true);
   assert.equal(svc.canReadReport({...b,paid:5000,published_at:null}),false);
+});
+
+test('diagnostic admin resolution only follows the allowed transitions', () => {
+  assert.equal(resolveAction('review', 'confirm', 2000, 2000), 'reserved');
+  assert.equal(resolveAction('review', 'refund', 2000, 2000), 'refund_due');
+  assert.equal(resolveAction('refund_due', 'refunded', 2000, 2000), 'cancelled');
+  // Confirmation impossible si le minimum n'est pas réglé.
+  assert.throws(() => resolveAction('review', 'confirm', 1000, 2000), /minimum/);
+  // Transitions interdites.
+  assert.throws(() => resolveAction('reserved', 'refund', 2000, 2000), /non disponible/);
+  assert.throws(() => resolveAction('cancelled', 'confirm', 2000, 2000), /non disponible/);
+  assert.throws(() => resolveAction('refund_due', 'confirm', 2000, 2000), /non disponible/);
 });
 
 test('diagnostic PostgreSQL: booking race, verified deposit, balance, report access and late payments', {skip:!process.env.TEST_DATABASE_URL}, async()=>{
@@ -82,5 +94,17 @@ test('diagnostic PostgreSQL: booking race, verified deposit, balance, report acc
     await pool.query("UPDATE diagnostic_bookings SET expires_at=now()-interval '1 minute' WHERE id=$1",[late.id]);
     await svc.reserve('replacement',{...body,slotId:lateSlot,requestKey:crypto.randomUUID()});await svc.settle(latePay.reference,true);
     assert.equal((await svc.booking(late.id)).state,'review');assert.equal((await svc.booking(late.id)).payment_review,true);
+    // Paiement jamais ouvert chez Jèko : clôturé après le délai, la réservation peut encore payer.
+    const stuckSlot=crypto.randomUUID();await pool.query("INSERT INTO diagnostic_slots VALUES($1,'tech','domicile',$2,$3,true)",[stuckSlot,new Date(+date+14400000),new Date(+date+18000000)]);
+    const stuck=await svc.reserve('stuck',{...body,slotId:stuckSlot,requestKey:crypto.randomUUID()});
+    await pool.query("INSERT INTO diagnostic_payments(reference,booking_id,amount,status,created_at) VALUES('dgdi-stuck',$1,2000,'creating',now()-interval '1 hour')",[stuck.id]);
+    assert.equal((await request(`/bookings/${stuck.id}/pay`,{mode:'deposit',method:'wave'},'stuck')).status,200);
+    assert.equal((await pool.query("SELECT status FROM diagnostic_payments WHERE reference='dgdi-stuck'")).rows[0].status,'failed');
+    // Réservation « review » : confirmation impossible sans minimum, remboursement puis clôture.
+    assert.equal((await request(`/admin/bookings/${late.id}/resolve`,{action:'confirm'},'admin')).status,409);
+    assert.equal((await request(`/admin/bookings/${late.id}/resolve`,{action:'refund'},'admin')).status,200);
+    assert.equal((await svc.booking(late.id)).state,'refund_due');
+    assert.equal((await request(`/admin/bookings/${late.id}/resolve`,{action:'refunded'},'admin')).status,200);
+    assert.equal((await svc.booking(late.id)).state,'cancelled');
   } finally {globalThis.fetch=nativeFetch;server.closeAllConnections();server.close();await pool.end();await root.end();}
 });

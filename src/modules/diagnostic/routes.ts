@@ -3,7 +3,7 @@ import type { Express } from 'express';
 import type { Pool } from 'pg';
 import rateLimit from 'express-rate-limit';
 import PDFDocument from 'pdfkit';
-import { DiagnosticService, OFFERS, fail, offer, slotTimes, text } from './core';
+import { DiagnosticService, OFFERS, RESOLVE_ACTIONS, fail, offer, resolveAction, slotTimes, text } from './core';
 
 const METHODS = ['wave','orange','mtn','moov'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -124,6 +124,7 @@ export async function registerDiagnostic(app: Express, deps: { pool: Pool | null
   }
   app.post(base + '/bookings/:id/reconcile', deps.requireAuth, async (req: any, res) => {
     await svc.clientBooking(req.params.id, req.session.phone);
+    await svc.tx(q => svc.abandonStalePayments(q, req.params.id));
     const pending = (await svc.pool.query("SELECT reference FROM diagnostic_payments WHERE booking_id=$1 AND status<>'success' ORDER BY created_at DESC LIMIT 5", [req.params.id])).rows;
     for (const p of pending) await reconcile(p.reference);
     res.json({ success: true });
@@ -208,6 +209,25 @@ export async function registerDiagnostic(app: Express, deps: { pool: Pool | null
       await q.query("UPDATE diagnostic_bookings SET state=CASE WHEN paid>0 THEN 'refund_due' ELSE 'cancelled' END,payment_review=paid>0 WHERE id=$1", [b.id]);
       await svc.event(q, b.id, 'admin', 'booking_cancelled', { reason });
     }); res.json({ success: true });
+  });
+  // Décisions admin sur les états « review » (paiement tardif) et « refund_due » (remboursement à faire).
+  app.post(base + '/admin/bookings/:id/resolve', deps.requireAdminAuth, async (req, res) => {
+    const action = text(req.body.action, 20), note = text(req.body.note, 500, false);
+    if (!(RESOLVE_ACTIONS as readonly string[]).includes(action)) fail(400, 'Action inconnue.');
+    await svc.tx(async q => {
+      const b = (await q.query('SELECT * FROM diagnostic_bookings WHERE id=$1 FOR UPDATE', [req.params.id])).rows[0];
+      if (!b) fail(404, 'Réservation introuvable.');
+      const next = resolveAction(b.state, action, Number(b.paid), Number(b.minimum));
+      try {
+        await q.query('UPDATE diagnostic_bookings SET state=$2, payment_review=false WHERE id=$1', [b.id, next]);
+      } catch (e: any) {
+        // Index unique : le créneau a déjà été repris par une autre réservation.
+        if (e?.code === '23505') fail(409, 'Ce créneau a déjà été repris par une autre réservation.');
+        throw e;
+      }
+      await svc.event(q, b.id, 'admin', 'booking_resolved', { action, from: b.state, to: next, note });
+    });
+    res.json({ success: true });
   });
   app.get(base + '/admin/bookings/:id/events', deps.requireAdminAuth, async (req, res) => { res.json({ success: true, events: (await svc.pool.query('SELECT actor,action,detail,created_at FROM diagnostic_events WHERE booking_id=$1 ORDER BY id', [req.params.id])).rows }); });
   // Called only after the existing Jèko endpoint has verified the HMAC over the raw body.

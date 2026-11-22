@@ -8,6 +8,18 @@ export const OFFERS = {
 } as const;
 export type Offer = keyof typeof OFFERS;
 export const fail = (status: number, message: string): never => { throw Object.assign(new Error(message), { status }); };
+export const STALE_PAYMENT_SECONDS = 600;
+// Actions admin sur les états qui exigent une décision humaine ; renvoie le nouvel état.
+export const RESOLVE_ACTIONS = ['confirm', 'refund', 'refunded'] as const;
+export function resolveAction(state: string, action: string, paid: number, minimum: number): string {
+  if (state === 'review' && action === 'confirm') {
+    if (paid < minimum) fail(409, 'Le minimum de la formule n’est pas encore réglé : confirmation impossible.');
+    return 'reserved';
+  }
+  if (state === 'review' && action === 'refund') return 'refund_due';
+  if (state === 'refund_due' && action === 'refunded') return 'cancelled';
+  return fail(409, 'Action non disponible pour cet état.');
+}
 export function text(value: unknown, max: number, required = true): string {
   const s = typeof value === 'string' ? value.trim() : '';
   if ((required && !s) || s.length > max) fail(400, 'Un champ est manquant ou trop long.');
@@ -145,6 +157,7 @@ export class DiagnosticService {
       const b = (await q.query('SELECT * FROM diagnostic_bookings WHERE id=$1 AND phone=$2', [id, phone])).rows[0];
       if (!b) fail(404, 'Réservation introuvable.');
       if (!['held', 'reserved', 'in_progress', 'completed'].includes(b.state)) fail(409, 'Cette réservation ne peut plus recevoir de paiement. Contactez l’équipe.');
+      await this.abandonStalePayments(q, id);
       const existing = (await q.query("SELECT * FROM diagnostic_payments WHERE booking_id=$1 AND status IN ('creating','pending','unknown')", [id])).rows[0];
       if (existing) return { ...existing, existing: true };
       const due = b.price - b.paid;
@@ -155,6 +168,15 @@ export class DiagnosticService {
       await this.event(q, id, phone, 'payment_created', { reference, amount });
       return { reference, booking_id: id, amount, existing: false };
     });
+  }
+  // Paiement jamais ouvert chez Jèko (pas d'identifiant ni de lien) : il ne peut plus être payé, on le clôture
+  // pour ne pas bloquer la réservation. Le délai dépasse largement l'appel Jèko (timeout 15 s).
+  async abandonStalePayments(q: PoolClient, bookingId?: string) {
+    const r = await q.query(`UPDATE diagnostic_payments SET status='failed'
+      WHERE status IN ('creating','unknown') AND provider_id IS NULL AND created_at < now() - make_interval(secs => $1)
+      AND ($2::uuid IS NULL OR booking_id=$2::uuid) RETURNING reference, booking_id`, [STALE_PAYMENT_SECONDS, bookingId ?? null]);
+    for (const p of r.rows) await this.event(q, p.booking_id, 'system', 'payment_abandoned', { reference: p.reference });
+    return r.rowCount ?? 0;
   }
   async settle(reference: string, succeeded: boolean) {
     return this.tx(async q => {
