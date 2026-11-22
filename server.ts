@@ -17,6 +17,7 @@ import { UsageStore } from "./src/modules/security/usageStore";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments, jekoIsConfigured, createJekoRedirectPayment, fetchJekoPaymentStatus } from "./src/modules/payments/jeko.routes";
 import { registerAssistance, initAssistance } from "./src/modules/assistance/assistance.routes";
+import { canonicalPhone } from "./src/modules/assistance/core";
 import { registerDiagnostic } from "./src/modules/diagnostic/routes";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
@@ -2268,6 +2269,7 @@ async function generateContentWithFallbackAndRetry(
 }
 
 let assistanceSync: (() => Promise<void>) | null = null;
+let assistanceBoosted: (() => Promise<Set<string>>) | null = null;
 
 async function startServer() {
   // Charge les données persistées AVANT toute autre chose : sessions/mots de passe/forfaits
@@ -5101,7 +5103,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // API Route (utilisateur connecté) : annuaire public des mécaniciens agréés actifs,
   // affiché aux propriétaires de véhicules pour les orienter vers un professionnel équipé.
-  app.get("/api/mechanics", requireAuth, (req, res) => {
+  app.get("/api/mechanics", requireAuth, async (req, res) => {
     const city = (req.query.city as string || "").trim().toLowerCase();
     const type = (req.query.type as string || "").trim();
     let list = Array.from(mechanics.values()).filter((m) => m.active);
@@ -5111,7 +5113,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (city) {
       list = list.filter((m) => m.city.toLowerCase().includes(city) || (m.area || "").toLowerCase().includes(city));
     }
-    res.json({ success: true, mechanics: list });
+    // Mise en avant payante : les mécaniciens mis en avant passent en premier (ordre conservé pour les autres).
+    const boosted = assistanceBoosted ? await assistanceBoosted().catch(() => new Set<string>()) : new Set<string>();
+    const out = list.map((m) => ({ ...m, boosted: boosted.size > 0 && boosted.has(canonicalPhone(m.phone)) }));
+    out.sort((a, b) => Number(b.boosted) - Number(a.boosted));
+    res.json({ success: true, mechanics: out });
   });
 
   // API Route : génère une question captcha simple (anti-bot) pour la création de compte.
@@ -5737,6 +5743,7 @@ Directives pour ce tour :
     getOrigin: (req) => process.env.APP_URL || `https://${req.headers.host}`,
   });
   assistanceSync = assistance.syncDirectory;
+  assistanceBoosted = assistance.boostedPhones;
   await initAssistance(assistance).catch((err: any) => console.error("[ASSISTANCE] Initialisation échouée:", err.message));
 
   const diagnostic = await registerDiagnostic(app, { pool: dbPool, requireAuth, requireAdminAuth, isAdmin: phone => userAccounts.get(phone)?.isAdmin === true });

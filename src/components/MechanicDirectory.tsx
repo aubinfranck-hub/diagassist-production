@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { MapPin, Phone, MessageCircle, ShieldCheck, Search, Wrench, RefreshCw, Cpu, Package } from "lucide-react";
+import { MapPin, Phone, MessageCircle, ShieldCheck, Search, Wrench, RefreshCw, Cpu, Package, Megaphone } from "lucide-react";
 
 interface Partner {
   id: string;
@@ -12,6 +12,7 @@ interface Partner {
   specialties?: string;
   hasScanner: boolean;
   certified: boolean;
+  boosted?: boolean;
 }
 
 const toWaMeNumber = (phone: string) => phone.replace(/[^0-9]/g, "");
@@ -137,7 +138,12 @@ export default function MechanicDirectory({ partnerType = "mechanic" }: Mechanic
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {filtered.map((m) => (
-          <div key={m.id} className="premium-glass-card rounded-2xl p-5 space-y-3">
+          <div key={m.id} className={`premium-glass-card rounded-2xl p-5 space-y-3 ${m.boosted ? "ring-1 ring-sky-400/50" : ""}`}>
+            {m.boosted && (
+              <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-full px-2 py-1">
+                <Megaphone className="w-3 h-3" /> Mis en avant
+              </span>
+            )}
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="font-bold text-sm text-white truncate">{m.garageName || m.name}</h3>
