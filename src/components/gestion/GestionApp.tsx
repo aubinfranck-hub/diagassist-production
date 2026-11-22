@@ -1,32 +1,37 @@
 import React, { useEffect, useState } from "react";
 
-// Logiciel de gestion interne (personnel). Accès par code admin, stocké dans ce navigateur.
-type Tab = "compta" | "stock" | "boutique" | "ventes" | "clients" | "echeances" | "depenses";
-const TABS: { id: Tab; label: string }[] = [
+// Logiciel de gestion. Deux accès : l'administration DiagAssist (code admin) ou un abonné (compte DiagAssist,
+// abonnement mensuel avec essai gratuit). La « clé d'accès » `code` est soit le code admin, soit « tok:<jeton de session> ».
+type Tab = "compta" | "stock" | "boutique" | "ventes" | "clients" | "echeances" | "depenses" | "abonnes";
+const TABS: { id: Tab; label: string; adminOnly?: boolean }[] = [
   { id: "compta", label: "Point comptable" },
   { id: "stock", label: "Stock & achats" },
-  { id: "boutique", label: "Boutique (vitrine)" },
+  { id: "boutique", label: "Boutique (vitrine)", adminOnly: true },
   { id: "ventes", label: "Ventes" },
   { id: "clients", label: "Comptes clients" },
   { id: "echeances", label: "Échéances" },
   { id: "depenses", label: "Dépenses" },
+  { id: "abonnes", label: "Abonnements", adminOnly: true },
 ];
 const KINDS: Record<string, string> = { scanner: "Scanner", licence: "Licence", equipement: "Équipement", mise_a_jour: "Mise à jour", service: "Service", piece: "Pièce", autre: "Autre" };
 
 const money = (v: any) => `${Number(v || 0).toLocaleString("fr-FR")} FCFA`;
 const dateFr = (v: any) => (v ? new Date(v).toLocaleDateString("fr-FR") : "—");
 
+const authHeaders = (code: string): Record<string, string> => (code.startsWith("tok:") ? { Authorization: `Bearer ${code.slice(4)}` } : { "x-admin-code": code });
+const isAdminCode = (code: string) => !code.startsWith("tok:");
+
 async function api(code: string, url: string, options: RequestInit = {}) {
   const res = await fetch(`/api/gestion${url}`, {
     ...options,
-    headers: { "Content-Type": "application/json", "x-admin-code": code, ...(options.headers || {}) },
+    headers: { "Content-Type": "application/json", ...authHeaders(code), ...(options.headers || {}) },
   });
-  return res.json();
+  return res.json().catch(() => ({ success: false, message: "Réponse inattendue du serveur." }));
 }
 
 // Télécharge un export CSV (le code admin voyage dans l'en-tête, donc on passe par fetch plutôt qu'un simple lien).
 async function downloadCsv(code: string, what: string) {
-  const res = await fetch(`/api/gestion/export/${what}`, { headers: { "x-admin-code": code } });
+  const res = await fetch(`/api/gestion/export/${what}`, { headers: authHeaders(code) });
   if (!res.ok) return;
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a"); a.href = url; a.download = `${what}.csv`; a.click(); URL.revokeObjectURL(url);
@@ -36,19 +41,47 @@ function ExportButtons({ code, items }: { code: string; items: [string, string][
 }
 
 function Gate({ onOk }: { onOk: (code: string) => void }) {
+  const [mode, setMode] = useState<"compte" | "admin">("compte");
+  const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
-  const submit = async () => {
+  const [busy, setBusy] = useState(false);
+  const submitAccount = async () => {
+    setBusy(true); setError("");
+    try {
+      const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phoneNumber: phone, countryCode: "+225", password }) });
+      const d = await res.json().catch(() => ({}));
+      if (d.success && d.sessionToken) { localStorage.setItem("gestion_token", d.sessionToken); localStorage.removeItem("gestion_admin_code"); onOk(`tok:${d.sessionToken}`); }
+      else setError(d.message || "Connexion impossible.");
+    } finally { setBusy(false); }
+  };
+  const submitAdmin = async () => {
     const d = await api(code, "/products");
-    if (d.success) { localStorage.setItem("gestion_admin_code", code); onOk(code); } else setError("Code refusé.");
+    if (d.success) { localStorage.setItem("gestion_admin_code", code); localStorage.removeItem("gestion_token"); onOk(code); } else setError("Code refusé.");
   };
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
       <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
-        <h1 className="text-white font-bold">Gestion DiagAssist</h1>
-        <input type="password" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code admin" className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-        {error && <p className="text-xs text-red-400">{error}</p>}
-        <button onClick={submit} className="w-full py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold cursor-pointer">Entrer</button>
+        <h1 className="text-white font-bold">Logiciel de gestion DiagAssist</h1>
+        {mode === "compte" ? (
+          <>
+            <p className="text-xs text-slate-400">Stock, ventes, clients, échéances et comptabilité de votre garage ou boutique. Connectez-vous avec votre compte DiagAssist.</p>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" autoComplete="username" placeholder="Numéro de téléphone" aria-label="Numéro de téléphone" className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitAccount()} autoComplete="current-password" placeholder="Mot de passe" aria-label="Mot de passe" className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+            {error && <p className="text-xs text-red-400">{error}</p>}
+            <button onClick={submitAccount} disabled={busy} className="w-full py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold cursor-pointer disabled:opacity-50">Se connecter</button>
+            <p className="text-[11px] text-slate-500">Pas encore de compte ? <a href="/" className="text-slate-300 underline">Créez-le sur DiagAssist</a>, puis revenez ici démarrer votre essai gratuit.</p>
+            <button onClick={() => { setMode("admin"); setError(""); }} className="text-[11px] text-slate-600 hover:text-slate-300 cursor-pointer">Accès administrateur</button>
+          </>
+        ) : (
+          <>
+            <input type="password" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitAdmin()} placeholder="Code admin" aria-label="Code admin" className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+            {error && <p className="text-xs text-red-400">{error}</p>}
+            <button onClick={submitAdmin} className="w-full py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold cursor-pointer">Entrer</button>
+            <button onClick={() => { setMode("compte"); setError(""); }} className="text-[11px] text-slate-600 hover:text-slate-300 cursor-pointer">Retour à la connexion par compte</button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -448,27 +481,189 @@ function ExpensesTab({ code }: { code: string }) {
   );
 }
 
+const METHODS: [string, string][] = [["orange", "Orange Money"], ["wave", "Wave"], ["mtn", "MTN MoMo"], ["moov", "Moov Money"]];
+const statusLine = (sub: any) => {
+  if (!sub) return "";
+  if (sub.state === "trial") return `Essai gratuit : ${sub.daysLeft} jour${sub.daysLeft > 1 ? "s" : ""} restant${sub.daysLeft > 1 ? "s" : ""}`;
+  if (sub.state === "active") return `Abonnement actif jusqu'au ${dateFr(sub.until)}`;
+  if (sub.state === "expired") return `Abonnement expiré le ${dateFr(sub.until)}`;
+  return "";
+};
+
+// Paiement de l'abonnement : choix de l'opérateur et du nombre de mois, puis redirection vers Jèko.
+function PayPanel({ code, sub, onClose }: { code: string; sub: any; onClose?: () => void }) {
+  const [method, setMethod] = useState("wave");
+  const [months, setMonths] = useState(1);
+  const [phone, setPhone] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const pay = async () => {
+    setBusy(true); setMsg("");
+    const d = await api(code, "/subscription/pay", { method: "POST", body: JSON.stringify({ paymentMethod: method, months, payerPhone: phone }) });
+    setBusy(false);
+    if (d.success && d.redirectUrl) { sessionStorage.setItem("gestion_pay_ref", d.reference); window.location.href = d.redirectUrl; }
+    else setMsg(d.message || "Paiement impossible.");
+  };
+  return (
+    <div className={card + " space-y-3"}>
+      <div className="flex justify-between items-start"><p className="text-white font-bold text-sm">Payer mon abonnement</p>{onClose && <button onClick={onClose} className="text-xs text-slate-500 hover:text-white cursor-pointer">Fermer</button>}</div>
+      <p className="text-xs text-slate-400">{money(sub.price_fcfa)} par mois. Les mois payés s'ajoutent à la fin de votre période actuelle.</p>
+      <div className="grid grid-cols-2 gap-2">{METHODS.map(([k, l]) => <button key={k} onClick={() => setMethod(k)} aria-pressed={method === k} className={`py-2 rounded-lg text-xs font-semibold cursor-pointer ${method === k ? "bg-red-600 text-white" : "bg-slate-800 text-slate-300"}`}>{l}</button>)}</div>
+      <label className="block text-[11px] text-slate-500">Nombre de mois
+        <select value={months} onChange={(e) => setMonths(Number(e.target.value))} className={input + " mt-1"}>{[1, 2, 3, 6, 12].map((m) => <option key={m} value={m}>{m} mois — {money(m * sub.price_fcfa)}</option>)}</select>
+      </label>
+      <input className={input} value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" placeholder="Numéro qui paie (facultatif)" aria-label="Numéro qui paie" />
+      {msg && <p className="text-xs text-red-400">{msg}</p>}
+      <button onClick={pay} disabled={busy} className={btn + " w-full"}>{busy ? "Ouverture du paiement…" : `Payer ${money(months * sub.price_fcfa)}`}</button>
+    </div>
+  );
+}
+
+// Écran d'accueil d'un compte sans abonnement : essai gratuit ou paiement.
+function Offer({ code, sub, onChange }: { code: string; sub: any; onChange: (s: any) => void }) {
+  const [msg, setMsg] = useState("");
+  const start = async () => {
+    const d = await api(code, "/subscription/trial", { method: "POST" });
+    if (d.success) onChange(d); else setMsg(d.message);
+  };
+  return (
+    <div className="max-w-md mx-auto space-y-4 py-10">
+      <h2 className="text-white font-bold text-lg">Gérez votre garage ou votre boutique</h2>
+      <p className="text-sm text-slate-400">Stock par numéro de série, ventes, comptes clients, échéances avec relance WhatsApp, dépenses, retours, export Excel et point comptable mensuel.</p>
+      {sub.trial_available && (
+        <div className={card + " space-y-2"}>
+          <p className="text-white text-sm font-semibold">{sub.trial_days} jours d'essai gratuit</p>
+          <p className="text-xs text-slate-400">Sans paiement. Ensuite {money(sub.price_fcfa)} par mois ; si vous ne renouvelez pas, vos données sont conservées en lecture seule.</p>
+          <button onClick={start} className={btn + " w-full"}>Démarrer mon essai gratuit</button>
+        </div>
+      )}
+      {msg && <p className="text-xs text-red-400">{msg}</p>}
+      <PayPanel code={code} sub={sub} />
+    </div>
+  );
+}
+
+// Réglages et suivi des abonnés (administration DiagAssist).
+function SubscribersTab({ code }: { code: string }) {
+  const [settings, setSettings] = useState<any>(null);
+  const [subs, setSubs] = useState<any[]>([]);
+  const [msg, setMsg] = useState("");
+  const load = () => {
+    api(code, "/admin/subscription-settings").then((r) => r.success && setSettings(r.settings));
+    api(code, "/admin/subscribers").then((r) => r.success && setSubs(r.subscribers));
+  };
+  useEffect(() => { load(); }, []);
+  if (!settings) return <p className="text-sm text-slate-500">Chargement…</p>;
+  const save = async () => {
+    const d = await api(code, "/admin/subscription-settings", { method: "PUT", body: JSON.stringify({ price_fcfa: Number(settings.price_fcfa), trial_days: Number(settings.trial_days), reminder_days: Number(settings.reminder_days) }) });
+    setMsg(d.success ? "Réglages enregistrés." : d.message);
+  };
+  const grant = async (s: any) => {
+    const d = await api(code, `/admin/subscribers/${encodeURIComponent(s.owner)}/grant`, { method: "POST", body: JSON.stringify({ days: 30 }) });
+    setMsg(d.success ? "30 jours offerts." : d.message); load();
+  };
+  const remind = async () => {
+    const d = await api(code, "/admin/subscription-reminders", { method: "POST" });
+    setMsg(d.success ? (d.whatsapp ? `${d.sent} rappel(s) WhatsApp envoyé(s).` : "WhatsApp n'est pas configuré : les abonnés voient le rappel dans l'application.") : d.message);
+  };
+  const label: Record<string, string> = { trial: "Essai", active: "Actif", expired: "Expiré", none: "—" };
+  return (
+    <div className="space-y-4">
+      <h2 className="text-white font-bold">Abonnements du logiciel</h2>
+      <div className={card + " grid grid-cols-1 md:grid-cols-4 gap-3 items-end"}>
+        <label className="text-[11px] text-slate-500">Prix par mois (FCFA)<input type="number" className={input + " mt-1"} value={settings.price_fcfa} onChange={(e) => setSettings({ ...settings, price_fcfa: e.target.value })} /></label>
+        <label className="text-[11px] text-slate-500">Essai gratuit (jours, 0 = aucun)<input type="number" className={input + " mt-1"} value={settings.trial_days} onChange={(e) => setSettings({ ...settings, trial_days: e.target.value })} /></label>
+        <label className="text-[11px] text-slate-500">Rappel avant l'échéance (jours)<input type="number" className={input + " mt-1"} value={settings.reminder_days} onChange={(e) => setSettings({ ...settings, reminder_days: e.target.value })} /></label>
+        <div className="flex gap-2"><button onClick={save} className={btn}>Enregistrer</button><button onClick={remind} className={btnGhost}>Envoyer les rappels</button></div>
+      </div>
+      {msg && <p className="text-xs text-slate-300">{msg}</p>}
+      <div className={card}>
+        <p className="text-xs font-semibold text-slate-300 mb-2">{subs.length} abonné{subs.length > 1 ? "s" : ""}</p>
+        {subs.length === 0 && <p className="text-xs text-slate-500">Aucun abonné pour l'instant.</p>}
+        {subs.map((s) => (
+          <div key={s.owner} className="flex flex-wrap justify-between gap-2 text-xs text-slate-400 border-t border-slate-800 py-2">
+            <span>{s.phone} · <b className={s.state === "expired" ? "text-red-400" : "text-slate-200"}>{label[s.state]}</b> · jusqu'au {dateFr(s.until)}</span>
+            <span className="flex gap-3">{money(s.paid_total_fcfa)} payés<button onClick={() => grant(s)} className="text-slate-400 hover:text-white cursor-pointer">offrir 30 jours</button></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function GestionApp() {
-  const [code, setCode] = useState<string | null>(localStorage.getItem("gestion_admin_code"));
+  const [code, setCode] = useState<string | null>(() => {
+    const tok = localStorage.getItem("gestion_token");
+    return tok ? `tok:${tok}` : localStorage.getItem("gestion_admin_code");
+  });
   const [tab, setTab] = useState<Tab>("compta");
+  const [sub, setSub] = useState<any>(null);
+  const [showPay, setShowPay] = useState(false);
+  const [notice, setNotice] = useState("");
+  const logout = () => { localStorage.removeItem("gestion_admin_code"); localStorage.removeItem("gestion_token"); setSub(null); setCode(null); };
+
+  // Charge l'état de l'abonnement (compte abonné) ; une session expirée renvoie à la connexion.
+  const refreshSub = async (c: string) => {
+    const d = await api(c, "/subscription");
+    if (d.admin) return setSub({ admin: true });
+    if (d.success) return setSub(d);
+    if (/session/i.test(d.message || "")) logout();
+  };
+  useEffect(() => { if (code) refreshSub(code); }, [code]);
+
+  // Retour de Jèko après un paiement : on vérifie le résultat auprès du serveur.
+  useEffect(() => {
+    if (!code || isAdminCode(code)) return;
+    const ref = new URLSearchParams(window.location.search).get("reference") || sessionStorage.getItem("gestion_pay_ref");
+    if (!ref || !new URLSearchParams(window.location.search).get("abonnement")) return;
+    let tries = 0;
+    const check = async () => {
+      const d = await api(code, `/subscription/payment/${encodeURIComponent(ref)}`);
+      if (d.status === "paye") { setNotice("Paiement reçu, merci ! Votre abonnement est prolongé."); setSub(d); sessionStorage.removeItem("gestion_pay_ref"); window.history.replaceState({}, "", "/gestion"); return; }
+      if (d.status === "echoue") { setNotice("Le paiement n'a pas abouti. Vous pouvez réessayer."); window.history.replaceState({}, "", "/gestion"); return; }
+      if (++tries < 10) setTimeout(check, 3000); else setNotice("Paiement en cours de vérification. Rechargez la page dans quelques instants.");
+    };
+    setNotice("Vérification du paiement…");
+    check();
+  }, [code]);
+
   if (!code) return <Gate onOk={setCode} />;
+  const admin = isAdminCode(code) || !!sub?.admin;
+  const header = (
+    <header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 z-20">
+      <span className="font-bold text-white text-sm">Gestion DiagAssist</span>
+      <button onClick={logout} className="text-xs text-slate-500 hover:text-white cursor-pointer">Déconnexion</button>
+    </header>
+  );
+  if (!admin && !sub) return <div className="min-h-screen bg-slate-950 text-slate-200">{header}<p className="p-6 text-sm text-slate-500">Chargement…</p></div>;
+  if (!admin && sub?.state === "none") return <div className="min-h-screen bg-slate-950 text-slate-200">{header}<div className="px-4"><Offer code={code} sub={sub} onChange={setSub} /></div></div>;
+
+  const tabs = TABS.filter((t) => admin || !t.adminOnly);
+  const expired = !admin && sub?.state === "expired";
+  const soon = !admin && sub && sub.state !== "expired" && sub.daysLeft <= sub.reminder_days;
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 pb-10">
-      <header className="border-b border-slate-800 px-4 py-3 flex items-center justify-between sticky top-0 bg-slate-950/95 z-20">
-        <span className="font-bold text-white text-sm">Gestion DiagAssist</span>
-        <button onClick={() => { localStorage.removeItem("gestion_admin_code"); setCode(null); }} className="text-xs text-slate-500 hover:text-white cursor-pointer">Déconnexion</button>
-      </header>
+      {header}
+      {!admin && sub && (expired || soon || notice) && (
+        <div role="status" className={`px-4 py-3 text-xs flex flex-wrap items-center justify-between gap-2 ${expired ? "bg-red-950 text-red-200" : "bg-amber-950 text-amber-200"}`}>
+          <span>{notice || (expired ? `Votre abonnement a expiré : le logiciel est en lecture seule, vos données sont conservées.` : `${statusLine(sub)}. Renouvelez pour garder l'accès complet.`)}</span>
+          <button onClick={() => setShowPay(true)} className={btn}>{expired ? "Renouveler" : "Payer maintenant"}</button>
+        </div>
+      )}
       <div className="max-w-6xl mx-auto px-4 py-5">
+        {showPay && sub && !admin && <div className="max-w-md mb-5"><PayPanel code={code} sub={sub} onClose={() => setShowPay(false)} /></div>}
+        {!admin && sub && !expired && !soon && <p className="text-[11px] text-slate-500 mb-3">{statusLine(sub)} · <button onClick={() => setShowPay(true)} className="underline cursor-pointer">payer / prolonger</button></p>}
         <nav className="flex gap-2 overflow-x-auto pb-4 border-b border-slate-800 mb-5">
-          {TABS.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`shrink-0 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer ${tab === t.id ? "bg-red-600 text-white" : "bg-slate-900 text-slate-400 hover:text-white"}`}>{t.label}</button>)}
+          {tabs.map((t) => <button key={t.id} onClick={() => setTab(t.id)} className={`shrink-0 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer ${tab === t.id ? "bg-red-600 text-white" : "bg-slate-900 text-slate-400 hover:text-white"}`}>{t.label}</button>)}
         </nav>
         {tab === "compta" && <ComptaTab code={code} />}
         {tab === "stock" && <StockTab code={code} />}
-        {tab === "boutique" && <BoutiqueTab code={code} />}
+        {tab === "boutique" && admin && <BoutiqueTab code={code} />}
         {tab === "ventes" && <SalesTab code={code} />}
         {tab === "clients" && <ClientsTab code={code} />}
         {tab === "echeances" && <ExpiryTab code={code} />}
         {tab === "depenses" && <ExpensesTab code={code} />}
+        {tab === "abonnes" && admin && <SubscribersTab code={code} />}
       </div>
     </div>
   );

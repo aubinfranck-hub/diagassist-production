@@ -430,7 +430,7 @@ export function registerJekoPayments(
     const status = String(body.status || "").toLowerCase();
     if (!reference) return res.status(200).end();
 
-    if (deps.onExternalWebhook && (reference.startsWith("dgas-") || reference.startsWith("dgad-"))) {
+    if (deps.onExternalWebhook && (reference.startsWith("dgas-") || reference.startsWith("dgad-") || reference.startsWith("dggs-"))) {
       try {
         await deps.onExternalWebhook(reference, status, body);
         return res.status(200).end();
