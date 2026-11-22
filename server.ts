@@ -2317,6 +2317,9 @@ async function startServer() {
     contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
       useDefaults: false,
       directives: {
+        // Helmet exige une directive default-src : sans elle le serveur refuse de démarrer.
+        // On la désactive explicitement pour ne rien bloquer (scripts, images, API externes).
+        "default-src": helmet.contentSecurityPolicy.dangerouslyDisableDefaultSrc,
         "object-src": ["'none'"],
         "base-uri": ["'self'"],
         "frame-ancestors": ["'self'"],
