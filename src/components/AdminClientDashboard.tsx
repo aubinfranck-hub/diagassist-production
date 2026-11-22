@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { UserPlus, Users, MapPin, LogOut, RefreshCw, Key, AlertCircle, Shield, MessageCircle, History, Image as ImageIcon, Trash2, ToggleLeft, ToggleRight, Wrench, Upload, Car, Cpu, CheckCircle2, XCircle } from "lucide-react";
 import AssistanceAdmin from "./assistance/AssistanceAdmin";
 import LocalAdsAdmin from "./LocalAdsAdmin";
+import CreditsAdmin from "./credits/CreditsAdmin";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -1403,6 +1404,9 @@ export default function AdminClientDashboard() {
           </table>
         </div>
       </div>
+
+      {/* Diagnostics IA : gratuits + packs payants */}
+      <CreditsAdmin />
 
       {/* Réseau de partenaires : mécaniciens agréés et vendeurs de pièces */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
