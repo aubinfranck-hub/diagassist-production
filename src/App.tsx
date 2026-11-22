@@ -21,6 +21,7 @@ import AutoQuestioningLoop from "./components/AutoQuestioningLoop";
 import ScreeningV2Panel from "./components/ScreeningV2Panel";
 import ClientAssistance, { AssistancePrefill } from "./components/assistance/ClientAssistance";
 import MechanicSpace from "./components/assistance/MechanicSpace";
+import MechanicDirectory from "./components/MechanicDirectory";
 import { ModeSelect, readUserMode, saveUserMode, UserMode } from "./components/assistance/UserMode";
 
 import { Diagnosis, ApiUsage, ChatMessage, SubscriptionPlan } from "./types";
@@ -237,6 +238,12 @@ export default function App() {
     try {
       const q = new URLSearchParams(window.location.search);
       if (q.get("assistance") && q.get("payment") === "return") return "assistance"; // retour de paiement Jèko
+      // Lien direct : /?tab=live | depannage | prices | assistance | screening | diagnose
+      const tab = q.get("tab");
+      if (tab === "depannage" && readUserMode() === "driver") return "assistance";
+      if (tab && ["diagnose", "live", "prices", "screening", "assistance", "depannage"].includes(tab)) {
+        return tab as "diagnose" | "live" | "prices" | "screening" | "assistance" | "depannage";
+      }
     } catch { /* ignoré */ }
     return readUserMode() === "driver" ? "assistance" : "diagnose";
   });
@@ -1553,12 +1560,18 @@ export default function App() {
 
         {/* TAB: Assistance automobile (client) */}
         {activeTab === "assistance" && (
-          <ClientAssistance
-            prefill={assistancePrefill}
-            onPrefillUsed={() => setAssistancePrefill(null)}
-            onOpenMechanicSpace={isDriver ? undefined : () => setActiveTab("depannage")}
-            driverMode={isDriver}
-          />
+          <>
+            <ClientAssistance
+              prefill={assistancePrefill}
+              onPrefillUsed={() => setAssistancePrefill(null)}
+              onOpenMechanicSpace={isDriver ? undefined : () => setActiveTab("depannage")}
+              driverMode={isDriver}
+            />
+            {/* Annuaire public des mécaniciens agréés (mise en avant en tête de liste) */}
+            <div className="max-w-xl mx-auto px-4 pb-10">
+              <MechanicDirectory />
+            </div>
+          </>
         )}
 
         {/* TAB: Espace dépannage (mécanicien) */}
