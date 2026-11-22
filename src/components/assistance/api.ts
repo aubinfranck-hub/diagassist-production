@@ -149,6 +149,7 @@ export interface Bid {
     garageName?: string;
     rating?: { avg: number; count: number } | null;
     photoUrl?: string | null;
+    boosted?: boolean;
     specialties?: string[];
     trainings?: { title: string; issuer?: string }[];
     location?: { lat: number; lng: number; updatedAt?: number } | null;

@@ -4,6 +4,7 @@ import rateLimit from "express-rate-limit";
 import {
   ACTIVE_MISSION_STATUSES, DOC_MAX_BYTES, DOC_MIMES, SERVICE_CODES, clean, magicMatches, mediaRuleFor, validCoords,
 } from "./domain";
+import { createBoost } from "./boost";
 import { AssistanceError, createAssistanceCore, canonicalPhone, type AssistanceCore, type CoreDeps, type DirectoryMechanic } from "./core";
 
 export type AssistanceRouteDeps = {
@@ -29,9 +30,13 @@ function decodeBase64(raw: unknown): Buffer | null {
   return buf.length ? buf : null;
 }
 
-export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCore | null; onExternalWebhook: (ref: string, status: string, body: any) => Promise<boolean>; syncDirectory: () => Promise<void> } {
+export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCore | null; onExternalWebhook: (ref: string, status: string, body: any) => Promise<boolean>; syncDirectory: () => Promise<void>; boostedPhones: () => Promise<Set<string>>; boostInit: () => Promise<void> } {
   const { app, pool } = d;
-  const core = pool ? createAssistanceCore({ pool, sendWhatsApp: d.sendWhatsApp, jeko: d.jeko, isProSubscribed: d.isProSubscribed, analyze: d.analyze, appUrl: process.env.APP_URL }) : null;
+  const boost = pool ? createBoost({ pool, jeko: d.jeko, sendWhatsApp: d.sendWhatsApp }) : null;
+  const core = pool ? createAssistanceCore({
+    pool, sendWhatsApp: d.sendWhatsApp, jeko: d.jeko, isProSubscribed: d.isProSubscribed, analyze: d.analyze, appUrl: process.env.APP_URL,
+    boost: boost ? { activePhones: boost.activePhones, offersFirst: async () => (await boost.getConfig()).offersFirst } : undefined,
+  }) : null;
 
   const wrap = (fn: (req: any, res: Response) => Promise<any>) => async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -254,6 +259,14 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     const profile = await core!.proProfile(phoneOf(req));
     const dirMatch = d.getDirectory().some((m) => m.type === "mechanic" && m.active && canonicalPhone(m.phone) === phoneOf(req));
     res.json({ success: true, profile, directoryMatch: dirMatch });
+  }));
+  // Mise en avant payante (côté mécanicien) : formules, état, paiement via Jèko.
+  app.get("/api/assistance/pro/boost", ...auth, wrap(async (req, res) => {
+    res.json({ success: true, ...(await boost!.proView(phoneOf(req))) });
+  }));
+  app.post("/api/assistance/pro/boost/pay", ...auth, writeLimiter, wrap(async (req, res) => {
+    const r = await boost!.startPayment(phoneOf(req), String(req.body?.plan || ""), String(req.body?.method || ""), req.body?.payerPhone ? String(req.body.payerPhone) : undefined, d.getOrigin(req));
+    res.json({ success: true, ...r });
   }));
   app.put("/api/assistance/pro/me", ...auth, writeLimiter, wrap(async (req, res) => {
     res.json({ success: true, profile: await core!.upsertProProfile(phoneOf(req), req.body || {}) });
@@ -544,6 +557,22 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
     res.json({ success: true });
   }));
 
+  // Mise en avant payante : formules et réglages, liste des achats / offerts, offrir ou retirer.
+  app.get(A("/boosts"), ...adm, wrap(async (_req, res) => {
+    res.json({ success: true, config: await boost!.getConfig(), ...(await boost!.adminList()), paymentConfigured: !!d.jeko?.isConfigured() });
+  }));
+  app.put(A("/boosts/config"), ...adm, writeLimiter, wrap(async (req, res) => {
+    res.json({ success: true, config: await boost!.saveConfig(req.body || {}) });
+  }));
+  app.post(A("/boosts/grant"), ...adm, writeLimiter, wrap(async (req, res) => {
+    await boost!.grant(String(req.body?.phone || ""), Number(req.body?.days), adminActor(req), req.body?.note);
+    res.json({ success: true, message: "Mise en avant offerte." });
+  }));
+  app.post(A("/boosts/:reference/revoke"), ...adm, writeLimiter, wrap(async (req, res) => {
+    await boost!.revoke(String(req.params.reference));
+    res.json({ success: true, message: "Mise en avant retirée." });
+  }));
+
   // Réclamations
   app.get(A("/claims"), ...adm, wrap(async (_req, res) => {
     const r = await core!.pool.query(`SELECT id, request_id, author_phone, kind, message, status, admin_note, created_at, resolved_at FROM assistance_claims ORDER BY status, created_at DESC LIMIT 300`);
@@ -557,7 +586,13 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
 
   return {
     core,
-    onExternalWebhook: async (ref, status, body) => (core ? core.handleJekoWebhook(ref, status, body) : false),
+    onExternalWebhook: async (ref, status, body) => {
+      if (!core) return false;
+      if (boost && ref.startsWith("dgas-boost-")) return boost.handleWebhook(ref, status, body);
+      return core.handleJekoWebhook(ref, status, body);
+    },
+    boostInit: async () => { if (boost) await boost.init(); },
+    boostedPhones: async () => (boost ? boost.activePhones().catch(() => new Set<string>()) : new Set<string>()),
     syncDirectory: async () => { if (core) { const r = await core.syncDirectory(d.getDirectory()); console.log(`[ASSISTANCE] Annuaire synchronisé : ${r.created} profils créés (en attente de validation), ${r.linked} rattachés, ${r.suspended} suspendus.`); } },
   };
 }
@@ -565,6 +600,7 @@ export function registerAssistance(d: AssistanceRouteDeps): { core: AssistanceCo
 export async function initAssistance(handle: ReturnType<typeof registerAssistance>) {
   if (!handle.core) { console.warn("[ASSISTANCE] DATABASE_URL absent : module Assistance automobile désactivé (état explicite côté interface)."); return; }
   await handle.core.init();
+  await handle.boostInit();
   await handle.syncDirectory();
   handle.core.startWorker();
   console.log("[ASSISTANCE] Module prêt (schéma vérifié, affectation active).");
