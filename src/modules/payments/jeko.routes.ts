@@ -90,6 +90,8 @@ export function registerJekoPayments(
     // Paiements d'autres modules (références "dgas-…") : le webhook, une fois sa signature vérifiée,
     // leur délègue le traitement. Renvoie true si la référence leur appartient.
     onExternalWebhook?: (reference: string, status: string, body: any) => Promise<boolean>;
+    // Packs de diagnostics IA (références "dgcr-…") : même principe.
+    onCreditsWebhook?: (reference: string, status: string, body: any) => Promise<boolean>;
   }
 ) {
   const pending = new Map<string, PendingPayment>();
@@ -434,6 +436,16 @@ export function registerJekoPayments(
         return res.status(200).end();
       } catch (err: any) {
         console.error("[JEKO][Webhook] Traitement externe en échec:", err.message);
+        return res.status(500).end(); // Jèko renverra le webhook
+      }
+    }
+
+    if (deps.onCreditsWebhook && reference.startsWith("dgcr-")) {
+      try {
+        await deps.onCreditsWebhook(reference, status, body);
+        return res.status(200).end();
+      } catch (err: any) {
+        console.error("[JEKO][Webhook] Traitement des crédits en échec:", err.message);
         return res.status(500).end(); // Jèko renverra le webhook
       }
     }

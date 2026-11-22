@@ -24,6 +24,8 @@ export type CoreDeps = {
   // Analyse automatique par l'IA DiagAssist (texte + médias). Peut échouer : la demande part quand même.
   appUrl?: string;
   analyze?: (input: { service: string; vehicle: any; symptoms: string; faultCodes: string | null; media: { mime: string; data: Buffer }[] }) => Promise<string | null>;
+  // Mise en avant payante : numéros dont la mise en avant est active, et si ces mécaniciens passent en tête des offres.
+  boost?: { activePhones: () => Promise<Set<string>>; offersFirst: () => Promise<boolean> };
   // Paiement via le système (Jèko). Absent ou non configuré : le paiement renvoie 503 explicite.
   jeko?: {
     isConfigured: () => boolean;
@@ -1214,6 +1216,9 @@ export function createAssistanceCore(deps: CoreDeps) {
       pool.query("SELECT pro_phone, title, issuer FROM assistance_trainings WHERE pro_phone = ANY($1) AND status='verifiee' ORDER BY id", [phones]),
     ]);
     const atelier = r.mode === "atelier";
+    const boosted = deps.boost ? await deps.boost.activePhones().catch(() => new Set<string>()) : new Set<string>();
+    const boostFirst = boosted.size > 0 && deps.boost ? await deps.boost.offersFirst().catch(() => false) : false;
+    const isBoosted = (phone: string) => boosted.has(phone);
     return rows
       .map((x) => {
         const rating = rt.rows.find((y) => y.pro_phone === x.pro_phone);
@@ -1225,6 +1230,7 @@ export function createAssistanceCore(deps: CoreDeps) {
             displayName: x.display_name, garageName: x.garage_name, specialties: x.specialties,
             rating: rating ? { avg: Math.round(rating.avg * 10) / 10, count: rating.n } : null,
             photoUrl: null as string | null,
+            boosted: isBoosted(x.pro_phone),
             trainings: tr.rows.filter((y) => y.pro_phone === x.pro_phone).map((y) => ({ title: y.title, issuer: y.issuer })),
             ...(atelier && x.last_lat != null ? { location: { lat: x.last_lat, lng: x.last_lng, updatedAt: Number(x.last_loc_at) } } : {}),
           },
@@ -1232,7 +1238,9 @@ export function createAssistanceCore(deps: CoreDeps) {
           validUntil: Number(x.bid_expires_at), isRevised: !!x.bid_revised, sentAt: Number(x.bid_at),
         };
       })
-      .sort((a, b) => a.amount - b.amount || a.etaMinutes - b.etaMinutes || a.sentAt - b.sentAt);
+      // Mise en avant : seul l'ordre « recommandé » change (les mis en avant d'abord, puis par prix). Les prix restent dans
+      // la fourchette admin et le client peut toujours trier par prix ou par délai.
+      .sort((a, b) => (boostFirst ? Number(b.pro.boosted) - Number(a.pro.boosted) : 0) || a.amount - b.amount || a.etaMinutes - b.etaMinutes || a.sentAt - b.sentAt);
   }
 
   async function clientDetail(id: string, phone: string) {

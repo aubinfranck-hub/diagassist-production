@@ -17,7 +17,10 @@ import { UsageStore } from "./src/modules/security/usageStore";
 import { registerScreening } from "./src/modules/screening/screening.routes";
 import { registerJekoPayments, jekoIsConfigured, createJekoRedirectPayment, fetchJekoPaymentStatus } from "./src/modules/payments/jeko.routes";
 import { registerAssistance, initAssistance } from "./src/modules/assistance/assistance.routes";
+import { canonicalPhone } from "./src/modules/assistance/core";
 import { registerDiagnostic } from "./src/modules/diagnostic/routes";
+import { registerCredits, isCreditPlan, CREDITS_EXHAUSTED_MESSAGE } from "./src/modules/credits/routes";
+import type { CreditSource } from "./src/modules/credits/core";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { initGestionSchema, registerGestionRoutes, syncAllShop as syncGestionShop } from "./src/modules/gestion/gestion";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
@@ -132,7 +135,7 @@ const userPlans = new Map<string, { plan: string; activatedAt: number; customDur
 // forfait expire automatiquement et repasse à "free_expired". L'admin peut aussi fixer une durée
 // personnalisée (jour/semaine/mois) au moment de la création du compte, qui prime sur ces valeurs.
 const PLAN_DURATIONS_MS: Record<string, number> = {
-  free_trial: 72 * 60 * 60 * 1000,        // 72h
+  // free_trial n'expire plus : les comptes gratuits fonctionnent avec des crédits de diagnostic (voir src/modules/credits).
   payg_active: 24 * 60 * 60 * 1000,       // pass 24h (mécaniciens)
   owner_week: 7 * 24 * 60 * 60 * 1000,    // pass semaine 500F (propriétaires de véhicules)
   lite: 30 * 24 * 60 * 60 * 1000,         // 30 jours
@@ -185,6 +188,11 @@ async function setUserPlan(phone: string, plan: string, customDurationMs?: numbe
   userPlans.set(phone, record);
 }
 
+// Les jetons de session ne sont jamais stockés en clair : mémoire et base ne gardent que leur empreinte SHA-256.
+function tokenKey(token: string): string {
+  return "h1:" + crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
 async function createSession(phone: string): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
   getEffectivePlan(phone);
@@ -197,8 +205,8 @@ async function createSession(phone: string): Promise<string> {
     if (row) userPlans.set(phone, { plan: row.plan, activatedAt: Number(row.activated_at), customDurationMs: row.custom_duration_ms ? Number(row.custom_duration_ms) : undefined });
   }
   const session = { phone, plan: getEffectivePlan(phone), createdAt: Date.now() };
-  if (dbPool) await dbPool.query("INSERT INTO sessions (token,phone,plan,created_at) VALUES ($1,$2,$3,$4)", [token, phone, session.plan, session.createdAt]);
-  sessions.set(token, session);
+  if (dbPool) await dbPool.query("INSERT INTO sessions (token,phone,plan,created_at) VALUES ($1,$2,$3,$4)", [tokenKey(token), phone, session.plan, session.createdAt]);
+  sessions.set(tokenKey(token), session);
   return token;
 }
 
@@ -488,6 +496,8 @@ async function initDatabase(): Promise<void> {
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_city TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_address TEXT;
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_method TEXT;
+      CREATE TABLE IF NOT EXISTS shop_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);
+      ALTER TABLE shop_products ADD COLUMN IF NOT EXISTS stock_qty INTEGER; -- NULL = stock non suivi
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS shipping_fee_fcfa INTEGER DEFAULT 0; -- porté par la première ligne de la commande
       ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'non_paye'; -- non_paye | acompte_paye | paye
       ALTER TABLE shop_followups ADD COLUMN IF NOT EXISTS related_order_ref TEXT;
@@ -566,7 +576,13 @@ async function loadPersistedData(): Promise<void> {
   for (const row of sessionsRes.rows) {
     const createdAt = Number(row.created_at);
     if (Date.now() - createdAt <= SESSION_MAX_AGE_MS) {
-      sessions.set(row.token, { phone: row.phone, plan: row.plan, createdAt });
+      let key = String(row.token);
+      if (!key.startsWith("h1:")) {
+        // Ancienne session stockée en clair : on la convertit en empreinte sans déconnecter personne.
+        key = tokenKey(key);
+        await dbPool.query("UPDATE sessions SET token=$1 WHERE token=$2", [key, row.token]).catch(() => {});
+      }
+      sessions.set(key, { phone: row.phone, plan: row.plan, createdAt });
       loadedSessions++;
     }
   }
@@ -807,9 +823,9 @@ function findPhoneByEmail(email: string): string | null {
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
-  const session = sessions.get(token);
+  const session = sessions.get(tokenKey(token));
   if (!token || !sessionIsValid(session)) {
-    if (token) sessions.delete(token);
+    if (token) sessions.delete(tokenKey(token));
     return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
   }
   // Toujours resynchroniser le plan de la session avec le forfait persistant à jour
@@ -823,20 +839,48 @@ function requireAuth(req: any, res: any, next: any) {
 // --- Administration : protection par secret serveur (jamais exposé au client) ---
 // Définissez ADMIN_SECRET dans vos variables d'environnement en production.
 // Sans ADMIN_SECRET configuré, toutes les routes admin refusent l'accès (fail-closed).
+// Comparaison à temps constant (évite de deviner le code lettre par lettre grâce au temps de réponse).
+function safeEqualStrings(a: string, b: string): boolean {
+  const ha = crypto.createHash("sha256").update(a).digest();
+  const hb = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+// Anti force brute sur le code admin : au-delà de 10 codes faux en 15 minutes depuis une même IP,
+// l'IP est bloquée (toutes les routes admin, y compris celles de la boutique).
+const adminCodeFailures = new Map<string, { count: number; resetAt: number }>();
+const ADMIN_CODE_MAX_FAILURES = 10;
+const ADMIN_CODE_WINDOW_MS = 15 * 60 * 1000;
+
 function requireAdminAuth(req: any, res: any, next: any) {
   const adminSecret = process.env.ADMIN_SECRET;
-  const providedCode = req.headers["x-admin-code"] || req.body?.code;
+  const rawCode = req.headers["x-admin-code"] || req.body?.code;
+  const providedCode = typeof rawCode === "string" ? rawCode : "";
+  const ip = String(req.ip || "inconnu");
+  const failures = adminCodeFailures.get(ip);
+  if (failures && failures.resetAt <= Date.now()) adminCodeFailures.delete(ip);
+  const current = adminCodeFailures.get(ip);
+  if (current && current.count >= ADMIN_CODE_MAX_FAILURES) {
+    return res.status(429).json({ success: false, message: "Trop de tentatives d'accès administrateur. Réessayez plus tard." });
+  }
 
   // Voie 1 : code admin serveur (ADMIN_SECRET) — utilisable sans être connecté.
-  if (adminSecret && providedCode && providedCode === adminSecret) {
+  if (adminSecret && providedCode && safeEqualStrings(providedCode, adminSecret)) {
+    adminCodeFailures.delete(ip);
     return next();
+  }
+  if (providedCode) {
+    const entry = adminCodeFailures.get(ip) || { count: 0, resetAt: Date.now() + ADMIN_CODE_WINDOW_MS };
+    entry.count++;
+    adminCodeFailures.set(ip, entry);
+    if (adminCodeFailures.size > 5000) adminCodeFailures.clear();
   }
 
   // Voie 2 : session utilisateur valide dont le compte est marqué isAdmin — permet d'utiliser le
   // tableau de bord admin directement depuis l'app une fois connecté, sans retaper le code.
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
-  const session = token ? sessions.get(token) : undefined;
+  const session = token ? sessions.get(tokenKey(token)) : undefined;
   if (sessionIsValid(session) && userAccounts.get(session!.phone)?.isAdmin) {
     return next();
   }
@@ -878,6 +922,22 @@ async function checkAndIncrementUsage(phone: string, plan: string): Promise<{ al
   const allowed = await usageStore.consume(phone, "diagnosis", period, 1, PLAN_LIMITS[plan] ?? 0);
   if (allowed) usageTracking.set(phone, { diagnosisCount: await usageStore.used(phone, "diagnosis", period), periodStart: period });
   return allowed ? { allowed: true } : { allowed: false, message: "Quota atteint pour votre forfait actuel. Veuillez passer à un forfait supérieur." };
+}
+
+// Crédits de diagnostics (comptes gratuits). Renseigné au démarrage, voir registerCredits plus bas.
+let credits: Awaited<ReturnType<typeof registerCredits>> | undefined;
+
+type DiagnosticCharge = { allowed: boolean; source?: CreditSource | null; status?: number; code?: string; message?: string };
+
+// Décompte d'UN diagnostic. Compte gratuit : un diagnostic gratuit puis un diagnostic acheté (jamais bloquant pour
+// l'urgence/SOS, qui n'utilisent pas cette route). Abonné : quota de son forfait, comme avant.
+async function chargeDiagnostic(phone: string, plan: string): Promise<DiagnosticCharge> {
+  if (credits && isCreditPlan(plan)) {
+    const c = await credits.charge(phone, plan);
+    return c.allowed ? { allowed: true, source: c.source } : { allowed: false, status: 402, code: "CREDITS_EXHAUSTED", message: CREDITS_EXHAUSTED_MESSAGE };
+  }
+  const check = await checkAndIncrementUsage(phone, plan);
+  return check.allowed ? { allowed: true, source: null } : { allowed: false, status: 403, message: check.message };
 }
 
 // Support de plusieurs clés Gemini (rotation automatique en cas de quota dépassé sur l'une
@@ -2228,6 +2288,7 @@ async function generateContentWithFallbackAndRetry(
 }
 
 let assistanceSync: (() => Promise<void>) | null = null;
+let assistanceBoosted: (() => Promise<Set<string>>) | null = null;
 
 async function startServer() {
   // Charge les données persistées AVANT toute autre chose : sessions/mots de passe/forfaits
@@ -2249,7 +2310,18 @@ async function startServer() {
 
   // Sécurité HTTP standard (headers)
   app.use(helmet({
-    contentSecurityPolicy: false, // désactivé pour ne pas casser Vite en dev ; à durcir en prod si besoin
+    // Politique prudente en production : n'interdit ni les scripts ni les images (pour ne rien casser),
+    // mais bloque l'intégration du site dans un autre site, les plugins, les formulaires vers l'extérieur
+    // et le détournement de la base des liens. Désactivée en dev (Vite).
+    contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
+      useDefaults: false,
+      directives: {
+        "object-src": ["'none'"],
+        "base-uri": ["'self'"],
+        "frame-ancestors": ["'self'"],
+        "form-action": ["'self'"],
+      },
+    } : false,
     crossOriginEmbedderPolicy: false,
   }));
 
@@ -2355,7 +2427,7 @@ async function startServer() {
   const aiBudget = async (req: any, res: any, next: any) => {
     const phone = req.session.phone;
     const plan = getEffectivePlan(phone);
-    if ((PLAN_LIMITS[plan] ?? 0) <= 0) return res.status(403).json({ success: false, message: "Forfait expiré. Veuillez vous réabonner." });
+    if (!isCreditPlan(plan) && (PLAN_LIMITS[plan] ?? 0) <= 0) return res.status(403).json({ success: false, message: "Forfait expiré. Veuillez vous réabonner." });
     if ((aiInFlight.get(phone) || 0) >= 2) return res.status(429).json({ success: false, message: "Deux requêtes sont déjà en cours. Patientez." });
     aiInFlight.set(phone, (aiInFlight.get(phone) || 0) + 1);
     let released = false;
@@ -2363,7 +2435,7 @@ async function startServer() {
     res.once("close", release);
     try {
       const period = Math.floor(Date.now() / 86_400_000) * 86_400_000;
-      const caps: Record<string, number> = { free_trial: 40, owner_week: 150, lite: 300, payg_active: 1500, premium: 2000 };
+      const caps: Record<string, number> = { free_trial: 40, free_expired: 40, owner_week: 150, lite: 300, payg_active: 1500, premium: 2000 };
       if (!await usageStore.consume(phone, "ai_requests", period, 1, caps[plan] ?? 0)) {
         release(); return res.status(429).json({ success: false, message: "Limite quotidienne de requêtes atteinte." });
       }
@@ -2375,12 +2447,14 @@ async function startServer() {
 
   // API Route: Diagnose vehicle issue
   app.post("/api/diagnose", diagnoseLimiter, requireAuth, async (req: any, res) => {
+    let creditSource: CreditSource | null = null;
     try {
       const { phone, plan } = req.session;
-      const check = await checkAndIncrementUsage(phone, plan);
+      const check = await chargeDiagnostic(phone, plan);
       if (!check.allowed) {
-        return res.status(403).json({ success: false, message: check.message });
+        return res.status(check.status).json({ success: false, code: check.code, message: check.message });
       }
+      creditSource = check.source ?? null;
 
       const {
         vehicleBrand,
@@ -2731,6 +2805,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       // FUITE D'INFORMATION CORRIGÉE : le détail technique brut de l'erreur (potentiellement
       // des informations d'infrastructure interne) n'est plus renvoyé au client, seulement loggé.
       console.error("Error during diagnosis:", error);
+      await credits?.refund(req.session.phone, creditSource).catch(() => {}); // panne technique : le diagnostic n'est pas décompté
       res.status(500).json({
         success: false,
         message: "Une erreur est survenue lors de l'analyse avec l'IA. Veuillez réessayer dans un instant.",
@@ -2747,7 +2822,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
     try {
       const { brandModelInfo, probableCauses, dtcCodesDetected } = req.body;
       const { plan } = req.session;
-      const premiumEligible = ["free_trial", "premium", "payg_active"].includes(plan);
+      const premiumEligible = ["free_trial", "free_expired", "premium", "payg_active"].includes(plan);
       if (!premiumEligible) {
         return res.status(403).json({ success: false, message: "Cette fonctionnalité nécessite un forfait actif." });
       }
@@ -2826,7 +2901,9 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       // "free_expired" (0 diagnostic autorisé) pouvait quand même discuter indéfiniment
       // avec l'IA gratuitement via le chat de suivi, en contournant totalement le quota.
       const { plan, phone: chatPhone } = req.session;
-      if ((PLAN_LIMITS[plan] ?? 0) <= 0) {
+      if (credits && isCreditPlan(plan)) {
+        if (!await credits.canFollowUp(chatPhone, plan)) return res.status(402).json({ success: false, code: "CREDITS_EXHAUSTED", message: CREDITS_EXHAUSTED_MESSAGE });
+      } else if ((PLAN_LIMITS[plan] ?? 0) <= 0) {
         return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas d'utiliser le chat de suivi. Veuillez souscrire à une formule." });
       }
 
@@ -3029,7 +3106,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       if (typeof text !== "string" || !text.trim() || text.length > 5000) {
         return res.status(400).json({ success: false, message: "Le texte est requis." });
       }
-      if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
+      if (credits && isCreditPlan(req.session.plan)) {
+        if (!await credits.canFollowUp(req.session.phone, req.session.plan)) return res.status(402).json({ success: false, code: "CREDITS_EXHAUSTED", message: CREDITS_EXHAUSTED_MESSAGE });
+      } else if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
         return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas la synthèse vocale. Veuillez souscrire à une formule." });
       }
 
@@ -3666,7 +3745,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.get("/api/admin/sessions", adminLimiter, requireAdminAuth, (req, res) => {
     const list = Array.from(sessions.entries()).map(([token, s]) => ({
       // Le token lui-même n'est jamais exposé, seule une référence tronquée pour distinguer les entrées
-      tokenRef: token.slice(0, 8),
+      tokenRef: token.slice(3, 11),
       phone: s.phone,
       plan: s.plan,
       createdAt: s.createdAt,
@@ -4241,6 +4320,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     for (const [phone, loc] of lastKnownLocation) if (now - loc.updatedAt > 72 * 3600 * 1000) lastKnownLocation.delete(phone);
     dbPool?.query("DELETE FROM connection_history WHERE timestamp < $1", [now - 90 * 24 * 3600 * 1000])
       .catch((err: any) => console.warn("[Rétention] connection_history:", err?.message || err));
+    for (const [key, sess] of sessions) if (!sessionIsValid(sess)) sessions.delete(key);
+    dbPool?.query("DELETE FROM sessions WHERE created_at < $1", [now - SESSION_MAX_AGE_MS])
+      .catch((err: any) => console.warn("[Rétention] sessions:", err?.message || err));
   };
   const purgeTimer = setInterval(purgePersonalData, 6 * 3600 * 1000);
   purgeTimer.unref?.();
@@ -4272,14 +4354,19 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // --- Public : passer commande (identification par téléphone uniquement, pas de compte requis) ---
   // --- Règles communes aux commandes publiques ---
   const MAX_ORDER_LINES = 20, MAX_LINE_QUANTITY = 100;
-  const DEFAULT_SHIPPING_FEES: Record<string, number> = { showroom: 0, abidjan: 3000, interieur: 5000, afrique: 15000 };
-  // Tarifs de livraison configurables : SHOP_SHIPPING_FEES='{"abidjan":2500,...}' (FCFA, entiers >= 0).
-  function shippingFees(): Record<string, number> {
+  // Livraison : retrait showroom gratuit, livraison Abidjan le jour même (1 500 FCFA) ou le lendemain (1 000 FCFA).
+  // Les tarifs sont modifiables dans l'admin boutique (table shop_settings) ; SHOP_SHIPPING_FEES reste un repli.
+  const DEFAULT_SHIPPING_FEES: Record<string, number> = { showroom: 0, jour_j: 1500, j_plus_1: 1000 };
+  const SHIPPING_FEE_MAX = 100000;
+  async function shippingFees(): Promise<Record<string, number>> {
     const fees = { ...DEFAULT_SHIPPING_FEES };
+    const apply = (custom: any) => { for (const k of Object.keys(fees)) if (Number.isInteger(custom?.[k]) && custom[k] >= 0 && custom[k] <= SHIPPING_FEE_MAX) fees[k] = custom[k]; };
+    try { if (process.env.SHOP_SHIPPING_FEES) apply(JSON.parse(process.env.SHOP_SHIPPING_FEES)); }
+    catch { console.warn("[Boutique] SHOP_SHIPPING_FEES invalide, tarifs par défaut utilisés."); }
     try {
-      const custom = process.env.SHOP_SHIPPING_FEES ? JSON.parse(process.env.SHOP_SHIPPING_FEES) : {};
-      for (const k of Object.keys(fees)) if (Number.isInteger(custom[k]) && custom[k] >= 0) fees[k] = custom[k];
-    } catch { console.warn("[Boutique] SHOP_SHIPPING_FEES invalide, tarifs par défaut utilisés."); }
+      const r = await dbPool?.query("SELECT value FROM shop_settings WHERE key = 'shipping_fees'");
+      if (r?.rows[0]) apply(JSON.parse(r.rows[0].value));
+    } catch (err: any) { console.warn("[Boutique] tarifs de livraison illisibles:", err?.message || err); }
     return fees;
   }
   // Pièce jointe base64 (data URL) : type de contenu autorisé et taille maximale (5 Mo décodés).
@@ -4313,12 +4400,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     for (const [id, quantity] of quantities) {
       const product = byId.get(id);
       if (!product) return { error: "Un des produits n'est plus disponible." };
-      if (product.availability === "rupture") return { error: `« ${product.name} » est en rupture de stock.` };
+      if (product.availability === "rupture" || (product.stock_qty !== null && product.stock_qty !== undefined && Number(product.stock_qty) <= 0)) return { error: `« ${product.name} » est en rupture de stock.` };
+      if (product.stock_qty !== null && product.stock_qty !== undefined && quantity > Number(product.stock_qty)) return { error: `« ${product.name} » : seulement ${product.stock_qty} en stock.` };
       lines.push({ product, quantity });
     }
     return { lines };
   }
 
+  class ShopStockError extends Error {}
   // Insère toutes les lignes d'une commande dans une seule transaction (tout ou rien).
   async function insertOrder(o: {
     phone: string; orderRef: string; lines: { product: any; quantity: number }[];
@@ -4333,6 +4422,14 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       await client.query("BEGIN");
       for (let idx = 0; idx < o.lines.length; idx++) {
         const { product, quantity } = o.lines[idx];
+        // Stock suivi : décrément atomique, refusé si un autre client a pris la dernière pièce entre-temps.
+        if (product.stock_qty !== null && product.stock_qty !== undefined) {
+          const st = await client.query(
+            "UPDATE shop_products SET stock_qty = stock_qty - $1, availability = CASE WHEN stock_qty - $1 <= 0 THEN 'rupture' ELSE availability END WHERE id = $2 AND stock_qty >= $1 RETURNING id",
+            [quantity, product.id]
+          );
+          if (st.rowCount === 0) throw new ShopStockError(`« ${product.name} » n'est plus disponible en quantité suffisante.`);
+        }
         const dep = depositFor(product, quantity);
         depositTotal += dep.amount;
         if (dep.amount > 0 && product.lead_time_days) leadDays = Math.max(leadDays ?? 0, Number(product.lead_time_days));
@@ -4358,8 +4455,25 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   }
 
   // Tarifs de livraison pour l'écran de commande.
-  app.get("/api/shop/shipping-options", (_req, res) => {
-    res.json({ success: true, fees: shippingFees() });
+  app.get("/api/shop/shipping-options", async (_req, res) => {
+    res.json({ success: true, fees: await shippingFees() });
+  });
+
+  // Admin : lire et modifier les tarifs de livraison.
+  app.get("/api/admin/shop/shipping-fees", requireAdminAuth, async (_req, res) => {
+    res.json({ success: true, fees: await shippingFees() });
+  });
+  app.put("/api/admin/shop/shipping-fees", requireAdminAuth, async (req, res) => {
+    if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
+    const body = req.body || {};
+    const next: Record<string, number> = {};
+    for (const k of Object.keys(DEFAULT_SHIPPING_FEES)) {
+      const v = Number(body[k]);
+      if (!Number.isInteger(v) || v < 0 || v > SHIPPING_FEE_MAX) return res.status(400).json({ success: false, message: "Tarif invalide (entier de 0 à 100 000 FCFA)." });
+      next[k] = v;
+    }
+    await dbPool.query("INSERT INTO shop_settings (key, value) VALUES ('shipping_fees', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP", [JSON.stringify(next)]);
+    res.json({ success: true, fees: await shippingFees() });
   });
 
   // --- Public : commande d'un seul produit ---
@@ -4375,7 +4489,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const consent = req.body.whatsapp_consent === true;
     await upsertShopCustomer(cleanPhone, name, city, "produit", consent);
     const orderRef = await nextOrderRef();
-    const order = await insertOrder({ phone: cleanPhone, orderRef, lines: loaded.lines, city, notes });
+    let order: Awaited<ReturnType<typeof insertOrder>>;
+    try { order = await insertOrder({ phone: cleanPhone, orderRef, lines: loaded.lines, city, notes }); }
+    catch (err) { if (err instanceof ShopStockError) return res.status(409).json({ success: false, message: err.message }); throw err; }
     const product = loaded.lines[0].product;
     await scheduleShopFollowups(cleanPhone, { orderRef, productName: product.name, kind: "order", whatsappConsent: consent });
     const days = product.lead_time_days ? Number(product.lead_time_days) : null;
@@ -4424,8 +4540,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (!isValidShopPhone(cleanPhone)) return res.status(400).json({ success: false, message: "Numéro de téléphone invalide." });
 
     // Le serveur impose les frais : le client ne choisit que le mode de livraison.
-    const fees = shippingFees();
-    const shippingMethod = body.shipping_method === undefined ? "abidjan" : String(body.shipping_method);
+    const fees = await shippingFees();
+    const shippingMethod = body.shipping_method === undefined ? "jour_j" : String(body.shipping_method);
     if (!(shippingMethod in fees)) return res.status(400).json({ success: false, message: "Mode de livraison invalide." });
 
     const loaded = await loadOrderLines(body.items);
@@ -4434,11 +4550,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     const consent = body.whatsapp_consent === true;
     await upsertShopCustomer(cleanPhone, name, city, "produit", consent);
     const orderRef = await nextOrderRef();
-    const order = await insertOrder({
+    let order: Awaited<ReturnType<typeof insertOrder>>;
+    try { order = await insertOrder({
       phone: cleanPhone, orderRef, lines: loaded.lines, city, address,
       notes: typeof body.notes === "string" ? body.notes.slice(0, 500) : null,
       shippingMethod, shippingFee: fees[shippingMethod],
-    });
+    }); }
+    catch (err) { if (err instanceof ShopStockError) return res.status(409).json({ success: false, message: err.message }); throw err; }
 
     await scheduleShopFollowups(cleanPhone, { orderRef, productName: loaded.lines[0].product.name, kind: "order", whatsappConsent: consent });
     res.json({
@@ -4606,7 +4724,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   app.patch("/api/admin/shop/products/:id", requireAdminAuth, async (req, res) => {
     if (!dbPool) return res.status(503).json({ success: false, message: "Service indisponible." });
     const fields = req.body;
-    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active", "deposit_pct", "lead_time_days"];
+    const allowed = ["category_id", "name", "brand", "model", "price_eur", "price_fcfa", "description", "specs", "compatibility", "box_contents", "warranty", "availability", "is_active", "deposit_pct", "lead_time_days", "stock_qty"];
     const jsonFields = ["photos", "videos"];
     if (fields.price_fcfa !== undefined && fields.price_fcfa !== null && (!Number.isInteger(Number(fields.price_fcfa)) || Number(fields.price_fcfa) < 0)) {
       return res.status(400).json({ success: false, message: "Prix FCFA invalide." });
@@ -4616,6 +4734,13 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     }
     if (fields.lead_time_days !== undefined && fields.lead_time_days !== null && (!Number.isInteger(Number(fields.lead_time_days)) || Number(fields.lead_time_days) < 0)) {
       return res.status(400).json({ success: false, message: "Délai invalide." });
+    }
+    if (fields.stock_qty === "") fields.stock_qty = null;
+    if (fields.stock_qty !== undefined && fields.stock_qty !== null && (!Number.isInteger(Number(fields.stock_qty)) || Number(fields.stock_qty) < 0 || Number(fields.stock_qty) > 100000)) {
+      return res.status(400).json({ success: false, message: "Stock invalide (entier de 0 à 100 000, vide = non suivi)." });
+    }
+    if (fields.stock_qty !== undefined && fields.stock_qty !== null && fields.availability === undefined) {
+      fields.availability = Number(fields.stock_qty) > 0 ? "disponible" : "rupture";
     }
     const sets: string[] = [];
     const values: any[] = [];
@@ -5023,7 +5148,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
 
   // API Route (utilisateur connecté) : annuaire public des mécaniciens agréés actifs,
   // affiché aux propriétaires de véhicules pour les orienter vers un professionnel équipé.
-  app.get("/api/mechanics", requireAuth, (req, res) => {
+  app.get("/api/mechanics", requireAuth, async (req, res) => {
     const city = (req.query.city as string || "").trim().toLowerCase();
     const type = (req.query.type as string || "").trim();
     let list = Array.from(mechanics.values()).filter((m) => m.active);
@@ -5033,7 +5158,11 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (city) {
       list = list.filter((m) => m.city.toLowerCase().includes(city) || (m.area || "").toLowerCase().includes(city));
     }
-    res.json({ success: true, mechanics: list });
+    // Mise en avant payante : les mécaniciens mis en avant passent en premier (ordre conservé pour les autres).
+    const boosted = assistanceBoosted ? await assistanceBoosted().catch(() => new Set<string>()) : new Set<string>();
+    const out = list.map((m) => ({ ...m, boosted: boosted.size > 0 && boosted.has(canonicalPhone(m.phone)) }));
+    out.sort((a, b) => Number(b.boosted) - Number(a.boosted));
+    res.json({ success: true, mechanics: out });
   });
 
   // API Route : génère une question captcha simple (anti-bot) pour la création de compte.
@@ -5330,12 +5459,14 @@ diagnostic, ni formation technique. Tu DOIS adapter chaque "next_question" à ce
 
   // Start a new Diagnostic Loop (Tour 0)
   app.post("/api/diagnostic/loop/start", requireAuth, async (req: any, res) => {
+    let creditSource: CreditSource | null = null;
     try {
       const { phone, plan } = req.session;
-      const check = await checkAndIncrementUsage(phone, plan);
+      const check = await chargeDiagnostic(phone, plan);
       if (!check.allowed) {
-        return res.status(403).json({ success: false, message: check.message });
+        return res.status(check.status).json({ success: false, code: check.code, message: check.message });
       }
+      creditSource = check.source ?? null;
 
       const {
         vehicule,
@@ -5437,6 +5568,7 @@ Instructions Tour 0 :
       });
     } catch (error: any) {
       console.error("Erreur lors de l'initialisation de la boucle de diagnostic:", error);
+      await credits?.refund(req.session.phone, creditSource).catch(() => {});
       res.status(500).json({ success: false, message: "Erreur serveur lors du diagnostic. Veuillez réessayer." });
     }
   });
@@ -5659,11 +5791,21 @@ Directives pour ce tour :
     getOrigin: (req) => process.env.APP_URL || `https://${req.headers.host}`,
   });
   assistanceSync = assistance.syncDirectory;
+  assistanceBoosted = assistance.boostedPhones;
   await initAssistance(assistance).catch((err: any) => console.error("[ASSISTANCE] Initialisation échouée:", err.message));
 
   const diagnostic = await registerDiagnostic(app, { pool: dbPool, requireAuth, requireAdminAuth, isAdmin: phone => userAccounts.get(phone)?.isAdmin === true });
+  // Packs de diagnostics IA (gratuits puis payants via Jèko) : le décompte se fait uniquement ici, côté serveur.
+  credits = await registerCredits(app, {
+    dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
+    requireAuth, requireAdminAuth,
+    accountExists: (phone: string) => userAccounts.has(phone),
+    getOrigin: (req) => process.env.APP_URL || `https://${req.headers.host}`,
+    jeko: { isConfigured: jekoIsConfigured, create: createJekoRedirectPayment, fetchStatus: fetchJekoPaymentStatus },
+  });
   registerJekoPayments(app, {
     diagnosticWebhook: diagnostic?.webhook,
+    onCreditsWebhook: credits.webhook,
     // Références « dggs-… » : abonnements du logiciel de gestion ; « dgas-… » : assistance automobile.
     onExternalWebhook: async (reference: string, status: string, body: any) =>
       (await gestionSubscriptions?.onWebhook(reference, status, body)) || assistance.onExternalWebhook(reference, status, body),
@@ -5696,8 +5838,8 @@ Directives pour ce tour :
   registerHpWebRoutes(app, requireAuth);
 
   app.post("/api/auth/logout", requireAuth, async (req: any, res) => {
-    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [req.sessionToken]);
-    sessions.delete(req.sessionToken);
+    if (dbPool) await dbPool.query("DELETE FROM sessions WHERE token=$1", [tokenKey(req.sessionToken)]);
+    sessions.delete(tokenKey(req.sessionToken));
     res.json({ success: true });
   });
   app.use("/api", (_req, res) => res.status(404).json({ success: false, message: "Route API introuvable." }));
@@ -5784,7 +5926,7 @@ Directives pour ce tour :
       const protoToken = String(request.headers["sec-websocket-protocol"] || "")
         .split(",").map(x => x.trim()).find(x => x.startsWith("auth."))?.slice(5);
       const token = protoToken || searchParams.get("token") || "";
-      const session = sessions.get(token);
+      const session = sessions.get(tokenKey(token));
       if (!sessionIsValid(session)) return reject("401 Unauthorized");
       const plan = getEffectivePlan(session!.phone);
       const dailyCap = LIVE_DAILY_MS[plan] ?? 0;
@@ -5846,7 +5988,7 @@ Directives pour ce tour :
     // Sans listener, une erreur WebSocket (ex : message trop gros avec maxPayload) ferait planter le process.
     clientWs.on("error", (err) => console.warn("[WebSocket] Erreur client:", err.message));
     const heartbeat = setInterval(() => {
-      if (!sessionIsValid(sessions.get((clientWs as any)._token)) || (PLAN_LIMITS[getEffectivePlan(connPhone)] ?? 0) <= 0) { clientWs.close(4001, "Session expirée"); return; }
+      if (!sessionIsValid(sessions.get(tokenKey((clientWs as any)._token))) || (PLAN_LIMITS[getEffectivePlan(connPhone)] ?? 0) <= 0) { clientWs.close(4001, "Session expirée"); return; }
       if (!isAlive) { try { clientWs.terminate(); } catch {} return; }
       isAlive = false;
       try { clientWs.ping(); } catch {}
@@ -5995,9 +6137,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                     // Atelier bruyant : un départ de parole trop sensible faisait couper la voix de l'IA
                     // sur de simples bruits. On garde une fin de parole rapide mais un départ moins nerveux.
                     startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
-                    endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+                    endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW, // laisse le mécano réfléchir sans être coupé
                     prefixPaddingMs: 100,
-                    silenceDurationMs: 500,
+                    silenceDurationMs: 700,
                   },
                 },
               },
@@ -6301,7 +6443,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                   role: "user",
                   parts: [
                     {
-                      text: "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'Je suis DiagAssist, à votre écoute.' puis rappelle brièvement le symptôme majeur ou code défaut de ce véhicule."
+                      text: /RAPPORT DE DÉFAUT CHARGÉ/.test(diagnosticContext)
+                        ? "Un rapport de défaut vient d'être chargé (voir FICHE TECHNIQUE dans tes instructions). Dis : 'Je suis DiagAssist, à votre écoute.' puis résume-le à voix haute en deux phrases : véhicule, code(s) défaut et cause la plus probable. Termine par UNE question ou UNE première vérification à faire. Ne repars jamais de zéro et ne redemande pas ce que le rapport contient déjà."
+                        : "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'Je suis DiagAssist, à votre écoute.' puis demande le véhicule et le symptôme ou le code défaut."
                     }
                   ]
                 }
@@ -6379,6 +6523,17 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             }
           } else {
             clientWs.send(JSON.stringify({ type: "error", message: "Session Gemini Live non active sur le serveur." }));
+          }
+        } else if (message.type === "context") {
+          // Rapport de défaut chargé ou changé pendant l'appel.
+          const ctx = String(message.diagnosticContext || "").slice(0, 4000);
+          if (ctx && geminiSession) {
+            geminiSession.sendClientContent({
+              turns: [{ role: "user", parts: [{ text: "NOUVEAU RAPPORT DE DÉFAUT CHARGÉ PAR LE MÉCANICIEN PENDANT L'APPEL. Il remplace la fiche précédente :\n" + ctx + "\nConfirme en une phrase le véhicule et le code ou la panne principale, puis propose la première vérification." }] }],
+              turnComplete: true,
+            });
+          } else if (ctx && deepSeekFallbackActive) {
+            deepSeekFallbackSystemInstruction += "\n\nNOUVEAU RAPPORT DE DÉFAUT CHARGÉ PENDANT L'APPEL :\n" + ctx;
           }
         } else if (message.type === "triggerVocalAd") {
           if (geminiSession) {

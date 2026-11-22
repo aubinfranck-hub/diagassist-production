@@ -4,6 +4,7 @@ import {
   api, AssistanceError, AssistanceStatus, formatDate, formatXOF, MSG_AI_TITLE, MSG_SUBSCRIPTION, STATUS_SHORT, useOnline, usePolling, vehicleLabel,
 } from "./api";
 import BidForm, { BidRange } from "./BidForm";
+import MechanicBoost from "./MechanicBoost";
 import MechanicEarnings from "./MechanicEarnings";
 import MechanicHistory from "./MechanicHistory";
 import MechanicMission, { normalizeMission, ProMission } from "./MechanicMission";
@@ -30,7 +31,7 @@ interface Offer {
   myBid?: { amount: number; etaMinutes?: number | null; validUntil: number } | null;
 }
 
-type Tab = "mission" | "gains" | "profil" | "historique";
+type Tab = "mission" | "gains" | "boost" | "profil" | "historique";
 const LIVE_STATUSES = ["affectee", "en_route", "sur_place", "en_intervention"];
 const LOCATION_EVERY_MS = 20000;
 
@@ -267,8 +268,8 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
       )}
 
       {/* Onglets */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-950/60 p-1 rounded-2xl border border-white/[0.06]" role="tablist">
-        {([["mission", "Missions"], ["gains", "Mes gains"], ["profil", "Mon profil"], ["historique", "Mes interventions"]] as const).map(([k, l]) => (
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-slate-950/60 p-1 rounded-2xl border border-white/[0.06]" role="tablist">
+        {([["mission", "Missions"], ["gains", "Mes gains"], ["boost", "Mise en avant"], ["profil", "Mon profil"], ["historique", "Mes interventions"]] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
             className={`min-h-[44px] rounded-xl text-sm font-black transition cursor-pointer ${tab === k ? "bg-red-600 text-[#ffffff]" : "text-slate-400"}`}>{l}</button>
         ))}
@@ -279,6 +280,8 @@ export default function MechanicSpace({ onBack, onUpgrade }: { onBack?: () => vo
       {tab === "historique" && <MechanicHistory />}
 
       {tab === "gains" && <MechanicEarnings />}
+
+      {tab === "boost" && <MechanicBoost />}
 
       {tab === "mission" && (
         <>
