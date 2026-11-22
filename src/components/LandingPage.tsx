@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import LocalAd from "./LocalAd";
 import {
   Wrench, Camera, Mic, MessageCircle, ShieldCheck, Smartphone, Clock, ArrowRight, ArrowUp, MapPin, Phone, Search, ListChecks, FlaskConical, Stethoscope, CheckCircle2, Menu, X, FileSearch, Play, Sun, Moon
 } from "lucide-react";
@@ -187,6 +188,8 @@ export default function LandingPage({ onGetStarted, onRequestHelp }: LandingPage
           <ArrowUp className="w-4 h-4" /> Retour en haut
         </a>
       </section>
+
+      <LocalAd slot="accueil" />
 
       <section id="tarifs" className="w-full max-w-6xl mx-auto px-5 py-16 border-t border-white/[0.05]">
         <h2 className="text-xl md:text-2xl font-display font-black text-center mb-2 uppercase tracking-tight">NOS OFFRES</h2>
