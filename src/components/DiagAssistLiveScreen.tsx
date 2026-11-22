@@ -1,3 +1,4 @@
+import { openCredits, creditsChanged, isCreditsExhausted } from "./credits/creditsBus";
 import React, { useState, useRef, useEffect } from "react";
 import {
   Paperclip,
@@ -235,7 +236,9 @@ export default function DiagAssistLiveScreen({
           accountType: localStorage.getItem("account_type") || "mechanic",
         })
       });
+      if (isCreditsExhausted(res)) { openCredits({ exhausted: true }); creditsChanged(); return { success: false, message: "Plus de diagnostics disponibles." }; }
       const data = await res.json();
+      creditsChanged();
       if (data.success) {
         setActiveLoopSessionId(data.sessionId);
         setActiveLoopState(data.state);

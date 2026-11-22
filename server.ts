@@ -19,6 +19,8 @@ import { registerJekoPayments, jekoIsConfigured, createJekoRedirectPayment, fetc
 import { registerAssistance, initAssistance } from "./src/modules/assistance/assistance.routes";
 import { canonicalPhone } from "./src/modules/assistance/core";
 import { registerDiagnostic } from "./src/modules/diagnostic/routes";
+import { registerCredits, isCreditPlan, CREDITS_EXHAUSTED_MESSAGE } from "./src/modules/credits/routes";
+import type { CreditSource } from "./src/modules/credits/core";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
@@ -132,7 +134,7 @@ const userPlans = new Map<string, { plan: string; activatedAt: number; customDur
 // forfait expire automatiquement et repasse à "free_expired". L'admin peut aussi fixer une durée
 // personnalisée (jour/semaine/mois) au moment de la création du compte, qui prime sur ces valeurs.
 const PLAN_DURATIONS_MS: Record<string, number> = {
-  free_trial: 72 * 60 * 60 * 1000,        // 72h
+  // free_trial n'expire plus : les comptes gratuits fonctionnent avec des crédits de diagnostic (voir src/modules/credits).
   payg_active: 24 * 60 * 60 * 1000,       // pass 24h (mécaniciens)
   owner_week: 7 * 24 * 60 * 60 * 1000,    // pass semaine 500F (propriétaires de véhicules)
   lite: 30 * 24 * 60 * 60 * 1000,         // 30 jours
@@ -919,6 +921,22 @@ async function checkAndIncrementUsage(phone: string, plan: string): Promise<{ al
   const allowed = await usageStore.consume(phone, "diagnosis", period, 1, PLAN_LIMITS[plan] ?? 0);
   if (allowed) usageTracking.set(phone, { diagnosisCount: await usageStore.used(phone, "diagnosis", period), periodStart: period });
   return allowed ? { allowed: true } : { allowed: false, message: "Quota atteint pour votre forfait actuel. Veuillez passer à un forfait supérieur." };
+}
+
+// Crédits de diagnostics (comptes gratuits). Renseigné au démarrage, voir registerCredits plus bas.
+let credits: Awaited<ReturnType<typeof registerCredits>> | undefined;
+
+type DiagnosticCharge = { allowed: boolean; source?: CreditSource | null; status?: number; code?: string; message?: string };
+
+// Décompte d'UN diagnostic. Compte gratuit : un diagnostic gratuit puis un diagnostic acheté (jamais bloquant pour
+// l'urgence/SOS, qui n'utilisent pas cette route). Abonné : quota de son forfait, comme avant.
+async function chargeDiagnostic(phone: string, plan: string): Promise<DiagnosticCharge> {
+  if (credits && isCreditPlan(plan)) {
+    const c = await credits.charge(phone, plan);
+    return c.allowed ? { allowed: true, source: c.source } : { allowed: false, status: 402, code: "CREDITS_EXHAUSTED", message: CREDITS_EXHAUSTED_MESSAGE };
+  }
+  const check = await checkAndIncrementUsage(phone, plan);
+  return check.allowed ? { allowed: true, source: null } : { allowed: false, status: 403, message: check.message };
 }
 
 // Support de plusieurs clés Gemini (rotation automatique en cas de quota dépassé sur l'une
@@ -2408,7 +2426,7 @@ async function startServer() {
   const aiBudget = async (req: any, res: any, next: any) => {
     const phone = req.session.phone;
     const plan = getEffectivePlan(phone);
-    if ((PLAN_LIMITS[plan] ?? 0) <= 0) return res.status(403).json({ success: false, message: "Forfait expiré. Veuillez vous réabonner." });
+    if (!isCreditPlan(plan) && (PLAN_LIMITS[plan] ?? 0) <= 0) return res.status(403).json({ success: false, message: "Forfait expiré. Veuillez vous réabonner." });
     if ((aiInFlight.get(phone) || 0) >= 2) return res.status(429).json({ success: false, message: "Deux requêtes sont déjà en cours. Patientez." });
     aiInFlight.set(phone, (aiInFlight.get(phone) || 0) + 1);
     let released = false;
@@ -2416,7 +2434,7 @@ async function startServer() {
     res.once("close", release);
     try {
       const period = Math.floor(Date.now() / 86_400_000) * 86_400_000;
-      const caps: Record<string, number> = { free_trial: 40, owner_week: 150, lite: 300, payg_active: 1500, premium: 2000 };
+      const caps: Record<string, number> = { free_trial: 40, free_expired: 40, owner_week: 150, lite: 300, payg_active: 1500, premium: 2000 };
       if (!await usageStore.consume(phone, "ai_requests", period, 1, caps[plan] ?? 0)) {
         release(); return res.status(429).json({ success: false, message: "Limite quotidienne de requêtes atteinte." });
       }
@@ -2428,12 +2446,14 @@ async function startServer() {
 
   // API Route: Diagnose vehicle issue
   app.post("/api/diagnose", diagnoseLimiter, requireAuth, async (req: any, res) => {
+    let creditSource: CreditSource | null = null;
     try {
       const { phone, plan } = req.session;
-      const check = await checkAndIncrementUsage(phone, plan);
+      const check = await chargeDiagnostic(phone, plan);
       if (!check.allowed) {
-        return res.status(403).json({ success: false, message: check.message });
+        return res.status(check.status).json({ success: false, code: check.code, message: check.message });
       }
+      creditSource = check.source ?? null;
 
       const {
         vehicleBrand,
@@ -2784,6 +2804,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       // FUITE D'INFORMATION CORRIGÉE : le détail technique brut de l'erreur (potentiellement
       // des informations d'infrastructure interne) n'est plus renvoyé au client, seulement loggé.
       console.error("Error during diagnosis:", error);
+      await credits?.refund(req.session.phone, creditSource).catch(() => {}); // panne technique : le diagnostic n'est pas décompté
       res.status(500).json({
         success: false,
         message: "Une erreur est survenue lors de l'analyse avec l'IA. Veuillez réessayer dans un instant.",
@@ -2800,7 +2821,7 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
     try {
       const { brandModelInfo, probableCauses, dtcCodesDetected } = req.body;
       const { plan } = req.session;
-      const premiumEligible = ["free_trial", "premium", "payg_active"].includes(plan);
+      const premiumEligible = ["free_trial", "free_expired", "premium", "payg_active"].includes(plan);
       if (!premiumEligible) {
         return res.status(403).json({ success: false, message: "Cette fonctionnalité nécessite un forfait actif." });
       }
@@ -2879,7 +2900,9 @@ RÈGLES DE FORMATAGE VOCAL ET DE TON (CRUCIAL) :
       // "free_expired" (0 diagnostic autorisé) pouvait quand même discuter indéfiniment
       // avec l'IA gratuitement via le chat de suivi, en contournant totalement le quota.
       const { plan, phone: chatPhone } = req.session;
-      if ((PLAN_LIMITS[plan] ?? 0) <= 0) {
+      if (credits && isCreditPlan(plan)) {
+        if (!await credits.canFollowUp(chatPhone, plan)) return res.status(402).json({ success: false, code: "CREDITS_EXHAUSTED", message: CREDITS_EXHAUSTED_MESSAGE });
+      } else if ((PLAN_LIMITS[plan] ?? 0) <= 0) {
         return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas d'utiliser le chat de suivi. Veuillez souscrire à une formule." });
       }
 
@@ -3082,7 +3105,9 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
       if (typeof text !== "string" || !text.trim() || text.length > 5000) {
         return res.status(400).json({ success: false, message: "Le texte est requis." });
       }
-      if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
+      if (credits && isCreditPlan(req.session.plan)) {
+        if (!await credits.canFollowUp(req.session.phone, req.session.plan)) return res.status(402).json({ success: false, code: "CREDITS_EXHAUSTED", message: CREDITS_EXHAUSTED_MESSAGE });
+      } else if ((PLAN_LIMITS[req.session.plan] ?? 0) <= 0) {
         return res.status(403).json({ success: false, message: "Votre forfait actuel ne permet pas la synthèse vocale. Veuillez souscrire à une formule." });
       }
 
@@ -5414,12 +5439,14 @@ diagnostic, ni formation technique. Tu DOIS adapter chaque "next_question" à ce
 
   // Start a new Diagnostic Loop (Tour 0)
   app.post("/api/diagnostic/loop/start", requireAuth, async (req: any, res) => {
+    let creditSource: CreditSource | null = null;
     try {
       const { phone, plan } = req.session;
-      const check = await checkAndIncrementUsage(phone, plan);
+      const check = await chargeDiagnostic(phone, plan);
       if (!check.allowed) {
-        return res.status(403).json({ success: false, message: check.message });
+        return res.status(check.status).json({ success: false, code: check.code, message: check.message });
       }
+      creditSource = check.source ?? null;
 
       const {
         vehicule,
@@ -5521,6 +5548,7 @@ Instructions Tour 0 :
       });
     } catch (error: any) {
       console.error("Erreur lors de l'initialisation de la boucle de diagnostic:", error);
+      await credits?.refund(req.session.phone, creditSource).catch(() => {});
       res.status(500).json({ success: false, message: "Erreur serveur lors du diagnostic. Veuillez réessayer." });
     }
   });
@@ -5747,8 +5775,17 @@ Directives pour ce tour :
   await initAssistance(assistance).catch((err: any) => console.error("[ASSISTANCE] Initialisation échouée:", err.message));
 
   const diagnostic = await registerDiagnostic(app, { pool: dbPool, requireAuth, requireAdminAuth, isAdmin: phone => userAccounts.get(phone)?.isAdmin === true });
+  // Packs de diagnostics IA (gratuits puis payants via Jèko) : le décompte se fait uniquement ici, côté serveur.
+  credits = await registerCredits(app, {
+    dbQuery: dbPool ? (sql: string, params?: any[]) => dbPool!.query(sql, params) : undefined,
+    requireAuth, requireAdminAuth,
+    accountExists: (phone: string) => userAccounts.has(phone),
+    getOrigin: (req) => process.env.APP_URL || `https://${req.headers.host}`,
+    jeko: { isConfigured: jekoIsConfigured, create: createJekoRedirectPayment, fetchStatus: fetchJekoPaymentStatus },
+  });
   registerJekoPayments(app, {
     diagnosticWebhook: diagnostic?.webhook,
+    onCreditsWebhook: credits.webhook,
     onExternalWebhook: assistance.onExternalWebhook,
 
     requireAuth,
