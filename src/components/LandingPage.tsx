@@ -72,7 +72,7 @@ export default function LandingPage({ onGetStarted, onRequestHelp }: LandingPage
           <div className="max-w-7xl mx-auto px-5 sm:px-7 lg:px-10 py-6 sm:py-8 flex flex-col md:flex-row md:items-center gap-5">
             <div className="flex-1">
               <p className="text-xs font-black uppercase tracking-widest text-red-500">DiagAssist Assistance · Automobilistes</p>
-              <h2 id="assistance-entry-title" className="mt-2 text-2xl sm:text-3xl font-black">Une panne ? Trouvez un mécanicien.</h2>
+              <h2 id="assistance-entry-title" className={`mt-2 text-2xl sm:text-3xl font-black ${lightMode ? "text-slate-900" : "text-white"}`}>Une panne ? Trouvez un mécanicien.</h2>
               <p className={`mt-2 text-sm sm:text-base ${lightMode ? "text-slate-600" : "text-slate-300"}`}>Véhicule immobilisé : demandez un dépannage sur place. S’il peut rouler : trouvez un mécanicien en atelier.</p>
             </div>
             <button onClick={onRequestHelp} className="min-h-[52px] shrink-0 inline-flex items-center justify-center gap-3 rounded-2xl bg-red-600 hover:bg-red-700 !text-white px-6 py-4 font-black shadow-lg shadow-red-600/20">
