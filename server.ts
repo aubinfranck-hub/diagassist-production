@@ -3978,7 +3978,19 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   // ============================================================
   // Back-office interne (stock, ventes, comptes clients, comptabilité) : source de vérité de la boutique
   if (dbPool) initGestionSchema(dbPool).catch((err) => console.error("[gestion] schéma:", err));
-  registerGestionRoutes(app, dbPool, requireAdminAuth);
+  const gestionSubscriptions = registerGestionRoutes(app, dbPool, {
+    requireAdminAuth,
+    requireAuth,
+    // Vrai si la requête porte le code admin (ou une session admin), sans répondre à la place de requireAdminAuth.
+    isAdmin: (req: any) => new Promise<boolean>((resolve) => {
+      const stub: any = { status: () => stub, json: () => { resolve(false); return stub; } };
+      requireAdminAuth(req, stub, () => resolve(true));
+    }),
+    userName: (phone: string) => userAccounts.get(phone)?.name,
+    sendWhatsApp: (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) ? sendShopWhatsApp : undefined,
+    jeko: { isConfigured: jekoIsConfigured, create: createJekoRedirectPayment, fetchStatus: fetchJekoPaymentStatus },
+    getOrigin: (req: any) => process.env.APP_URL || `https://${req.headers.host}`,
+  });
 
   // BOUTIQUE / CRM — section indépendante du diagnostic technique
   // ============================================================
@@ -5652,7 +5664,9 @@ Directives pour ce tour :
   const diagnostic = await registerDiagnostic(app, { pool: dbPool, requireAuth, requireAdminAuth, isAdmin: phone => userAccounts.get(phone)?.isAdmin === true });
   registerJekoPayments(app, {
     diagnosticWebhook: diagnostic?.webhook,
-    onExternalWebhook: assistance.onExternalWebhook,
+    // Références « dggs-… » : abonnements du logiciel de gestion ; « dgas-… » : assistance automobile.
+    onExternalWebhook: async (reference: string, status: string, body: any) =>
+      (await gestionSubscriptions?.onWebhook(reference, status, body)) || assistance.onExternalWebhook(reference, status, body),
 
     requireAuth,
     requireAdminAuth,
