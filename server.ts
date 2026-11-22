@@ -6028,6 +6028,13 @@ RAPPEL FINAL (MODE VOCAL, NON NÉGOCIABLE) : deux phrases maximum. Jamais de "Bo
     let isClosed = false;
     const liveAgentSessionId = crypto.randomBytes(12).toString("hex");
     let liveAgentState: LiveAgentState | null = null;
+    // Gemini 3.1 Flash Live : le texte en cours d'appel doit passer par sendRealtimeInput
+    // (sendClientContent n'est fiable que pour l'historique initial : sinon le message est ignoré
+    // et l'IA reste silencieuse / ne tient pas compte des consignes ajoutées).
+    const sendLiveText = (session: any, text: string) => {
+      try { session.sendRealtimeInput({ text }); }
+      catch (err: any) { console.error("[WebSocket] Envoi texte Live échoué:", err?.message || err); }
+    };
 
     clientWs.on("message", async (data) => {
       try {
@@ -6436,12 +6443,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
                   }
                   if (!isClosed && geminiSession) {
                     const hpContext = JSON.stringify(results).slice(0, 8000);
-                    geminiSession.sendClientContent({
-                      turns: [{
-                        role: "user",
-                        parts: [{ text: "IDENTIFICATION HP-WEB AUTOMATIQUE POUR LE VIN " + contextVin + ": " + hpContext + "\nUtilise ces données comme contexte véhicule confirmé par HP-Web." }]
-                      }]
-                    });
+                    sendLiveText(geminiSession, "IDENTIFICATION HP-WEB AUTOMATIQUE POUR LE VIN " + contextVin + ": " + hpContext + "\nUtilise ces données comme contexte véhicule confirmé par HP-Web.");
                   }
                 })
                 .catch((hpErr: any) => {
@@ -6450,20 +6452,9 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
             }
 
             // Send an initial prompt to make the agent speak immediately! (pas après une reprise de session)
-            if (!incomingResume) geminiSession.sendClientContent({
-              turns: [
-                {
-                  role: "user",
-                  parts: [
-                    {
-                      text: /RAPPORT DE DÉFAUT CHARGÉ/.test(diagnosticContext)
+            if (!incomingResume) sendLiveText(geminiSession, /RAPPORT DE DÉFAUT CHARGÉ/.test(diagnosticContext)
                         ? "Un rapport de défaut vient d'être chargé (voir FICHE TECHNIQUE dans tes instructions). Dis : 'Je suis DiagAssist, à votre écoute.' puis résume-le à voix haute en deux phrases : véhicule, code(s) défaut et cause la plus probable. Termine par UNE question ou UNE première vérification à faire. Ne repars jamais de zéro et ne redemande pas ce que le rapport contient déjà."
-                        : "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'Je suis DiagAssist, à votre écoute.' puis demande le véhicule et le symptôme ou le code défaut."
-                    }
-                  ]
-                }
-              ]
-            });
+                        : "DiagAssist, signale ta présence immédiatement pour confirmer la connexion en direct en disant : 'Je suis DiagAssist, à votre écoute.' puis demande le véhicule et le symptôme ou le code défaut.");
 
           } catch (err: any) {
             console.error("[WebSocket] Failed to connect to Gemini Live:", err);
@@ -6541,10 +6532,7 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
           // Rapport de défaut chargé ou changé pendant l'appel.
           const ctx = String(message.diagnosticContext || "").slice(0, 4000);
           if (ctx && geminiSession) {
-            geminiSession.sendClientContent({
-              turns: [{ role: "user", parts: [{ text: "NOUVEAU RAPPORT DE DÉFAUT CHARGÉ PAR LE MÉCANICIEN PENDANT L'APPEL. Il remplace la fiche précédente :\n" + ctx + "\nConfirme en une phrase le véhicule et le code ou la panne principale, puis propose la première vérification." }] }],
-              turnComplete: true,
-            });
+            sendLiveText(geminiSession, "NOUVEAU RAPPORT DE DÉFAUT CHARGÉ PAR LE MÉCANICIEN PENDANT L'APPEL. Il remplace la fiche précédente :\n" + ctx + "\nConfirme en une phrase le véhicule et le code ou la panne principale, puis propose la première vérification.");
           } else if (ctx && deepSeekFallbackActive) {
             deepSeekFallbackSystemInstruction += "\n\nNOUVEAU RAPPORT DE DÉFAUT CHARGÉ PENDANT L'APPEL :\n" + ctx;
           }
@@ -6552,29 +6540,11 @@ FORMATAGE VOCAL STRICT : Ne génère AUCUN caractère markdown (pas d'astérisqu
           if (geminiSession) {
             console.log("[WebSocket] Delivering 100% vocal ad instruction to Gemini Live...");
             const adPrompt = (message.adVoicePrompt ? String(message.adVoicePrompt).slice(0, 1500) : "") || `[INSTRUCTION VOCALE PUBLICITAIRE] Adopte un ton commercial, dynamique et professionnel (voix publicitaire) pour prononcer l'annonce suivante : "${String(message.offerScript || '').slice(0, 500) || 'Si vous souhaitez vous équiper pour vos prochains diagnostics, découvrez nos scanners automobiles sans tablette à partir de 80 000 FCFA.'}" Puis reprends immédiatement ta voix de diagnostic calme et technique.`;
-            geminiSession.sendClientContent({
-              turns: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: adPrompt }
-                  ]
-                }
-              ]
-            });
+            sendLiveText(geminiSession, adPrompt);
           }
         } else if (message.type === "text") {
           if (geminiSession) {
-            geminiSession.sendClientContent({
-              turns: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: String(message.text || "").slice(0, 4000) }
-                  ]
-                }
-              ]
-            });
+            sendLiveText(geminiSession, String(message.text || "").slice(0, 4000));
           } else if (deepSeekFallbackActive) {
             try {
               const userText = String(message.text || "").slice(0, 4000);
