@@ -15,6 +15,7 @@ import { XMLParser } from "fast-xml-parser";
 import { catchAsyncRoutes, normalizePhone, sessionIsValid, SESSION_MAX_AGE_MS } from "./src/modules/security/runtime";
 import { UsageStore } from "./src/modules/security/usageStore";
 import { registerScreening } from "./src/modules/screening/screening.routes";
+import { registerLocalAds } from "./src/modules/ads/ads.routes";
 import { registerJekoPayments, jekoIsConfigured, createJekoRedirectPayment, fetchJekoPaymentStatus } from "./src/modules/payments/jeko.routes";
 import { registerAssistance, initAssistance } from "./src/modules/assistance/assistance.routes";
 import { registerDiagnostic } from "./src/modules/diagnostic/routes";
@@ -5739,10 +5740,17 @@ Directives pour ce tour :
   assistanceSync = assistance.syncDirectory;
   await initAssistance(assistance).catch((err: any) => console.error("[ASSISTANCE] Initialisation échouée:", err.message));
 
+  // Publicité locale payante (blog + accueil public) : paiement Jèko, références « dgad-… ».
+  const localAds = registerLocalAds({
+    app, pool: dbPool, requireAdminAuth,
+    jeko: { isConfigured: jekoIsConfigured, create: createJekoRedirectPayment, fetchStatus: fetchJekoPaymentStatus },
+    getOrigin: (req) => process.env.APP_URL || `https://${req.headers.host}`,
+  });
+
   const diagnostic = await registerDiagnostic(app, { pool: dbPool, requireAuth, requireAdminAuth, isAdmin: phone => userAccounts.get(phone)?.isAdmin === true });
   registerJekoPayments(app, {
     diagnosticWebhook: diagnostic?.webhook,
-    onExternalWebhook: assistance.onExternalWebhook,
+    onExternalWebhook: (ref, status, body) => (ref.startsWith("dgad-") ? localAds.onExternalWebhook(ref, status, body) : assistance.onExternalWebhook(ref, status, body)),
 
     requireAuth,
     requireAdminAuth,
