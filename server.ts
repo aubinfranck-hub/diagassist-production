@@ -2326,6 +2326,9 @@ async function startServer() {
         "form-action": ["'self'"],
       },
     } : false,
+    // Helmet envoie par défaut « Referrer-Policy: no-referrer » : les tuiles OpenStreetMap ne recevaient alors
+    // plus aucun Referer et répondaient « 403 Access blocked ». On n'envoie que le nom du site (pas le chemin).
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
     crossOriginEmbedderPolicy: false,
   }));
 
