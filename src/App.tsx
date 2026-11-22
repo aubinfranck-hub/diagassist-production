@@ -24,6 +24,9 @@ import MechanicSpace from "./components/assistance/MechanicSpace";
 import { ModeSelect, readUserMode, saveUserMode, UserMode } from "./components/assistance/UserMode";
 
 import { Diagnosis, ApiUsage, ChatMessage, SubscriptionPlan } from "./types";
+import CreditsHost from "./components/credits/CreditsHost";
+import CreditsCounter from "./components/credits/CreditsCounter";
+import { openCredits, creditsChanged, isCreditsExhausted } from "./components/credits/creditsBus";
 
 const demoDiagnosis: Diagnosis = {
   brandModelInfo: "Ford C-Max 2018 (2.0 TDCi)",
@@ -328,13 +331,8 @@ export default function App() {
     }
   }, [currentPlan, loggedInUser]);
 
-  // Dès que le serveur constate la fin de l'essai, on ouvre automatiquement la page des abonnements.
-  // Le paiement reste volontaire : l'utilisateur choisit ensuite son forfait et son moyen de paiement.
-  useEffect(() => {
-    if (loggedInUser && currentPlan === "free_expired" && !isDriver) {
-      setActiveTab("prices");
-    }
-  }, [loggedInUser, currentPlan, isDriver]);
+  // Les comptes gratuits fonctionnent désormais avec des diagnostics gratuits puis des packs (voir CreditsHost) :
+  // plus de redirection forcée vers les abonnements.
 
   // Un automobiliste reste toujours sur l'assistance (aucun écran professionnel).
   useEffect(() => {
@@ -544,12 +542,6 @@ export default function App() {
       return;
     }
 
-    if (currentPlan === "free_expired") {
-      setActiveTab("prices");
-      alert("Votre essai gratuit de 72h est terminé. La page des abonnements s'ouvre automatiquement : choisissez votre formule et payez en ligne.");
-      return;
-    }
-
     setIsLoading(true);
     setLastDiagInput(formData);
     setDiagnosisResult(null);
@@ -572,6 +564,12 @@ export default function App() {
         setLoggedInUser(null);
         localStorage.removeItem("auth_user_phone");
         localStorage.removeItem("auth_session_token");
+        return;
+      }
+
+      if (isCreditsExhausted(response)) {
+        openCredits({ exhausted: true });
+        creditsChanged();
         return;
       }
 
@@ -629,6 +627,7 @@ export default function App() {
       console.error("Erreur d'appel API de diagnostic:", err);
       alert("Une erreur technique est survenue. Assurez-vous que le serveur tourne correctement.");
     } finally {
+      creditsChanged();
       setIsLoading(false);
     }
   };
@@ -687,6 +686,12 @@ export default function App() {
         setLoggedInUser(null);
         localStorage.removeItem("auth_user_phone");
         localStorage.removeItem("auth_session_token");
+        return;
+      }
+
+      if (isCreditsExhausted(response)) {
+        openCredits({ exhausted: true });
+        creditsChanged();
         return;
       }
 
@@ -750,6 +755,7 @@ export default function App() {
 
   return (
     <>
+      {loggedInUser && <CreditsHost />}
       {!isOnline && (() => {
         // Sur l'assistance, le message parle de la demande (qui part au retour du réseau) et non des diagnostics IA.
         const onAssistance = isDriver || activeTab === "assistance" || activeTab === "depannage";
@@ -1024,16 +1030,15 @@ export default function App() {
               </div>
 
               {/* Countdown Plan Indicator */}
-              {loggedInUser && !isDriver && (
+              {loggedInUser && !isDriver && (currentPlan === "free_trial" || currentPlan === "free_expired") && <CreditsCounter />}
+              {loggedInUser && !isDriver && currentPlan !== "free_trial" && currentPlan !== "free_expired" && (
                 <div className="bg-slate-950/80 border border-white/[0.05] rounded-xl p-3 text-xs space-y-1">
                   <span className="text-slate-500 text-[9px] block uppercase tracking-wider font-extrabold font-mono">
-                    {currentPlan === "free_trial" && "Essai Gratuit :"}
                     {currentPlan === "payg_active" && "Pass 24h Actif :"}
                     {currentPlan === "lite" && "Formule LITE :"}
                     {currentPlan === "premium" && "Formule PREMIUM :"}
-                    {currentPlan === "free_expired" && "Abonnement :"}
                   </span>
-                  <span className={`${currentPlan === "free_expired" ? "text-rose-500 font-bold animate-pulse" : "text-amber-400 font-bold"} block text-xs`}>
+                  <span className="text-amber-400 font-bold block text-xs">
                     ⏱️ {remainingTimeText || "Calcul..."}
                   </span>
                 </div>
@@ -1153,16 +1158,17 @@ export default function App() {
                       </div>
                     </div>
 
-                    {!isDriver && (
+                    {!isDriver && (currentPlan === "free_trial" || currentPlan === "free_expired") && (
+                      <div className="border-t border-white/[0.05] pt-3"><CreditsCounter compact /></div>
+                    )}
+                    {!isDriver && currentPlan !== "free_trial" && currentPlan !== "free_expired" && (
                     <div className="space-y-1 border-t border-white/[0.05] pt-3">
                       <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest block font-mono">
-                        {currentPlan === "free_trial" && "Essai Gratuit :"}
                         {currentPlan === "payg_active" && "Pass 24h Actif :"}
                         {currentPlan === "lite" && "Formule LITE :"}
                         {currentPlan === "premium" && "Formule PREMIUM :"}
-                        {currentPlan === "free_expired" && "Abonnement :"}
                       </span>
-                      <strong className={`${currentPlan === "free_expired" ? "text-rose-500 font-bold animate-pulse" : "text-amber-400 font-bold"} text-xs block font-mono`}>
+                      <strong className="text-amber-400 font-bold text-xs block font-mono">
                         ⏱️ {remainingTimeText || "Calcul..."}
                       </strong>
                     </div>
@@ -1348,6 +1354,7 @@ export default function App() {
                   Je suis en panne
                 </button>
               </div>
+              {(currentPlan === "free_trial" || currentPlan === "free_expired") && <div className={isDriver ? "" : "lg:hidden"}><CreditsCounter /></div>}
               <DiagnosticForm onDiagnose={handleDiagnose} isLoading={isLoading} />
               
               {/* Optional Reset panel if results exist */}

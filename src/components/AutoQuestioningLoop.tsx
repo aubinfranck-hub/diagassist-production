@@ -1,3 +1,4 @@
+import { openCredits, creditsChanged, isCreditsExhausted } from "./credits/creditsBus";
 import React, { useState, useEffect, useRef } from "react";
 import {
   Wrench,
@@ -220,7 +221,9 @@ export default function AutoQuestioningLoop({
         })
       });
 
+      if (isCreditsExhausted(res)) { openCredits({ exhausted: true }); creditsChanged(); setIsLoading(false); return; }
       const data = await res.json();
+      creditsChanged();
       if (!data.success) {
         triggerToast(data.message || "Échec d'initialisation du diagnostic.");
         setIsLoading(false);
