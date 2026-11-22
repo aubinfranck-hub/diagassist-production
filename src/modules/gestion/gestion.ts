@@ -103,6 +103,17 @@ export async function initGestionSchema(pool: any) {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`,
     `CREATE INDEX IF NOT EXISTS idx_gestion_events_client ON gestion_events (client_id)`,
+    `CREATE TABLE IF NOT EXISTS gestion_returns (
+      id SERIAL PRIMARY KEY,
+      sale_id INTEGER NOT NULL REFERENCES gestion_sales(id),
+      unit_id INTEGER NOT NULL REFERENCES gestion_units(id),
+      client_id INTEGER REFERENCES gestion_clients(id),
+      refund_fcfa INTEGER NOT NULL DEFAULT 0,
+      cost_back_fcfa INTEGER NOT NULL DEFAULT 0,
+      restocked BOOLEAN NOT NULL DEFAULT true,
+      reason TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
   ];
   for (const sql of statements) await pool.query(sql);
   await pool.query(`DO $$ BEGIN
@@ -170,9 +181,25 @@ async function syncShop(db: any, productId: number) {
      FROM gestion_products p WHERE p.id = $1`, [productId]);
   const p = rows[0];
   if (!p || !p.shop_product_id) return;
+  const reserved = await reservedFor(db, p.shop_product_id);
   await db.query(
     "UPDATE shop_products SET name = $2, brand = $3, model = $4, price_fcfa = $5, availability = $6, is_active = $7 WHERE id = $1",
-    [p.shop_product_id, p.name, p.brand, p.model, p.sale_price_fcfa, p.in_stock > 0 ? "disponible" : "rupture", p.is_active]);
+    [p.shop_product_id, p.name, p.brand, p.model, p.sale_price_fcfa, p.in_stock - reserved > 0 ? "disponible" : "rupture", p.is_active]);
+}
+
+// Quantité réservée par les commandes boutique pas encore transformées en vente (hors commandes annulées).
+async function reservedFor(db: any, shopProductId: number): Promise<number> {
+  const { rows: t } = await db.query("SELECT to_regclass('public.shop_orders') AS t");
+  if (!t[0].t) return 0;
+  const { rows } = await db.query(
+    "SELECT COALESCE(SUM(quantity),0)::int AS q FROM shop_orders WHERE product_id = $1 AND gestion_sale_id IS NULL AND status <> 'annulee'", [shopProductId]);
+  return rows[0].q;
+}
+
+// Resynchronise la disponibilité de tous les produits liés à la boutique (appelé à chaque commande ou changement de statut).
+export async function syncAllShop(db: any) {
+  const { rows } = await db.query("SELECT id FROM gestion_products WHERE shop_product_id IS NOT NULL");
+  for (const r of rows) await syncShop(db, r.id);
 }
 
 // Enregistre une vente dans une transaction déjà ouverte : prend les unités, les marque vendues,
@@ -533,7 +560,8 @@ export function registerGestionRoutes(app: any, pool: any, requireAdminAuth: any
     const { rows } = await pool.query(
       `SELECT o.id, o.order_ref, o.customer_phone, o.product_id, o.product_name_snapshot, o.unit_price_snapshot, o.quantity, o.status, o.created_at,
               c.name AS customer_name, gp.id AS gestion_product_id,
-              (SELECT COUNT(*)::int FROM gestion_units u WHERE u.product_id = gp.id AND u.status = 'en_stock') AS in_stock
+              (SELECT COUNT(*)::int FROM gestion_units u WHERE u.product_id = gp.id AND u.status = 'en_stock') AS in_stock,
+              (SELECT COALESCE(SUM(o2.quantity),0)::int FROM shop_orders o2 WHERE o2.product_id = o.product_id AND o2.gestion_sale_id IS NULL AND o2.status <> 'annulee') AS reserved
        FROM shop_orders o
        LEFT JOIN shop_customers c ON c.phone = o.customer_phone
        LEFT JOIN gestion_products gp ON gp.shop_product_id = o.product_id
@@ -593,28 +621,119 @@ export function registerGestionRoutes(app: any, pool: any, requireAdminAuth: any
     res.json({ success: true, id: rows[0].id });
   }));
 
+  app.patch(`${base}/expenses/:id`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const b = req.body || {};
+    if (!b.label || !Number.isFinite(Number(b.amount_fcfa)) || Number(b.amount_fcfa) < 0) throw new Error("Libellé et montant requis.");
+    const r = await pool.query(
+      "UPDATE gestion_expenses SET incurred_at = COALESCE($2::timestamp, incurred_at), category = $3, label = $4, amount_fcfa = $5, notes = $6 WHERE id = $1",
+      [toInt(req.params.id), b.incurred_at || null, b.category || "autre", b.label, toInt(b.amount_fcfa), b.notes || null]);
+    if (!r.rowCount) return res.status(404).json({ success: false, message: "Dépense introuvable." });
+    res.json({ success: true });
+  }));
+
   app.delete(`${base}/expenses/:id`, requireAdminAuth, guard(async (req: any, res: any) => {
     await pool.query("DELETE FROM gestion_expenses WHERE id = $1", [toInt(req.params.id)]);
     res.json({ success: true });
+  }));
+
+  // --- Retours : le client rend un article vendu (remboursement total ou partiel, remise en stock ou non) ---
+  app.post(`${base}/units/:id/return`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const b = req.body || {};
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      const { rows: l } = await tx.query(
+        `SELECT l.sale_id, l.unit_price_fcfa, l.cost_fcfa, u.status, u.client_id, u.product_id, p.name
+         FROM gestion_units u JOIN gestion_sale_lines l ON l.unit_id = u.id JOIN gestion_products p ON p.id = u.product_id
+         WHERE u.id = $1 ORDER BY l.id DESC LIMIT 1 FOR UPDATE OF u`, [toInt(req.params.id)]);
+      if (l.length === 0) throw new Error("Unité introuvable ou jamais vendue.");
+      const line = l[0];
+      if (line.status !== "vendu") throw new Error("Cet article n'est pas actuellement chez un client.");
+      const refund = b.refund_fcfa === undefined || b.refund_fcfa === "" ? line.unit_price_fcfa : toInt(b.refund_fcfa);
+      if (refund < 0 || refund > line.unit_price_fcfa) throw new Error(`Remboursement invalide (maximum ${line.unit_price_fcfa} FCFA).`);
+      const restock = b.restock !== false;
+      await tx.query(
+        "INSERT INTO gestion_returns (sale_id, unit_id, client_id, refund_fcfa, cost_back_fcfa, restocked, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        [line.sale_id, toInt(req.params.id), line.client_id, refund, restock ? line.cost_fcfa : 0, restock, b.reason || null]);
+      // Remis en stock : l'article redevient vendable, sans client ni accès. Sinon : marqué « retourné » (SAV, pas revendable).
+      await tx.query(
+        restock
+          ? "UPDATE gestion_units SET status = 'en_stock', client_id = NULL, sale_id = NULL, sold_at = NULL, expires_at = NULL, login = NULL, secret_enc = NULL WHERE id = $1"
+          : "UPDATE gestion_units SET status = 'retourne' WHERE id = $1", [toInt(req.params.id)]);
+      if (line.client_id) {
+        await tx.query("INSERT INTO gestion_events (client_id, kind, message) VALUES ($1,'retour',$2)",
+          [line.client_id, `Retour de « ${line.name} » : remboursé ${refund} FCFA${restock ? ", remis en stock" : ", non remis en stock"}${b.reason ? ` (${b.reason})` : ""}`]);
+      }
+      await tx.query("COMMIT");
+      await syncShop(pool, line.product_id);
+      res.json({ success: true, refund_fcfa: refund });
+    } catch (err) {
+      await tx.query("ROLLBACK");
+      throw err;
+    } finally {
+      tx.release();
+    }
+  }));
+
+  // --- Export CSV (ouvrable dans Excel : séparateur « ; », accents conservés) ---
+  const csvCell = (v: any) => {
+    let t = v === null || v === undefined ? "" : v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
+    // Évite l'exécution de formules dans Excel (sauf numéros de téléphone et montants négatifs).
+    if (/^[=@]/.test(t) || (/^[+-]/.test(t) && !/^[+-]?\d[\d\s.,]*$/.test(t))) t = "'" + t;
+    return /[";\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  app.get(`${base}/export/:what`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const queries: Record<string, { sql: string; head: string[] }> = {
+      ventes: {
+        head: ["Référence", "Date", "Client", "Téléphone", "Produit", "N° de série", "Prix", "Coût d'achat", "Payé (total vente)", "Mode de paiement", "Source"],
+        sql: `SELECT s.ref, s.sold_at, c.name, c.phone, p.name AS product, u.serial_number, l.unit_price_fcfa, l.cost_fcfa, s.paid_fcfa, s.payment_method, s.source
+              FROM gestion_sales s JOIN gestion_clients c ON c.id = s.client_id JOIN gestion_sale_lines l ON l.sale_id = s.id
+              JOIN gestion_products p ON p.id = l.product_id JOIN gestion_units u ON u.id = l.unit_id ORDER BY s.sold_at DESC, l.id`,
+      },
+      stock: {
+        head: ["Produit", "Type", "N° de série", "Statut", "Coût d'achat", "Client", "Vendu le", "Échéance"],
+        sql: `SELECT p.name, p.kind, u.serial_number, u.status, u.purchase_cost_fcfa, c.name AS client, u.sold_at, u.expires_at
+              FROM gestion_units u JOIN gestion_products p ON p.id = u.product_id LEFT JOIN gestion_clients c ON c.id = u.client_id ORDER BY p.name, u.id`,
+      },
+      depenses: {
+        head: ["Date", "Catégorie", "Libellé", "Montant", "Notes"],
+        sql: "SELECT incurred_at, category, label, amount_fcfa, notes FROM gestion_expenses ORDER BY incurred_at DESC",
+      },
+      clients: {
+        head: ["Nom", "Téléphone", "Ville", "Email", "Nombre de ventes", "Total dépensé"],
+        sql: `SELECT c.name, c.phone, c.city, c.email, COUNT(DISTINCT s.id) AS n, COALESCE(SUM(s.total_fcfa),0) AS total
+              FROM gestion_clients c LEFT JOIN gestion_sales s ON s.client_id = c.id GROUP BY c.id ORDER BY c.name`,
+      },
+    };
+    const q = queries[String(req.params.what)];
+    if (!q) return res.status(404).json({ success: false, message: "Export inconnu." });
+    const { rows } = await pool.query(q.sql);
+    const lines = [q.head.join(";"), ...rows.map((r: any) => Object.values(r).map(csvCell).join(";"))];
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${req.params.what}.csv"`);
+    res.send("\uFEFF" + lines.join("\r\n"));
   }));
 
   // --- Point comptable mensuel ---
   app.get(`${base}/accounting`, requireAdminAuth, guard(async (req: any, res: any) => {
     const month = /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : new Date().toISOString().slice(0, 7);
     const start = `${month}-01`;
-    const [sales, cogs, expenses, purchases, stock] = await Promise.all([
+    const [sales, cogs, expenses, purchases, stock, refunds] = await Promise.all([
       pool.query("SELECT COALESCE(SUM(total_fcfa),0)::int AS revenue, COALESCE(SUM(paid_fcfa),0)::int AS paid, COUNT(*)::int AS count FROM gestion_sales WHERE date_trunc('month', sold_at) = $1::date", [start]),
       pool.query("SELECT COALESCE(SUM(l.cost_fcfa),0)::int AS cogs FROM gestion_sale_lines l JOIN gestion_sales s ON s.id = l.sale_id WHERE date_trunc('month', s.sold_at) = $1::date", [start]),
       pool.query("SELECT category, COALESCE(SUM(amount_fcfa),0)::int AS total FROM gestion_expenses WHERE date_trunc('month', incurred_at) = $1::date GROUP BY category ORDER BY total DESC", [start]),
       pool.query("SELECT COALESCE(SUM(total_fcfa),0)::int AS total FROM gestion_purchases WHERE date_trunc('month', purchased_at) = $1::date", [start]),
       pool.query("SELECT COALESCE(SUM(purchase_cost_fcfa),0)::int AS value, COUNT(*)::int AS units FROM gestion_units WHERE status = 'en_stock'"),
+      pool.query("SELECT COALESCE(SUM(refund_fcfa),0)::int AS refunds, COALESCE(SUM(cost_back_fcfa),0)::int AS cost_back FROM gestion_returns WHERE date_trunc('month', created_at) = $1::date", [start]),
     ]);
-    const revenue = sales.rows[0].revenue, costOfGoods = cogs.rows[0].cogs;
+    // Les retours du mois diminuent le chiffre d'affaires ; le coût des articles remis en stock est récupéré.
+    const revenue = sales.rows[0].revenue - refunds.rows[0].refunds, costOfGoods = cogs.rows[0].cogs - refunds.rows[0].cost_back;
     const expenseTotal = expenses.rows.reduce((a: number, r: any) => a + r.total, 0);
     res.json({
       success: true, month,
       revenue_fcfa: revenue,
-      encaisse_fcfa: sales.rows[0].paid,
+      encaisse_fcfa: sales.rows[0].paid - refunds.rows[0].refunds,
+      refunds_fcfa: refunds.rows[0].refunds,
       sales_count: sales.rows[0].count,
       cost_of_goods_fcfa: costOfGoods,
       gross_margin_fcfa: revenue - costOfGoods,

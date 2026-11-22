@@ -22,7 +22,7 @@ import { registerDiagnostic } from "./src/modules/diagnostic/routes";
 import { registerCredits, isCreditPlan, CREDITS_EXHAUSTED_MESSAGE } from "./src/modules/credits/routes";
 import type { CreditSource } from "./src/modules/credits/core";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
-import { initGestionSchema, registerGestionRoutes } from "./src/modules/gestion/gestion";
+import { initGestionSchema, registerGestionRoutes, syncAllShop as syncGestionShop } from "./src/modules/gestion/gestion";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
 import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
@@ -4436,6 +4436,8 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     } finally {
       client.release();
     }
+    // Réservation du stock dès la commande : met à jour la disponibilité affichée en boutique.
+    if (dbPool) syncGestionShop(dbPool).catch(() => {});
     const itemsTotal = o.lines.reduce((a, l) => a + Number(l.product.price_fcfa || 0) * l.quantity, 0);
     return { ids, depositTotal, leadDays, itemsTotal, total: itemsTotal + (o.shippingFee || 0) };
   }
@@ -4908,6 +4910,7 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
     if (notes !== undefined) { sets.push(`notes = $${i++}`); values.push(notes); }
     values.push(req.params.id);
     await dbPool.query(`UPDATE shop_orders SET ${sets.join(", ")} WHERE id = $${i}`, values);
+    syncGestionShop(dbPool).catch(() => {});
     if (["confirmee", "en_traitement", "prete", "livree", "annulee"].includes(status)) {
       await dbPool.query(
         `UPDATE shop_followups SET status = CASE
