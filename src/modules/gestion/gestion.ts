@@ -1,0 +1,629 @@
+// Logiciel de gestion interne (personnel DiagAssist / Diagra 6) : stock par unité, ventes,
+// comptes clients avec historique, échéances de licences, achats, dépenses et point comptable mensuel.
+// Réservé à l'administration (requireAdminAuth). Montants en FCFA entiers.
+import crypto from "crypto";
+
+export const PRODUCT_KINDS = ["scanner", "licence", "equipement", "mise_a_jour", "service", "piece", "autre"];
+const UNIT_STATUSES = ["en_stock", "vendu", "retourne", "hors_service"];
+
+export async function initGestionSchema(pool: any) {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS gestion_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0)`,
+    `CREATE TABLE IF NOT EXISTS gestion_products (
+      id SERIAL PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'autre',
+      name TEXT NOT NULL,
+      brand TEXT,
+      model TEXT,
+      reference TEXT,
+      track_serial BOOLEAN NOT NULL DEFAULT true,
+      sale_price_fcfa INTEGER NOT NULL DEFAULT 0,
+      duration_months INTEGER,
+      shop_product_id INTEGER,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS gestion_clients (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      city TEXT,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_gestion_clients_phone ON gestion_clients (phone)`,
+    `CREATE TABLE IF NOT EXISTS gestion_purchases (
+      id SERIAL PRIMARY KEY,
+      supplier TEXT,
+      reference TEXT,
+      purchased_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      total_fcfa INTEGER NOT NULL DEFAULT 0,
+      notes TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS gestion_purchase_lines (
+      id SERIAL PRIMARY KEY,
+      purchase_id INTEGER NOT NULL REFERENCES gestion_purchases(id),
+      product_id INTEGER NOT NULL REFERENCES gestion_products(id),
+      qty INTEGER NOT NULL,
+      unit_cost_fcfa INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS gestion_units (
+      id SERIAL PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES gestion_products(id),
+      serial_number TEXT,
+      status TEXT NOT NULL DEFAULT 'en_stock',
+      purchase_id INTEGER REFERENCES gestion_purchases(id),
+      purchase_cost_fcfa INTEGER NOT NULL DEFAULT 0,
+      client_id INTEGER REFERENCES gestion_clients(id),
+      sale_id INTEGER,
+      sold_at TIMESTAMP,
+      expires_at TIMESTAMP,
+      login TEXT,
+      secret_enc TEXT,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_gestion_units_serial ON gestion_units (serial_number) WHERE serial_number IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_gestion_units_product_status ON gestion_units (product_id, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_gestion_units_client ON gestion_units (client_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_gestion_units_expires ON gestion_units (expires_at)`,
+    `CREATE TABLE IF NOT EXISTS gestion_sales (
+      id SERIAL PRIMARY KEY,
+      ref TEXT NOT NULL UNIQUE,
+      client_id INTEGER NOT NULL REFERENCES gestion_clients(id),
+      sold_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      total_fcfa INTEGER NOT NULL DEFAULT 0,
+      paid_fcfa INTEGER NOT NULL DEFAULT 0,
+      payment_method TEXT,
+      source TEXT NOT NULL DEFAULT 'manuel',
+      notes TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS gestion_sale_lines (
+      id SERIAL PRIMARY KEY,
+      sale_id INTEGER NOT NULL REFERENCES gestion_sales(id),
+      product_id INTEGER NOT NULL REFERENCES gestion_products(id),
+      unit_id INTEGER NOT NULL REFERENCES gestion_units(id),
+      unit_price_fcfa INTEGER NOT NULL,
+      cost_fcfa INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS gestion_expenses (
+      id SERIAL PRIMARY KEY,
+      incurred_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      category TEXT NOT NULL DEFAULT 'autre',
+      label TEXT NOT NULL,
+      amount_fcfa INTEGER NOT NULL,
+      notes TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS gestion_events (
+      id SERIAL PRIMARY KEY,
+      client_id INTEGER NOT NULL REFERENCES gestion_clients(id),
+      kind TEXT NOT NULL,
+      message TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_gestion_events_client ON gestion_events (client_id)`,
+  ];
+  for (const sql of statements) await pool.query(sql);
+  await pool.query(`DO $$ BEGIN
+    IF to_regclass('public.shop_orders') IS NOT NULL THEN
+      ALTER TABLE shop_orders ADD COLUMN IF NOT EXISTS gestion_sale_id INTEGER;
+    END IF;
+  END $$`);
+}
+
+// Chiffrement des identifiants/mots de passe des équipements (AES-256-GCM).
+// Clé : GESTION_SECRET_KEY si elle est définie ; sinon une clé est dérivée automatiquement d'un secret serveur
+// déjà présent (ADMIN_SECRET), donc aucun réglage obligatoire. Chaque valeur porte un préfixe qui dit quelle clé
+// l'a chiffrée : on peut définir GESTION_SECRET_KEY plus tard, les anciennes données restent lisibles.
+function keyFor(kind: "env" | "auto"): Buffer | null {
+  if (kind === "env") {
+    const raw = process.env.GESTION_SECRET_KEY;
+    return raw ? crypto.createHash("sha256").update(raw).digest() : null;
+  }
+  return crypto.createHash("sha256").update(`diagassist-gestion-auto:${process.env.ADMIN_SECRET || "diagassist"}`).digest();
+}
+function encryptSecret(plain: string): string {
+  const kind = process.env.GESTION_SECRET_KEY ? "env" : "auto";
+  const key = keyFor(kind)!;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const data = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+  return [kind === "env" ? "k1" : "a1", iv.toString("hex"), cipher.getAuthTag().toString("hex"), data.toString("hex")].join(":");
+}
+function decryptSecret(enc: string | null): string | null {
+  if (!enc) return null;
+  const parts = enc.split(":");
+  // Ancien format sans préfixe (3 éléments) = chiffré avec GESTION_SECRET_KEY.
+  const kind = parts.length === 4 ? (parts[0] === "a1" ? "auto" : "env") : "env";
+  const [ivHex, tagHex, dataHex] = parts.length === 4 ? parts.slice(1) : parts;
+  const key = keyFor(kind);
+  if (!key) return null;
+  try {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivHex, "hex"));
+    decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+    return Buffer.concat([decipher.update(Buffer.from(dataHex, "hex")), decipher.final()]).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function toInt(v: any, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n) : fallback;
+}
+
+async function nextRef(client: any, prefix: string): Promise<string> {
+  const { rows } = await client.query(
+    "INSERT INTO gestion_counters (name, value) VALUES ($1, 1) ON CONFLICT (name) DO UPDATE SET value = gestion_counters.value + 1 RETURNING value",
+    [prefix + new Date().getFullYear()]
+  );
+  return `${prefix}${new Date().getFullYear()}-${String(rows[0].value).padStart(5, "0")}`;
+}
+
+// La boutique (shop_products) reflète le back-office : nom, prix, disponibilité = stock réel.
+async function syncShop(db: any, productId: number) {
+  const { rows: t } = await db.query("SELECT to_regclass('public.shop_products') AS t");
+  if (!t[0].t) return;
+  const { rows } = await db.query(
+    `SELECT p.*, (SELECT COUNT(*)::int FROM gestion_units u WHERE u.product_id = p.id AND u.status = 'en_stock') AS in_stock
+     FROM gestion_products p WHERE p.id = $1`, [productId]);
+  const p = rows[0];
+  if (!p || !p.shop_product_id) return;
+  await db.query(
+    "UPDATE shop_products SET name = $2, brand = $3, model = $4, price_fcfa = $5, availability = $6, is_active = $7 WHERE id = $1",
+    [p.shop_product_id, p.name, p.brand, p.model, p.sale_price_fcfa, p.in_stock > 0 ? "disponible" : "rupture", p.is_active]);
+}
+
+// Enregistre une vente dans une transaction déjà ouverte : prend les unités, les marque vendues,
+// calcule les échéances et synchronise la boutique. Utilisé par la saisie manuelle et l'import boutique.
+async function recordSale(tx: any, clientId: number, b: any, source: string) {
+  const lines: any[] = Array.isArray(b.lines) ? b.lines : [];
+  if (lines.length === 0) throw new Error("Ajoutez au moins une ligne de vente.");
+  const ref = await nextRef(tx, "GV-");
+  const { rows: s } = await tx.query(
+    "INSERT INTO gestion_sales (ref, client_id, sold_at, payment_method, source, notes) VALUES ($1,$2,COALESCE($3::timestamp, CURRENT_TIMESTAMP),$4,$5,$6) RETURNING id, sold_at",
+    [ref, clientId, b.sold_at || null, b.payment_method || null, source, b.notes || null]);
+  const saleId = s[0].id, soldAt = s[0].sold_at;
+  let total = 0;
+  const touched = new Set<number>();
+  for (const line of lines) {
+    const productId = toInt(line.product_id), qty = toInt(line.qty, 1), price = toInt(line.unit_price_fcfa);
+    if (qty <= 0 || price < 0) throw new Error("Quantité ou prix invalide.");
+    const { rows: prodRows } = await tx.query("SELECT * FROM gestion_products WHERE id = $1", [productId]);
+    if (prodRows.length === 0) throw new Error("Produit introuvable.");
+    const product = prodRows[0];
+    let unitIds: number[] = Array.isArray(line.unit_ids) ? line.unit_ids.map((x: any) => toInt(x)) : [];
+    if (unitIds.length && unitIds.length !== qty) throw new Error(`${product.name} : ${qty} unité(s) demandée(s), ${unitIds.length} désignée(s).`);
+    if (!unitIds.length) {
+      const { rows: picked } = await tx.query(
+        "SELECT id FROM gestion_units WHERE product_id = $1 AND status = 'en_stock' ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED", [productId, qty]);
+      unitIds = picked.map((r: any) => r.id);
+    }
+    if (unitIds.length < qty) throw new Error(`Stock insuffisant pour « ${product.name} » (${unitIds.length} disponible(s)).`);
+    for (const unitId of unitIds) {
+      const { rows: u } = await tx.query(
+        "UPDATE gestion_units SET status = 'vendu', client_id = $1, sale_id = $2, sold_at = $3, expires_at = COALESCE(expires_at, CASE WHEN $4::int IS NULL THEN NULL ELSE $3::timestamp + ($4::int || ' months')::interval END) WHERE id = $5 AND status = 'en_stock' AND product_id = $6 RETURNING purchase_cost_fcfa",
+        [clientId, saleId, soldAt, product.duration_months, unitId, productId]);
+      if (u.length === 0) throw new Error(`L'unité ${unitId} n'est plus disponible.`);
+      await tx.query("INSERT INTO gestion_sale_lines (sale_id, product_id, unit_id, unit_price_fcfa, cost_fcfa) VALUES ($1,$2,$3,$4,$5)",
+        [saleId, productId, unitId, price, u[0].purchase_cost_fcfa]);
+    }
+    total += qty * price;
+    touched.add(productId);
+  }
+  for (const pid of touched) await syncShop(tx, pid);
+  const paid = b.paid_fcfa !== undefined && b.paid_fcfa !== null && b.paid_fcfa !== "" ? toInt(b.paid_fcfa) : total;
+  await tx.query("UPDATE gestion_sales SET total_fcfa = $1, paid_fcfa = $2 WHERE id = $3", [total, paid, saleId]);
+  await tx.query("INSERT INTO gestion_events (client_id, kind, message) VALUES ($1,'vente',$2)", [clientId, `Vente ${ref} : ${total} FCFA (payé ${paid} FCFA)`]);
+  return { id: saleId, ref, total };
+}
+
+export function registerGestionRoutes(app: any, pool: any, requireAdminAuth: any) {
+  const base = "/api/gestion";
+  const guard = (handler: (req: any, res: any) => Promise<any>) => async (req: any, res: any) => {
+    if (!pool) return res.status(503).json({ success: false, message: "Base de données non configurée." });
+    try {
+      await handler(req, res);
+    } catch (err: any) {
+      console.error("[gestion]", err?.message || err);
+      // Message clair en français pour les erreurs de base de données courantes.
+      const message = err?.code === "23505" && String(err?.constraint || "").includes("serial")
+        ? "Ce numéro de série existe déjà dans le stock."
+        : err?.message || "Erreur";
+      res.status(400).json({ success: false, message });
+    }
+  };
+
+  // --- Produits ---
+  app.get(`${base}/products`, requireAdminAuth, guard(async (_req: any, res: any) => {
+    const { rows } = await pool.query(
+      `SELECT p.*,
+        COUNT(u.id) FILTER (WHERE u.status = 'en_stock') AS in_stock,
+        COUNT(u.id) FILTER (WHERE u.status = 'vendu') AS sold,
+        COALESCE(SUM(u.purchase_cost_fcfa) FILTER (WHERE u.status = 'en_stock'), 0) AS stock_value_fcfa
+       FROM gestion_products p LEFT JOIN gestion_units u ON u.product_id = p.id
+       WHERE p.is_active = true GROUP BY p.id ORDER BY p.kind, p.name`
+    );
+    res.json({ success: true, products: rows });
+  }));
+
+  app.post(`${base}/products`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const b = req.body || {};
+    if (!b.name) return res.status(400).json({ success: false, message: "Nom requis." });
+    if (b.kind && !PRODUCT_KINDS.includes(b.kind)) return res.status(400).json({ success: false, message: "Type de produit invalide." });
+    const { rows } = await pool.query(
+      `INSERT INTO gestion_products (kind, name, brand, model, reference, track_serial, sale_price_fcfa, duration_months, shop_product_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [b.kind || "autre", b.name, b.brand || null, b.model || null, b.reference || null, b.track_serial !== false,
+       toInt(b.sale_price_fcfa), b.duration_months ? toInt(b.duration_months) : null, b.shop_product_id ? toInt(b.shop_product_id) : null]
+    );
+    res.json({ success: true, id: rows[0].id });
+  }));
+
+  app.patch(`${base}/products/:id`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const allowed = ["kind", "name", "brand", "model", "reference", "track_serial", "sale_price_fcfa", "duration_months", "shop_product_id", "is_active"];
+    const sets: string[] = [];
+    const values: any[] = [];
+    for (const key of allowed) {
+      if (req.body?.[key] === undefined) continue;
+      if (key === "kind" && !PRODUCT_KINDS.includes(req.body.kind)) throw new Error("Type de produit invalide.");
+      values.push(req.body[key]);
+      sets.push(`${key} = $${values.length}`);
+    }
+    if (sets.length === 0) return res.status(400).json({ success: false, message: "Rien à mettre à jour." });
+    values.push(toInt(req.params.id));
+    await pool.query(`UPDATE gestion_products SET ${sets.join(", ")} WHERE id = $${values.length}`, values);
+    await syncShop(pool, toInt(req.params.id));
+    res.json({ success: true });
+  }));
+
+  // --- Achats (entrée en stock : une unité par pièce, avec numéro de série si le produit en a) ---
+  app.post(`${base}/purchases`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const b = req.body || {};
+    const lines: any[] = Array.isArray(b.lines) ? b.lines : [];
+    if (lines.length === 0) return res.status(400).json({ success: false, message: "Ajoutez au moins une ligne d'achat." });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      let total = 0;
+      const touched = new Set<number>();
+      const { rows: p } = await client.query(
+        "INSERT INTO gestion_purchases (supplier, reference, purchased_at, notes) VALUES ($1,$2,COALESCE($3::timestamp, CURRENT_TIMESTAMP),$4) RETURNING id",
+        [b.supplier || null, b.reference || null, b.purchased_at || null, b.notes || null]
+      );
+      const purchaseId = p[0].id;
+      for (const line of lines) {
+        const productId = toInt(line.product_id), qty = toInt(line.qty), cost = toInt(line.unit_cost_fcfa);
+        if (qty <= 0 || cost < 0) throw new Error("Quantité ou coût invalide.");
+        const { rows: prod } = await client.query("SELECT track_serial FROM gestion_products WHERE id = $1", [productId]);
+        if (prod.length === 0) throw new Error("Produit introuvable.");
+        const serials: string[] = Array.isArray(line.serials) ? line.serials.map((s: string) => String(s).trim()).filter(Boolean) : [];
+        if (prod[0].track_serial && serials.length !== qty) throw new Error(`Ce produit demande ${qty} numéro(s) de série (reçu ${serials.length}).`);
+        if (new Set(serials).size !== serials.length) throw new Error("Numéros de série en double dans l'achat.");
+        await client.query("INSERT INTO gestion_purchase_lines (purchase_id, product_id, qty, unit_cost_fcfa) VALUES ($1,$2,$3,$4)", [purchaseId, productId, qty, cost]);
+        // Accès optionnels par numéro de série : [{ serial, login, password }]
+        const accesses: any[] = Array.isArray(line.accesses) ? line.accesses : [];
+        for (let i = 0; i < qty; i++) {
+          const { rows: unit } = await client.query(
+            "INSERT INTO gestion_units (product_id, serial_number, purchase_id, purchase_cost_fcfa) VALUES ($1,$2,$3,$4) RETURNING id",
+            [productId, serials[i] || null, purchaseId, cost]
+          );
+          const access = accesses.find((a: any) => serials[i] && String(a.serial).trim() === serials[i]);
+          if (access && (access.login || access.password)) {
+            await client.query("UPDATE gestion_units SET login = $1, secret_enc = $2 WHERE id = $3", [
+              access.login || null,
+              access.password ? encryptSecret(String(access.password)) : null,
+              unit[0].id,
+            ]);
+          }
+        }
+        total += qty * cost;
+        touched.add(productId);
+      }
+      await client.query("UPDATE gestion_purchases SET total_fcfa = $1 WHERE id = $2", [total, purchaseId]);
+      await client.query("COMMIT");
+      for (const pid of touched) await syncShop(pool, pid);
+      res.json({ success: true, id: purchaseId, total_fcfa: total });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }));
+
+  app.get(`${base}/purchases`, requireAdminAuth, guard(async (_req: any, res: any) => {
+    const { rows } = await pool.query(
+      `SELECT pu.*, COALESCE(string_agg(p.name || ' × ' || l.qty, ', ' ORDER BY l.id), '') AS lines_label
+       FROM gestion_purchases pu
+       LEFT JOIN gestion_purchase_lines l ON l.purchase_id = pu.id
+       LEFT JOIN gestion_products p ON p.id = l.product_id
+       GROUP BY pu.id ORDER BY pu.purchased_at DESC LIMIT 200`);
+    res.json({ success: true, purchases: rows });
+  }));
+
+  // --- Unités (équipements individuels) ---
+  app.get(`${base}/units`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const where: string[] = [];
+    const values: any[] = [];
+    if (req.query.product_id) { values.push(toInt(req.query.product_id)); where.push(`u.product_id = $${values.length}`); }
+    if (req.query.status && UNIT_STATUSES.includes(String(req.query.status))) { values.push(req.query.status); where.push(`u.status = $${values.length}`); }
+    if (req.query.search) { values.push(`%${req.query.search}%`); where.push(`(u.serial_number ILIKE $${values.length} OR u.login ILIKE $${values.length})`); }
+    const { rows } = await pool.query(
+      `SELECT u.id, u.product_id, u.serial_number, u.status, u.purchase_cost_fcfa, u.client_id, u.sale_id, u.sold_at, u.expires_at, u.login, u.notes,
+              (u.secret_enc IS NOT NULL) AS has_secret, p.name AS product_name, p.kind, c.name AS client_name
+       FROM gestion_units u JOIN gestion_products p ON p.id = u.product_id LEFT JOIN gestion_clients c ON c.id = u.client_id
+       ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY u.id DESC LIMIT 500`,
+      values
+    );
+    res.json({ success: true, units: rows });
+  }));
+
+  // Modifie identifiants, date d'échéance, statut (retour SAV, hors service) d'une unité.
+  app.patch(`${base}/units/:id`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const b = req.body || {};
+    const sets: string[] = [];
+    const values: any[] = [];
+    if (b.status !== undefined) {
+      if (!UNIT_STATUSES.includes(b.status)) throw new Error("Statut invalide.");
+      values.push(b.status); sets.push(`status = $${values.length}`);
+    }
+    if (b.login !== undefined) { values.push(b.login || null); sets.push(`login = $${values.length}`); }
+    if (b.password) { values.push(encryptSecret(String(b.password))); sets.push(`secret_enc = $${values.length}`); }
+    if (b.expires_at !== undefined) { values.push(b.expires_at || null); sets.push(`expires_at = $${values.length}`); }
+    if (b.notes !== undefined) { values.push(b.notes || null); sets.push(`notes = $${values.length}`); }
+    if (sets.length === 0) return res.status(400).json({ success: false, message: "Rien à mettre à jour." });
+    values.push(toInt(req.params.id));
+    const { rows: upd } = await pool.query(`UPDATE gestion_units SET ${sets.join(", ")} WHERE id = $${values.length} RETURNING product_id`, values);
+    if (upd.length) await syncShop(pool, upd[0].product_id);
+    res.json({ success: true });
+  }));
+
+  // Affiche le mot de passe d'un équipement (action explicite, tracée dans l'historique du client).
+  app.get(`${base}/units/:id/secret`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const { rows } = await pool.query("SELECT secret_enc, client_id FROM gestion_units WHERE id = $1", [toInt(req.params.id)]);
+    if (rows.length === 0) return res.status(404).json({ success: false, message: "Unité introuvable." });
+    if (rows[0].client_id) {
+      await pool.query("INSERT INTO gestion_events (client_id, kind, message) VALUES ($1,'consultation_secret',$2)", [rows[0].client_id, `Mot de passe consulté (unité ${req.params.id})`]);
+    }
+    res.json({ success: true, password: decryptSecret(rows[0].secret_enc) });
+  }));
+
+  // --- Clients (compte client = historique complet) ---
+  app.get(`${base}/clients`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const search = req.query.search ? `%${req.query.search}%` : "%";
+    const { rows } = await pool.query(
+      `SELECT c.*, COUNT(DISTINCT s.id) AS sales_count, COALESCE(SUM(s.total_fcfa), 0) AS total_spent_fcfa
+       FROM gestion_clients c LEFT JOIN gestion_sales s ON s.client_id = c.id
+       WHERE c.name ILIKE $1 OR c.phone ILIKE $1 GROUP BY c.id ORDER BY c.name LIMIT 300`,
+      [search]
+    );
+    res.json({ success: true, clients: rows });
+  }));
+
+  app.post(`${base}/clients`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const b = req.body || {};
+    if (!b.name) return res.status(400).json({ success: false, message: "Nom du client requis." });
+    const { rows } = await pool.query(
+      "INSERT INTO gestion_clients (name, phone, email, city, notes) VALUES ($1,$2,$3,$4,$5) RETURNING id",
+      [b.name, b.phone || null, b.email || null, b.city || null, b.notes || null]
+    );
+    res.json({ success: true, id: rows[0].id });
+  }));
+
+  app.get(`${base}/clients/:id`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const id = toInt(req.params.id);
+    const [client, sales, units, events] = await Promise.all([
+      pool.query("SELECT * FROM gestion_clients WHERE id = $1", [id]),
+      pool.query(
+        `SELECT s.*, COALESCE(json_agg(json_build_object('product', p.name, 'serial', u.serial_number, 'price', l.unit_price_fcfa, 'unit_id', u.id))
+                FILTER (WHERE l.id IS NOT NULL), '[]') AS lines
+         FROM gestion_sales s LEFT JOIN gestion_sale_lines l ON l.sale_id = s.id
+         LEFT JOIN gestion_products p ON p.id = l.product_id LEFT JOIN gestion_units u ON u.id = l.unit_id
+         WHERE s.client_id = $1 GROUP BY s.id ORDER BY s.sold_at DESC`, [id]),
+      pool.query(
+        `SELECT u.id, u.serial_number, u.login, u.status, u.expires_at, u.sold_at, u.sale_id, (u.secret_enc IS NOT NULL) AS has_secret, p.name AS product_name, p.kind
+         FROM gestion_units u JOIN gestion_products p ON p.id = u.product_id WHERE u.client_id = $1 ORDER BY u.sold_at DESC`, [id]),
+      pool.query("SELECT * FROM gestion_events WHERE client_id = $1 ORDER BY created_at DESC LIMIT 300", [id]),
+    ]);
+    if (client.rows.length === 0) return res.status(404).json({ success: false, message: "Client introuvable." });
+    res.json({ success: true, client: client.rows[0], sales: sales.rows, units: units.rows, events: events.rows });
+  }));
+
+  app.patch(`${base}/clients/:id`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const allowed = ["name", "phone", "email", "city", "notes"];
+    const sets: string[] = [];
+    const values: any[] = [];
+    for (const key of allowed) {
+      if (req.body?.[key] === undefined) continue;
+      values.push(req.body[key] || null); sets.push(`${key} = $${values.length}`);
+    }
+    if (sets.length === 0) return res.status(400).json({ success: false, message: "Rien à mettre à jour." });
+    values.push(toInt(req.params.id));
+    await pool.query(`UPDATE gestion_clients SET ${sets.join(", ")} WHERE id = $${values.length}`, values);
+    res.json({ success: true });
+  }));
+
+  app.post(`${base}/clients/:id/events`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const message = String(req.body?.message || "").trim();
+    if (!message) return res.status(400).json({ success: false, message: "Note vide." });
+    await pool.query("INSERT INTO gestion_events (client_id, kind, message) VALUES ($1,'note',$2)", [toInt(req.params.id), message]);
+    res.json({ success: true });
+  }));
+
+  // --- Ventes ---
+  // Chaque ligne prend des unités en stock (ou celles désignées par unit_ids). L'unité passe « vendu »,
+  // reçoit le client et la date d'échéance (durée du produit). Si le produit est lié à la boutique et
+  // qu'il n'en reste plus, la boutique passe en rupture automatiquement.
+  app.post(`${base}/sales`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const b = req.body || {};
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      let clientId = toInt(b.client_id, 0);
+      if (!clientId) {
+        if (!b.client_name) throw new Error("Choisissez un client ou saisissez son nom.");
+        const { rows } = await tx.query("INSERT INTO gestion_clients (name, phone, city) VALUES ($1,$2,$3) RETURNING id", [b.client_name, b.client_phone || null, b.client_city || null]);
+        clientId = rows[0].id;
+      }
+      const sale = await recordSale(tx, clientId, b, "manuel");
+      await tx.query("COMMIT");
+      res.json({ success: true, id: sale.id, ref: sale.ref, total_fcfa: sale.total });
+    } catch (err) {
+      await tx.query("ROLLBACK");
+      throw err;
+    } finally {
+      tx.release();
+    }
+  }));
+
+  app.get(`${base}/sales`, requireAdminAuth, guard(async (_req: any, res: any) => {
+    const { rows } = await pool.query("SELECT s.*, c.name AS client_name FROM gestion_sales s JOIN gestion_clients c ON c.id = s.client_id ORDER BY s.sold_at DESC LIMIT 200");
+    res.json({ success: true, sales: rows });
+  }));
+
+  // --- Échéances : unités vendues qui arrivent à échéance ---
+  app.get(`${base}/expiring`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const days = toInt(req.query.days, 60);
+    const { rows } = await pool.query(
+      `SELECT u.id, u.serial_number, u.login, u.expires_at, u.client_id, p.name AS product_name, p.kind, c.name AS client_name, c.phone,
+              (u.expires_at <= CURRENT_TIMESTAMP) AS expired
+       FROM gestion_units u JOIN gestion_products p ON p.id = u.product_id JOIN gestion_clients c ON c.id = u.client_id
+       WHERE u.status = 'vendu' AND u.expires_at IS NOT NULL AND u.expires_at <= CURRENT_TIMESTAMP + ($1::int || ' days')::interval
+       ORDER BY u.expires_at ASC`, [days]);
+    res.json({ success: true, items: rows });
+  }));
+
+  // Enregistre une relance dans l'historique du client et renvoie un lien WhatsApp prérempli (envoi manuel).
+  app.post(`${base}/units/:id/relance`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const { rows } = await pool.query(
+      `SELECT u.client_id, u.expires_at, p.name AS product_name, c.name AS client_name, c.phone
+       FROM gestion_units u JOIN gestion_products p ON p.id = u.product_id JOIN gestion_clients c ON c.id = u.client_id WHERE u.id = $1`, [toInt(req.params.id)]);
+    if (rows.length === 0) return res.status(404).json({ success: false, message: "Unité introuvable." });
+    const r = rows[0];
+    const when = r.expires_at ? new Date(r.expires_at).toLocaleDateString("fr-FR") : "";
+    const message = `Bonjour ${r.client_name}, ici DiagAssist. Votre ${r.product_name} arrive à échéance le ${when}. Souhaitez-vous le renouveler ?`;
+    await pool.query("INSERT INTO gestion_events (client_id, kind, message) VALUES ($1,'relance',$2)", [r.client_id, message]);
+    const digits = String(r.phone || "").replace(/\D/g, "");
+    const link = digits ? `https://wa.me/${digits}?text=${encodeURIComponent(message)}` : null;
+    res.json({ success: true, message, link });
+  }));
+
+  // --- Boutique (front) : publication d'un produit et commandes à traiter ---
+  app.post(`${base}/products/:id/publish`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const id = toInt(req.params.id);
+    const { rows } = await pool.query("SELECT * FROM gestion_products WHERE id = $1", [id]);
+    if (rows.length === 0) throw new Error("Produit introuvable.");
+    const p = rows[0];
+    if (!p.shop_product_id) {
+      const slug = p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") + "-" + Date.now().toString(36);
+      const { rows: created } = await pool.query(
+        "INSERT INTO shop_products (name, slug, brand, model, price_fcfa, availability, is_active) VALUES ($1,$2,$3,$4,$5,'rupture',true) RETURNING id",
+        [p.name, slug, p.brand, p.model, p.sale_price_fcfa]);
+      await pool.query("UPDATE gestion_products SET shop_product_id = $1 WHERE id = $2", [created[0].id, id]);
+    }
+    await syncShop(pool, id);
+    res.json({ success: true });
+  }));
+
+  app.get(`${base}/shop-orders`, requireAdminAuth, guard(async (_req: any, res: any) => {
+    const { rows: t } = await pool.query("SELECT to_regclass('public.shop_orders') AS t");
+    if (!t[0].t) return res.json({ success: true, orders: [] });
+    const { rows } = await pool.query(
+      `SELECT o.id, o.order_ref, o.customer_phone, o.product_id, o.product_name_snapshot, o.unit_price_snapshot, o.quantity, o.status, o.created_at,
+              c.name AS customer_name, gp.id AS gestion_product_id,
+              (SELECT COUNT(*)::int FROM gestion_units u WHERE u.product_id = gp.id AND u.status = 'en_stock') AS in_stock
+       FROM shop_orders o
+       LEFT JOIN shop_customers c ON c.phone = o.customer_phone
+       LEFT JOIN gestion_products gp ON gp.shop_product_id = o.product_id
+       WHERE o.gestion_sale_id IS NULL AND o.status <> 'annulee'
+       ORDER BY o.created_at ASC LIMIT 200`);
+    res.json({ success: true, orders: rows });
+  }));
+
+  // Transforme une commande boutique en vente back-office : client retrouvé par téléphone (sinon créé),
+  // stock décrémenté, échéances calculées.
+  app.post(`${base}/shop-orders/:id/import`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      const { rows: os } = await tx.query("SELECT * FROM shop_orders WHERE id = $1 FOR UPDATE", [toInt(req.params.id)]);
+      if (os.length === 0) throw new Error("Commande introuvable.");
+      const o = os[0];
+      if (o.gestion_sale_id) throw new Error("Cette commande est déjà importée.");
+      const { rows: gp } = await tx.query("SELECT id FROM gestion_products WHERE shop_product_id = $1", [o.product_id]);
+      if (gp.length === 0) throw new Error("Ce produit boutique n'est pas lié à un produit du back-office. Publiez-le ou liez-le d'abord.");
+      const { rows: cust } = await tx.query("SELECT name FROM shop_customers WHERE phone = $1", [o.customer_phone]);
+      let clientId: number;
+      const { rows: existing } = await tx.query("SELECT id FROM gestion_clients WHERE phone = $1 LIMIT 1", [o.customer_phone]);
+      if (existing.length) clientId = existing[0].id;
+      else {
+        const { rows: created } = await tx.query("INSERT INTO gestion_clients (name, phone) VALUES ($1,$2) RETURNING id",
+          [cust[0]?.name || o.customer_phone, o.customer_phone]);
+        clientId = created[0].id;
+      }
+      const sale = await recordSale(tx, clientId, {
+        lines: [{ product_id: gp[0].id, qty: o.quantity || 1, unit_price_fcfa: o.unit_price_snapshot || 0 }],
+        payment_method: "boutique", notes: `Commande boutique ${o.order_ref || o.id}`,
+      }, "boutique");
+      await tx.query("UPDATE shop_orders SET gestion_sale_id = $1 WHERE id = $2", [sale.id, o.id]);
+      await tx.query("COMMIT");
+      res.json({ success: true, ref: sale.ref, total_fcfa: sale.total });
+    } catch (err) {
+      await tx.query("ROLLBACK");
+      throw err;
+    } finally {
+      tx.release();
+    }
+  }));
+
+  // --- Dépenses ---
+  app.get(`${base}/expenses`, requireAdminAuth, guard(async (_req: any, res: any) => {
+    const { rows } = await pool.query("SELECT * FROM gestion_expenses ORDER BY incurred_at DESC LIMIT 300");
+    res.json({ success: true, expenses: rows });
+  }));
+
+  app.post(`${base}/expenses`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const b = req.body || {};
+    if (!b.label || !Number.isFinite(Number(b.amount_fcfa)) || Number(b.amount_fcfa) < 0) throw new Error("Libellé et montant requis.");
+    const { rows } = await pool.query(
+      "INSERT INTO gestion_expenses (incurred_at, category, label, amount_fcfa, notes) VALUES (COALESCE($1::timestamp, CURRENT_TIMESTAMP),$2,$3,$4,$5) RETURNING id",
+      [b.incurred_at || null, b.category || "autre", b.label, toInt(b.amount_fcfa), b.notes || null]);
+    res.json({ success: true, id: rows[0].id });
+  }));
+
+  app.delete(`${base}/expenses/:id`, requireAdminAuth, guard(async (req: any, res: any) => {
+    await pool.query("DELETE FROM gestion_expenses WHERE id = $1", [toInt(req.params.id)]);
+    res.json({ success: true });
+  }));
+
+  // --- Point comptable mensuel ---
+  app.get(`${base}/accounting`, requireAdminAuth, guard(async (req: any, res: any) => {
+    const month = /^\d{4}-\d{2}$/.test(String(req.query.month || "")) ? String(req.query.month) : new Date().toISOString().slice(0, 7);
+    const start = `${month}-01`;
+    const [sales, cogs, expenses, purchases, stock] = await Promise.all([
+      pool.query("SELECT COALESCE(SUM(total_fcfa),0)::int AS revenue, COALESCE(SUM(paid_fcfa),0)::int AS paid, COUNT(*)::int AS count FROM gestion_sales WHERE date_trunc('month', sold_at) = $1::date", [start]),
+      pool.query("SELECT COALESCE(SUM(l.cost_fcfa),0)::int AS cogs FROM gestion_sale_lines l JOIN gestion_sales s ON s.id = l.sale_id WHERE date_trunc('month', s.sold_at) = $1::date", [start]),
+      pool.query("SELECT category, COALESCE(SUM(amount_fcfa),0)::int AS total FROM gestion_expenses WHERE date_trunc('month', incurred_at) = $1::date GROUP BY category ORDER BY total DESC", [start]),
+      pool.query("SELECT COALESCE(SUM(total_fcfa),0)::int AS total FROM gestion_purchases WHERE date_trunc('month', purchased_at) = $1::date", [start]),
+      pool.query("SELECT COALESCE(SUM(purchase_cost_fcfa),0)::int AS value, COUNT(*)::int AS units FROM gestion_units WHERE status = 'en_stock'"),
+    ]);
+    const revenue = sales.rows[0].revenue, costOfGoods = cogs.rows[0].cogs;
+    const expenseTotal = expenses.rows.reduce((a: number, r: any) => a + r.total, 0);
+    res.json({
+      success: true, month,
+      revenue_fcfa: revenue,
+      encaisse_fcfa: sales.rows[0].paid,
+      sales_count: sales.rows[0].count,
+      cost_of_goods_fcfa: costOfGoods,
+      gross_margin_fcfa: revenue - costOfGoods,
+      expenses_by_category: expenses.rows,
+      expenses_fcfa: expenseTotal,
+      net_result_fcfa: revenue - costOfGoods - expenseTotal,
+      purchases_fcfa: purchases.rows[0].total,
+      stock_value_fcfa: stock.rows[0].value,
+      stock_units: stock.rows[0].units,
+    });
+  }));
+}

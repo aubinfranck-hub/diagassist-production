@@ -22,6 +22,7 @@ import { registerDiagnostic } from "./src/modules/diagnostic/routes";
 import { registerCredits, isCreditPlan, CREDITS_EXHAUSTED_MESSAGE } from "./src/modules/credits/routes";
 import type { CreditSource } from "./src/modules/credits/core";
 import { planLiveDiagnostic as planLiveDiagnosticLocal } from "./src/modules/live/liveDiagnosticPlanner";
+import { initGestionSchema, registerGestionRoutes } from "./src/modules/gestion/gestion";
 import { importCategory, fetchCategory, import3hCategory, fetch3hProducts, fetch3hCategories } from "./src/modules/shop/supplierImport";
 import { registerHpWebRoutes } from "./src/modules/vehicle/hpweb.routes";
 import { searchHpWeb, hpWebNav, formatHpWebPage, type HpWebPage } from "./src/modules/vehicle/hpwebClient";
@@ -4054,6 +4055,10 @@ Tes réponses sont lues directement à haute voix. Tu ne dois JAMAIS utiliser de
   }));
 
   // ============================================================
+  // Back-office interne (stock, ventes, comptes clients, comptabilité) : source de vérité de la boutique
+  if (dbPool) initGestionSchema(dbPool).catch((err) => console.error("[gestion] schéma:", err));
+  registerGestionRoutes(app, dbPool, requireAdminAuth);
+
   // BOUTIQUE / CRM — section indépendante du diagnostic technique
   // ============================================================
 
